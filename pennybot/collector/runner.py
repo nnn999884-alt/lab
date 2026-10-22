@@ -43,11 +43,13 @@ def iso(ts: datetime) -> str:
 class Collector:
     def __init__(self, client, store: Store, calendar: SessionCalendar, cfg: CollectorConfig,
                  edgar_client: ed.EdgarClient | None = None,
-                 clock=lambda: datetime.now(timezone.utc), dilution=None, fundamentals=None):
+                 clock=lambda: datetime.now(timezone.utc), dilution=None, fundamentals=None, news=None):
         self.c, self.store, self.cal, self.cfg = client, store, calendar, cfg
         self.edgar = edgar_client
         self.dilution = dilution          # DilutionService: 공시 본문으로 희석 이벤트 판정
         self.fund = fundamentals          # Fundamentals: 급등주 희석 프로필·펌프 신호
+        self.news = news                  # NewsClient: 보도자료 피드
+        self._seen_news: set[str] = set()
         self.clock = clock
         self.universe: dict[str, dict] = {}       # symbol -> {market, name, last}
         self.cik_to_symbol: dict[int, str] = {}
@@ -94,6 +96,8 @@ class Collector:
 
         if self.edgar and self._due("edgar", now, timedelta(minutes=c.edgar_poll_minutes)):
             self._run("edgar", self.poll_edgar, now)
+        if self.news and self._due("news", now, timedelta(minutes=c.news_poll_minutes)):
+            self._run("news", self.poll_news, now)
         if session == CLOSED:
             return
         if self._due("rankings", now, timedelta(minutes=c.ranking_poll_minutes)):
@@ -271,6 +275,30 @@ class Collector:
         if rows:
             self.store.put_filings(rows)
             log.info("새 공시 %d건 (유니버스 종목)", len(rows))
+
+    def poll_news(self, now: datetime) -> None:
+        from ..news import classify_news, item_id, tickers
+        rows = []
+        for src, it in self.news.fetch():
+            nid = item_id(src, it)
+            if nid in self._seen_news:
+                continue
+            self._seen_news.add(nid)
+            syms = {t for t in tickers(f"{it.title} {it.summary}") if t in self.universe}
+            if not syms:
+                continue
+            evs = classify_news(it.title, it.summary, it.published.date())
+            d, sess = self.cal.classify(it.published)
+            direction = sum(e.direction for e in evs)
+            for sym in syms:
+                rows.append({"id": nid, "symbol": sym, "source": src, "title": it.title[:300], "url": it.url,
+                             "published": iso(it.published), "trade_date": d.isoformat() if d else None,
+                             "session": sess, "events": ",".join(sorted({e.kind for e in evs})),
+                             "direction": (direction > 0) - (direction < 0)})
+                self.recent_filers[sym] = now
+        if rows:
+            self.store.put_news(rows)
+            log.info("새 보도자료 %d건 (유니버스 종목)", len(rows))
 
     def _lookup(self, cik: int, accession: str) -> ed.Filing | None:
         filings = self._safe(lambda: self.edgar.filings(cik)) or []

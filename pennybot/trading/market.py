@@ -19,13 +19,18 @@ def _utc(ts: datetime) -> str:
 
 
 class MarketView:
-    def __init__(self, db_path: str, client, calendar: SessionCalendar, exchange):
+    def __init__(self, db_path: str, client, calendar: SessionCalendar, exchange, clock=None):
         self.db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, check_same_thread=False) \
             if db_path != ":memory:" else sqlite3.connect(":memory:")
         self.c = client
         self.cal = calendar
         self.ex = exchange
         self._daily: dict[tuple[str, date], list[dict]] = {}
+        # 백테스트에서는 재생 시각까지의 데이터만 보이게 한다 (미래 데이터 차단). 실시간이면 현재 시각
+        self.clock = clock or (lambda: datetime.now(timezone.utc))
+
+    def _asof(self) -> str:
+        return _utc(self.clock())
 
     def q(self, sql: str, args=()) -> list[tuple]:
         try:
@@ -102,17 +107,23 @@ class MarketView:
         return [(s, r) for s, r in rows]
 
     def filings_since(self, since: datetime) -> list[dict]:
+        """SEC 공시 + 보도자료(form='NEWS'), 공개 시각 순."""
         rows = self.q("""SELECT symbol, form, items, accepted, session, trade_date, insider_buy_usd, events, direction
-                         FROM filings WHERE accepted >= ? ORDER BY accepted""",
-                      (_utc(since),))
+                         FROM filings WHERE accepted >= ? AND accepted <= ?
+                         UNION ALL
+                         SELECT symbol, 'NEWS', '', published, session, trade_date, NULL, events, direction
+                         FROM news WHERE published >= ? AND published <= ?
+                         ORDER BY 4""", (_utc(since), self._asof(), _utc(since), self._asof()))
         keys = ("symbol", "form", "items", "accepted", "session", "trade_date", "insider_buy_usd", "events",
                 "direction")
         return [dict(zip(keys, r)) for r in rows]
 
     def filings_for(self, symbol: str, days: int, now: datetime) -> list[dict]:
         since = _utc(now - timedelta(days=days))
-        rows = self.q("""SELECT form, items, accepted, events FROM filings WHERE symbol=? AND accepted >= ?""",
-                      (symbol, since))
+        rows = self.q("""SELECT form, items, accepted, events FROM filings WHERE symbol=? AND accepted >= ? AND accepted <= ?
+                         UNION ALL
+                         SELECT 'NEWS', '', published, events FROM news WHERE symbol=? AND published >= ? AND published <= ?""",
+                      (symbol, since, self._asof(), symbol, since, self._asof()))
         return [{"form": f, "items": i or "", "accepted": a, "events": e or ""} for f, i, a, e in rows]
 
     # ---------- 급등주 ----------

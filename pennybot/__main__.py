@@ -85,8 +85,10 @@ def cmd_collect(cfg: Config, once: bool) -> None:
     from .sessions import SessionCalendar
     client = make_client(cfg, "collector")
     dil, fund = _fundamentals(cfg, client)
+    from .news import NewsClient
     col = Collector(client, Store(cfg.collector.db_path), SessionCalendar(client), cfg.collector,
-                    dil.edgar if dil else None, dilution=dil, fundamentals=fund)
+                    dil.edgar if dil else None, dilution=dil, fundamentals=fund,
+                    news=NewsClient(cfg.collector.news_feeds or None, cfg.sec_user_agent or "pennybot/1.0"))
     if once:
         col.tick()
     else:

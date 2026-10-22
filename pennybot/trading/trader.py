@@ -24,7 +24,7 @@ from .strategies import ALL, FINANCING_WORDS, Ctx, events_of
 
 # 들고 있는 동안 이런 공시가 나오면 즉시 청산 (급등주 최대 위험: 밤사이 증자 발표)
 HOLD_ALARM = FINANCING_WORDS | {"DELISTING_NOTICE", "OFFERING_FILED", "SHELF_FILED", "WARRANT_INDUCEMENT",
-                                "WARRANT_REPRICE", "CONVERTIBLE"}
+                                "WARRANT_REPRICE", "CONVERTIBLE", "GOING_CONCERN"}   # 공시·보도자료 모두
 
 log = logging.getLogger(__name__)
 

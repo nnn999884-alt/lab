@@ -41,6 +41,11 @@ CREATE TABLE IF NOT EXISTS runners (
     high REAL, low REAL, volume REAL, close_loc REAL, shares REAL, rotation REAL,
     dilution_score REAL, dilution_bucket TEXT, dilution_reasons TEXT, pump_flags TEXT,
     PRIMARY KEY (trade_date, symbol));
+CREATE TABLE IF NOT EXISTS news (
+    id TEXT, symbol TEXT, source TEXT, title TEXT, url TEXT, published TEXT,
+    trade_date TEXT, session TEXT, events TEXT, direction INTEGER,
+    PRIMARY KEY (id, symbol));
+CREATE INDEX IF NOT EXISTS ix_news_sym ON news (symbol, published);
 CREATE INDEX IF NOT EXISTS ix_bars_day ON bars_1m (trade_date, session);
 CREATE INDEX IF NOT EXISTS ix_quotes_day ON quotes (trade_date, session);
 CREATE INDEX IF NOT EXISTS ix_prices_day ON prices (trade_date, session);
@@ -83,6 +88,7 @@ class Store:
     def put_rankings(self, rows): return self._put("rankings", rows)
     def put_filings(self, rows): return self._put("filings", rows)
     def put_runners(self, rows): return self._put("runners", rows)
+    def put_news(self, rows): return self._put("news", rows)
 
     def runner_candidates(self, trade_date: str, prev_date: str, min_pct: float) -> list[tuple]:
         """정규장 마지막 현재가 기준으로 전 영업일 대비 min_pct% 이상 오른 종목 → (symbol, prev_close, close)."""

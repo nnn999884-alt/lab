@@ -19,7 +19,7 @@ from ..screener import edgar as ed
 from ..sessions import DAY, PRE, REGULAR, SessionCalendar
 
 POSITIVE_DILUTION = {"ATM_TERMINATED", "REGISTRATION_WITHDRAWN", "OFFERING_TERMINATED", "BUYBACK"}
-POSITIVE_NEWS = {"MATERIAL_CONTRACT", "COMPLIANCE_REGAINED"}
+POSITIVE_NEWS = {"MATERIAL_CONTRACT", "COMPLIANCE_REGAINED", "FDA_APPROVAL", "MATERIAL_NEWS"}
 FINANCING_WORDS = {"ATM_NEW", "REGISTERED_DIRECT", "PUBLIC_OFFERING", "SECURITIES_PURCHASE_AGREEMENT",
                    "PRIVATE_PLACEMENT", "EQUITY_LINE", "TAKEDOWN"}
 SESSION_KO = {"DAY": "데이마켓", "PRE": "프리마켓", "REGULAR": "정규장", "AFTER": "애프터마켓", "CLOSED": "휴장"}
@@ -225,8 +225,8 @@ class DayIgnition(Strategy):
                 continue
             if f["form"] == "4" and (f["insider_buy_usd"] or 0) >= self.p["min_insider_usd"]:
                 catalysts[f["symbol"]] = "내부자 장내매수"
-            elif ev & POSITIVE_NEWS:
-                catalysts[f["symbol"]] = "호재 공시"
+            elif ev & POSITIVE_NEWS and not (f.get("direction") or 0) < 0:
+                catalysts[f["symbol"]] = "호재 보도자료" if f["form"] == "NEWS" else "호재 공시"
         for sym in ctx.mv.toss_hot(ctx.trade_date):
             catalysts.setdefault(sym, "토스 거래대금 상위")
         out = []
@@ -251,7 +251,7 @@ class DayIgnition(Strategy):
             if bad:
                 out.append(self._reject(sym, bad, last))
                 continue
-            news = cat != "토스 거래대금 상위"
+            news = cat != "토스 거래대금 상위"     # 공시·보도자료 촉매 여부
             why, note = dilution_gate(sym, b.mid, ctx, self.p["max_dilution_score"], has_catalyst=news)
             if why:
                 out.append(self._reject(sym, why, b.mid))

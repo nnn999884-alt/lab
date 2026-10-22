@@ -177,8 +177,8 @@ details summary { cursor: pointer; color: var(--text-secondary); font-size: 12.5
   </section>
 
   <section class="card">
-    <h2>희석 이벤트</h2>
-    <p class="sub">공시 본문으로 판정한 증자 관련 사건. ▲ 호재(희석 해소), ▼ 악재(희석)</p>
+    <h2>공시·보도자료 이벤트</h2>
+    <p class="sub">SEC 공시 본문과 보도자료로 판정한 사건. ▲ 호재, ▼ 악재</p>
     <div class="tablewrap" style="max-height:360px"><table id="dilution"></table></div>
   </section>
 
@@ -209,7 +209,7 @@ const EVENT = { ATM_TERMINATED: "ATM 종료", OFFERING_TERMINATED: "공모 철�
   COMPLIANCE_REGAINED: "상장 요건 회복", MATERIAL_CONTRACT: "중요 계약", ATM_NEW: "ATM 신규", REGISTERED_DIRECT: "등록 직접 공모",
   PUBLIC_OFFERING: "공모", PRIVATE_PLACEMENT: "사모", SECURITIES_PURCHASE_AGREEMENT: "증권매매계약", EQUITY_LINE: "주식 매수 약정",
   WARRANT_INDUCEMENT: "워런트 행사 유도", WARRANT_REPRICE: "워런트 행사가 인하", CONVERTIBLE: "전환사채", REVERSE_SPLIT: "액면병합",
-  TAKEDOWN: "증자 실행", SHELF_FILED: "증자 등록(S-3)", OFFERING_FILED: "공모 신고(S-1)", REGISTRATION_EFFECTIVE: "등록 효력 발생", DELISTING_NOTICE: "상폐 통지" };
+  TAKEDOWN: "증자 실행", FDA_APPROVAL: "FDA 승인", MATERIAL_NEWS: "계약·수주", GOING_CONCERN: "계속기업 불확실", SHELF_FILED: "증자 등록(S-3)", OFFERING_FILED: "공모 신고(S-1)", REGISTRATION_EFFECTIVE: "등록 효력 발생", DELISTING_NOTICE: "상폐 통지" };
 const BUCKET = { low: "희석 위험 낮음", mid: "중간", high: "높음", unknown: "프로필 없음" };
 const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 const $ = id => document.getElementById(id);
@@ -517,11 +517,11 @@ async function loadRunners() {
     { h: "정규장 첫", num: 1, f: x => fmtPct(rp(x, "open")), tone: x => tone(rp(x, "open")) },
   ], r.rows, "급등주 기록 없음");
   table($("dilution"), [
-    { h: "접수", f: x => kst(x.accepted) }, { h: "종목", f: x => x.symbol }, { h: "양식", f: x => x.form },
+    { h: "접수", f: x => kst(x.accepted) }, { h: "종목", f: x => x.symbol }, { h: "양식", f: x => x.form === "NEWS" ? "보도자료" : x.form },
     { h: "방향", f: x => x.direction > 0 ? "▲ 호재" : x.direction < 0 ? "▼ 악재" : "–", tone: x => tone(x.direction) },
     { h: "이벤트", f: x => (x.events || "").split(",").filter(Boolean).map(k => EVENT[k] || k).join(", ") || (x.insider_buy_usd ? `내부자 매수 ${fmtUsd(x.insider_buy_usd)}` : null) },
     { h: "금액", num: 1, f: x => x.amount ? "$" + (x.amount / 1e6).toFixed(1) + "M" : null },
-    { h: "공개 세션", f: x => SESS[x.session] || x.session },
+    { h: "공개 세션", f: x => SESS[x.session] || x.session }, { h: "제목", f: x => x.title },
   ], ev, "희석 이벤트 없음 (SEC_USER_AGENT 를 설정하면 공시 본문까지 판정합니다)");
 }
 

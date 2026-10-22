@@ -88,6 +88,8 @@ class CollectorConfig:
     ranking_poll_minutes: int = 10
     edgar_poll_minutes: int = 5
     runner_min_pct: float = 30.0     # 정규장 종가 기준 이만큼 오른 종목을 급등주로 기록
+    news_poll_minutes: int = 2
+    news_feeds: list = field(default_factory=list)   # 비우면 news.DEFAULT_FEEDS
     universe_refresh_hours: int = 24
 
 

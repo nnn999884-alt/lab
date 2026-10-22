@@ -187,9 +187,13 @@ class Data:
         return {"rows": rows, "by_bucket": summary}
 
     def dilution_events(self, limit: int) -> list[dict]:
-        return self.m("""SELECT symbol, form, items, events, direction, amount, accepted, session, trade_date,
-                         insider_buy_usd FROM filings WHERE (events IS NOT NULL AND events != '')
+        rows = self.m("""SELECT symbol, form, items, events, direction, amount, accepted, session, trade_date,
+                         insider_buy_usd, NULL AS title FROM filings WHERE (events IS NOT NULL AND events != '')
                             OR insider_buy_usd > 0 ORDER BY accepted DESC LIMIT ?""", (limit,))
+        rows += self.m("""SELECT symbol, 'NEWS' AS form, '' AS items, events, direction, NULL AS amount,
+                          published AS accepted, session, trade_date, NULL AS insider_buy_usd, title FROM news
+                          WHERE events IS NOT NULL AND events != '' ORDER BY published DESC LIMIT ?""", (limit,))
+        return sorted(rows, key=lambda r: r["accepted"] or "", reverse=True)[:limit]
 
     # ---------- 핵심 가설 점검 ----------
     def research(self, days: int = 20) -> list[dict]:
