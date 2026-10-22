@@ -70,6 +70,8 @@ collector:
   candle_sync_minutes: 30
   ranking_poll_minutes: 10
   edgar_poll_minutes: 5
+  news_poll_minutes: 2        # 보도자료 피드
+  news_feeds: []              # 비우면 기본 4곳 (pennybot/news.py DEFAULT_FEEDS). 주소가 바뀌면 여기서 교체
   universe_refresh_hours: 24
 
 # 세션 매매 엔진 (python -m pennybot trade) — 숫자는 모두 백테스트 전 초안
@@ -89,6 +91,8 @@ trading:
   auto_disable_trades: 20       # 최근 20회 평균 손익이 음수면 그 전략 자동 정지
   regime_symbol: IWM
   regime_drop_pct: 1.5          # 데이마켓 중 IWM −1.5% 이하면 신규 매수 중단
+  use_stream: true              # 토스 웹소켓 (pip install websocket-client). 끊기면 자동으로 REST
+  order_poll_fallback_seconds: 30
   strategies:                   # 바꾸고 싶은 키만 적으면 나머지는 기본값 (전체 목록은 pennybot/config.py)
     runner_overnight:           # 전날 급등 + 희석 여력 낮음 → 데이마켓 매수 → 개장 무렵 매도
       enabled: true
@@ -97,6 +101,8 @@ trading:
       min_rotation: 0.3         # 거래량 / 발행주식
       max_dilution_score: 45    # 희석 위험 점수 상한 (0~100)
       gap_risk_pct: 35          # 밤사이 최악의 갭 가정 → 수량 계산
+      scale_out_pct: 0.5        # 익절가에서 절반만 매도 (1.0 = 전량)
+      trail_pct: 8              # 나머지는 고점 대비 −8% 트레일링 (강제 청산 시각까지)
     dilution_catalyst:          # ATM 종료 · 증자 등록 철회 · 공모 철회 · 자사주 매입
       enabled: true
       max_runup_pct: 15
