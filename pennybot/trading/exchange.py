@@ -140,12 +140,12 @@ class PaperExchange(Exchange):
         self._ids = itertools.count(1)
         self.state = {"cash": cash, "positions": {}, "orders": {}}
         if self.path.exists():
-            self.state = json.loads(self.path.read_text())
+            self.state = json.loads(self.path.read_text(encoding="utf-8"))
             self._ids = itertools.count(len(self.state["orders"]) + 1)
 
     def _save(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(json.dumps(self.state))
+        self.path.write_text(json.dumps(self.state), encoding="utf-8")
 
     def book(self, symbol):
         return self.market.book(symbol)

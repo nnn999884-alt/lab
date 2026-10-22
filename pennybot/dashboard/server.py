@@ -11,11 +11,13 @@ from __future__ import annotations
 import json
 import logging
 import sqlite3
+import threading
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+from ..collector.store import ro_uri
 from ..sessions import SESSIONS, SessionCalendar
 from ..trading.control import Control
 
@@ -34,7 +36,7 @@ class Data:
     def _q(self, db: str, sql: str, args=()) -> list[dict]:
         if not Path(db).exists():
             return []
-        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        con = sqlite3.connect(ro_uri(db), uri=True)
         con.row_factory = sqlite3.Row
         try:
             return [dict(r) for r in con.execute(sql, args).fetchall()]
@@ -317,9 +319,17 @@ def make_server(cfg, host: str = "127.0.0.1", port: int = 8050) -> ThreadingHTTP
     return ThreadingHTTPServer((host, port), handler)
 
 
-def serve(cfg, port: int = 8050) -> None:
-    srv = make_server(cfg, port=port)
-    print(f"대시보드: http://127.0.0.1:{port}  (Ctrl+C 로 종료)")
+def serve(cfg, port: int = 8050, open_browser: bool = True) -> None:
+    try:
+        srv = make_server(cfg, port=port)
+    except OSError as e:
+        raise SystemExit(f"포트 {port} 를 열 수 없습니다 ({e}). 대시보드가 이미 켜져 있거나 다른 프로그램이 쓰는 중입니다."
+                         f" 다른 포트로: dashboard --port 8060")
+    url = f"http://127.0.0.1:{port}"
+    print(f"대시보드: {url}  (이 창을 닫거나 Ctrl+C 로 종료)")
+    if open_browser:
+        import webbrowser
+        threading.Timer(1.0, lambda: webbrowser.open(url)).start()
     try:
         srv.serve_forever()
     except KeyboardInterrupt:

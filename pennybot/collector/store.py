@@ -60,6 +60,11 @@ MIGRATIONS = [
 ]
 
 
+
+def ro_uri(path) -> str:
+    """읽기 전용 SQLite URI. 윈도우 드라이브 경로, 한글·공백·# 이 들어간 경로도 안전하게."""
+    return Path(path).resolve().as_uri() + "?mode=ro"
+
 class Store:
     def __init__(self, path: str | Path):
         Path(path).parent.mkdir(parents=True, exist_ok=True)

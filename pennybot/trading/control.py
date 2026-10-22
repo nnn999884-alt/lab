@@ -20,7 +20,7 @@ class Control:
 
     def load(self) -> dict:
         try:
-            d = json.loads(self.path.read_text())
+            d = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             d = {}
         d.setdefault("kill", False)
@@ -33,7 +33,7 @@ class Control:
     def save(self, d: dict) -> None:
         self.dir.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(d, ensure_ascii=False, indent=2))
+        tmp.write_text(json.dumps(d, ensure_ascii=False, indent=2), encoding="utf-8")
         os.replace(tmp, self.path)
 
     def update(self, **changes) -> dict:

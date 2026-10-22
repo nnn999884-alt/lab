@@ -143,7 +143,7 @@ def build(state_dir: str | Path = "state_demo", seed: int = 7) -> tuple[str, str
                      "session": rnd.choice(["DAY", "AFTER", "PRE"]), "insider_buy_usd": None,
                      "events": ev, "direction": dr, "amount": 4.5e6 if dr < 0 else None}
                     for i, (ev, dr) in enumerate(events)])
-    (d / "control.json").write_text(json.dumps({"kill": False, "flatten": False, "strategies": {}}))
+    (d / "control.json").write_text(json.dumps({"kill": False, "flatten": False, "strategies": {}}), encoding="utf-8")
     _demo_backtests(d, rnd, now)
     return str(d / "trading.db"), str(d / "market.db")
 
@@ -173,4 +173,4 @@ def _demo_backtests(d: Path, rnd, now) -> None:
                "trades": trades}
         out = d / "backtests" / f"demo-{k + 1}"
         out.mkdir(parents=True, exist_ok=True)
-        (out / "report.json").write_text(json.dumps(rep, ensure_ascii=False))
+        (out / "report.json").write_text(json.dumps(rep, ensure_ascii=False), encoding="utf-8")

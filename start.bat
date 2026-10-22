@@ -11,5 +11,3 @@ start "pennybot 수집기" cmd /k "set PYTHONUTF8=1&& .venv\Scripts\python -m pe
 timeout /t 5 /nobreak >nul
 start "pennybot 매매" cmd /k "set PYTHONUTF8=1&& .venv\Scripts\python -m pennybot trade"
 start "pennybot 대시보드" cmd /k "set PYTHONUTF8=1&& .venv\Scripts\python -m pennybot dashboard"
-timeout /t 3 /nobreak >nul
-start http://127.0.0.1:8050

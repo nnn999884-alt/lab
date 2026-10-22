@@ -48,18 +48,18 @@ class DailyBarCache:
     def get(self, symbol: str, today: date, days: int = 180) -> list[Bar]:
         p = self.root / f"{symbol}.json"
         if p.exists():
-            j = json.loads(p.read_text())
+            j = json.loads(p.read_text(encoding="utf-8"))
             if j.get("fetched") == today.isoformat():
                 return [Bar(datetime.fromisoformat(r[0]), *r[1:]) for r in j["bars"]]
         bars = self.feed.get_daily_bars(symbol, days)
         p.write_text(json.dumps({"fetched": today.isoformat(), "bars": [
-            [b.ts.isoformat(), b.open, b.high, b.low, b.close, b.volume] for b in bars]}))
+            [b.ts.isoformat(), b.open, b.high, b.low, b.close, b.volume] for b in bars]}), encoding="utf-8")
         return bars
 
 
 def load_universe(cfg: ScreenerConfig, ticker_rows: list[dict] | None) -> list[str]:
     if cfg.universe_file and Path(cfg.universe_file).exists():
-        syms = [l.strip().upper() for l in Path(cfg.universe_file).read_text().splitlines()]
+        syms = [l.strip().upper() for l in Path(cfg.universe_file).read_text(encoding="utf-8").splitlines()]
         return [s for s in syms if s and not s.startswith("#")]
     if not ticker_rows:
         raise SystemExit("유니버스가 없습니다: screener.universe_file 을 지정하거나 SEC_USER_AGENT 를 설정하세요.")
@@ -134,7 +134,7 @@ def _save(picks: list[Pick], rows: list[dict], root: Path, today: date) -> None:
     (root / "watchlist.json").write_text(json.dumps({
         "date": today.isoformat(),
         "picks": [p.__dict__ for p in picks],
-    }, ensure_ascii=False, indent=2))
+    }, ensure_ascii=False, indent=2), encoding="utf-8")
     if rows:
         d = root / "screens"
         d.mkdir(exist_ok=True)

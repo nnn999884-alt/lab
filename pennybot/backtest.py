@@ -19,6 +19,7 @@ from pathlib import Path
 
 import yaml
 
+from .collector.store import ro_uri
 from .sessions import CLOSED, ET, REGULAR, SessionCalendar, TradingDay, static_day
 from .trading.control import Control
 from .trading.exchange import Book, PaperExchange
@@ -31,7 +32,7 @@ log = logging.getLogger(__name__)
 
 class _DB:
     def __init__(self, path: str):
-        self.db = sqlite3.connect(f"file:{path}?mode=ro", uri=True, check_same_thread=False)
+        self.db = sqlite3.connect(ro_uri(path), uri=True, check_same_thread=False)
 
     def q(self, sql: str, args=()) -> list[tuple]:
         try:
@@ -217,7 +218,7 @@ class Backtest:
                     "ticks": ticks, "params": self.params, "fee_pct": self.fee_pct,
                     "half_spread_pct": self.half_spread_pct, "end_cash": ex.cash(), "open_left": open_left,
                     "start_cash": self.tcfg.paper_cash})
-        (out / "report.json").write_text(json.dumps(rep, ensure_ascii=False, indent=1, default=str))
+        (out / "report.json").write_text(json.dumps(rep, ensure_ascii=False, indent=1, default=str), encoding="utf-8")
         return rep
 
 

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sys
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 
@@ -179,7 +180,7 @@ def cmd_probe_orders(cfg: Config, symbol: str, confirmed: bool) -> None:
     log.append({"step": "미체결 목록", "open": sorted(open_ids & {o1, o2, o3} - {None})})
     out = Path(cfg.state_dir) / "probe_orders.json"
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(log, ensure_ascii=False, indent=2))
+    out.write_text(json.dumps(log, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"\n결과 저장: {out} — 정정 후 원주문이 REPLACED 인지, 취소 후 어느 id 가 CANCELED 가 되는지 확인하세요.")
 
 
@@ -270,6 +271,11 @@ def main() -> None:
     ap.add_argument("--out", help="backtest: 결과 폴더")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
+    for stream in (sys.stdout, sys.stderr):    # 윈도우 콘솔(cp949)에서 이모지 때문에 멈추지 않게
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError):
+            pass
 
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO,
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")

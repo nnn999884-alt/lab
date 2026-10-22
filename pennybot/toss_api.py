@@ -64,7 +64,7 @@ class TokenStore:
 
     def load(self) -> tuple[str, float] | None:
         try:
-            j = json.loads(self.path.read_text())
+            j = json.loads(self.path.read_text(encoding="utf-8"))
             return j["access_token"], float(j["expires_at"])
         except (OSError, ValueError, KeyError):
             return None
@@ -72,7 +72,7 @@ class TokenStore:
     def save(self, token: str, expires_at: float) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(".tmp")
-        tmp.write_text(json.dumps({"access_token": token, "expires_at": expires_at}))
+        tmp.write_text(json.dumps({"access_token": token, "expires_at": expires_at}), encoding="utf-8")
         os.chmod(tmp, 0o600)
         tmp.replace(self.path)
 

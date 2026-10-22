@@ -24,14 +24,14 @@ class RiskManager:
 
     def _load(self) -> None:
         if self.path.exists():
-            s = json.loads(self.path.read_text())
+            s = json.loads(self.path.read_text(encoding="utf-8"))
             if s.get("day") == self.day:
                 self.realized_pnl = s.get("realized_pnl", 0.0)
                 self.trades = s.get("trades", 0)
 
     def _save(self) -> None:
         self.path.write_text(json.dumps(
-            {"day": self.day, "realized_pnl": self.realized_pnl, "trades": self.trades}))
+            {"day": self.day, "realized_pnl": self.realized_pnl, "trades": self.trades}), encoding="utf-8")
 
     def roll_day(self, today: date) -> None:
         if today.isoformat() != self.day:

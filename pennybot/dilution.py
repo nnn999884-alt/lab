@@ -298,7 +298,7 @@ class DilutionService:
     def _events_for(self, cik: int, f: ed.Filing) -> list[Event]:
         path = self.dir / f"{f.accession}.json"
         if path.exists():
-            return [Event(**{**e, "filed": date.fromisoformat(e["filed"])}) for e in json.loads(path.read_text())]
+            return [Event(**{**e, "filed": date.fromisoformat(e["filed"])}) for e in json.loads(path.read_text(encoding="utf-8"))]
         text, ex10 = "", []
         if f.form.upper().startswith(TEXT_FORMS) and f.primary_doc:
             try:
@@ -316,7 +316,7 @@ class DilutionService:
                 if e.direction < 0 and e.kind not in have:
                     evs.append(e)
                     have.add(e.kind)
-        path.write_text(json.dumps([{**asdict(e), "filed": e.filed.isoformat()} for e in evs], ensure_ascii=False))
+        path.write_text(json.dumps([{**asdict(e), "filed": e.filed.isoformat()} for e in evs], ensure_ascii=False), encoding="utf-8")
         return evs
 
     def _with_exhibits(self, cik: int, f: ed.Filing, text: str) -> tuple[str, list[str]]:

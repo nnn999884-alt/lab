@@ -8,6 +8,7 @@ import logging
 import sqlite3
 from datetime import date, datetime, timedelta, timezone
 
+from ..collector.store import ro_uri
 from ..sessions import AFTER, DAY, REGULAR, SessionCalendar
 
 log = logging.getLogger(__name__)
@@ -20,7 +21,7 @@ def _utc(ts: datetime) -> str:
 
 class MarketView:
     def __init__(self, db_path: str, client, calendar: SessionCalendar, exchange, clock=None):
-        self.db = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, check_same_thread=False) \
+        self.db = sqlite3.connect(ro_uri(db_path), uri=True, check_same_thread=False) \
             if db_path != ":memory:" else sqlite3.connect(":memory:")
         self.c = client
         self.cal = calendar

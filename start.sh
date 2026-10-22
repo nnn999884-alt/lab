@@ -8,7 +8,6 @@ sleep 5
 .venv/bin/python -m pennybot trade     >> state/logs/trade.log 2>&1 & P2=$!
 .venv/bin/python -m pennybot dashboard >> state/logs/dashboard.log 2>&1 & P3=$!
 trap 'kill $P1 $P2 $P3 2>/dev/null' EXIT INT TERM
-sleep 3
-(command -v open >/dev/null && open http://127.0.0.1:8050) || echo "브라우저에서 http://127.0.0.1:8050"
+echo "대시보드: http://127.0.0.1:8050 (브라우저가 자동으로 열립니다)"
 echo "실행 중 (로그: state/logs/). 끄려면 Ctrl+C"
 wait
