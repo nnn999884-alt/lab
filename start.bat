@@ -6,8 +6,9 @@ if not exist .venv\Scripts\python.exe (
   pause
   exit /b 1
 )
-echo 수집기 / 매매 봇 / 대시보드를 각각 새 창으로 띄웁니다. 창을 닫으면 그 프로그램이 멈춥니다.
-start "pennybot 수집기" cmd /k "set PYTHONUTF8=1&& .venv\Scripts\python -m pennybot collect"
+echo 수집기 / 매매 봇 / 대시보드를 각각 새 창으로 띄웁니다.
+echo 오류로 꺼지면 30초 뒤 자동으로 다시 켜집니다. 그만두려면 창을 닫으세요. 기록: state\logs
+start "pennybot 수집기" cmd /c run_forever.bat collect
 timeout /t 5 /nobreak >nul
-start "pennybot 매매" cmd /k "set PYTHONUTF8=1&& .venv\Scripts\python -m pennybot trade"
-start "pennybot 대시보드" cmd /k "set PYTHONUTF8=1&& .venv\Scripts\python -m pennybot dashboard"
+start "pennybot 매매" cmd /c run_forever.bat trade
+start "pennybot 대시보드" cmd /c run_forever.bat dashboard

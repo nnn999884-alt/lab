@@ -99,6 +99,11 @@ class MarketView:
             return {}
         return dict(self.q("SELECT symbol, last FROM prices WHERE ts=?", (r[0][0],)))
 
+    def last_collect_ts(self) -> datetime | None:
+        """수집기가 마지막으로 현재가를 기록한 시각 (수집기 생존 확인용)."""
+        r = self.q("SELECT MAX(ts) FROM prices WHERE ts <= ?", (self._asof(),))
+        return datetime.fromisoformat(r[0][0]) if r and r[0][0] else None
+
     # ---------- 주목도 / 공시 ----------
     def attention(self, prev_date: date, limit: int = 60) -> list[tuple[str, int]]:
         """직전 영업일 정규장·애프터의 시장 거래대금/급등 랭킹에 오른 종목, 최고 순위 순."""

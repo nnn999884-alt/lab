@@ -85,13 +85,14 @@ class Journal:
         return self.q(f"SELECT * FROM trades WHERE status IN {OPEN_STATES} AND mode=? ORDER BY id",
                       (self.mode,))
 
-    def record_entry_fill(self, trade_id: int, qty: int, price: float, session: str, now: datetime) -> None:
+    def record_entry_fill(self, trade_id: int, qty: int, price: float, session: str, now: datetime,
+                          fee: float = 0.0) -> None:
         t = self.trade(trade_id)
         new_qty = t["qty"] + qty
         avg = ((t["entry_price"] or 0) * t["qty"] + price * qty) / new_qty
-        self._x("""UPDATE trades SET qty=?, remaining=remaining+?, entry_price=?, status='OPEN',
+        self._x("""UPDATE trades SET qty=?, remaining=remaining+?, entry_price=?, status='OPEN', fees=fees+?,
                    entry_ts=COALESCE(entry_ts, ?), entry_session=COALESCE(entry_session, ?) WHERE id=?""",
-                (new_qty, qty, avg, now_iso(now), session, trade_id))
+                (new_qty, qty, avg, fee, now_iso(now), session, trade_id))
 
     def entry_finished(self, trade_id: int) -> None:
         """매수 주문이 끝났는데 체결이 0이면 취소 처리."""
@@ -118,20 +119,23 @@ class Journal:
         self._x("UPDATE trades SET scaled=?, stop=MAX(stop, COALESCE(?, stop)) WHERE id=?",
                 (int(scaled), stop, trade_id))
 
-    def record_exit_fill(self, trade_id: int, qty: int, price: float, session: str, now: datetime) -> dict:
+    def record_exit_fill(self, trade_id: int, qty: int, price: float, session: str, now: datetime,
+                         fee: float = 0.0) -> dict:
+        """pnl·pnl_pct 는 수수료를 뺀 순손익 (fees 에 매수·매도 수수료 합계)."""
         t = self.trade(trade_id)
         remaining = max(t["remaining"] - qty, 0)
         exited = t["exited_qty"] + qty
         value = t["exit_value"] + qty * price
-        self._x("UPDATE trades SET remaining=?, exited_qty=?, exit_value=? WHERE id=?",
-                (remaining, exited, value, trade_id))
+        fees = (t["fees"] or 0) + fee
+        self._x("UPDATE trades SET remaining=?, exited_qty=?, exit_value=?, fees=? WHERE id=?",
+                (remaining, exited, value, fees, trade_id))
         if remaining == 0:
             exit_price = value / exited
-            pnl = (exit_price - t["entry_price"]) * exited
+            pnl = (exit_price - t["entry_price"]) * exited - fees
             self._x("""UPDATE trades SET status='CLOSED', exit_price=?, exit_ts=?, exit_session=?,
                        pnl=?, pnl_pct=? WHERE id=?""",
                     (exit_price, now_iso(now), session, pnl,
-                     (exit_price / t["entry_price"] - 1) * 100, trade_id))
+                     pnl / (t["entry_price"] * exited) * 100, trade_id))
         return self.trade(trade_id)
 
     def exit_unfilled(self, trade_id: int) -> None:

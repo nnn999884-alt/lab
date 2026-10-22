@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
-from ..sessions import CLOSED, DAY, KST, REGULAR, SessionCalendar
+from ..sessions import AFTER, CLOSED, DAY, KST, REGULAR, SessionCalendar
 from .control import Control
 from .exchange import TERMINAL, Exchange
 from .journal import Journal
@@ -115,6 +115,8 @@ class Trader:
             log.info("세션 변경 %s → %s: 걸린 주문 모두 취소", self.last_session, session)
             self.cancel_all(now, "세션 변경")
             self.poll_orders(now, session)
+            if session == AFTER and trade_date:
+                self.notifier.send(self.report_text(trade_date))   # 정규장 마감 = 그 영업일 매매 끝
         self.last_session = session
         self.status = {"session": session, "trade_date": str(trade_date) if trade_date else None,
                        "mode": self.journal.mode, "working": len(self.working)}
@@ -134,6 +136,8 @@ class Trader:
             self.snapshot(now, trade_date)
         if self._due("reconcile", now, timedelta(minutes=15)):
             self.reconcile()
+        if session != CLOSED and self._due("watchdog", now, timedelta(minutes=5)):
+            self.watchdog(now, trade_date, session)
         self.journal.beat("trader", self.status, now)
 
     def run(self, sleep=time.sleep) -> None:
@@ -141,9 +145,9 @@ class Trader:
         while True:
             try:
                 self.tick()
-            except Exception:
+            except Exception as e:
                 log.exception("틱 실패")
-                self.notifier.send("⚠️ 매매 엔진 오류 (로그 확인)")
+                self.notifier.send(f"⚠️ 매매 엔진 오류: {type(e).__name__}: {e}"[:300], key="tick-error", every=1800)
             for _ in range(10):          # 5초 간격, 주문 이벤트가 오면 바로 다음 틱
                 if self.stream is not None and self.stream.has_events():
                     break
@@ -223,10 +227,10 @@ class Trader:
 
     def _on_fill(self, w: Working, delta: int, px: float, session: str, now: datetime) -> None:
         if w.purpose == "entry":
-            self.journal.record_entry_fill(w.trade_id, delta, px, session, now)
+            self.journal.record_entry_fill(w.trade_id, delta, px, session, now, fee=self._fee(delta, px))
             self.notifier.send(f"🟢 매수 체결 {w.symbol} {delta}주 @ ${px:.4f}")
             return
-        t = self.journal.record_exit_fill(w.trade_id, delta, px, session, now)
+        t = self.journal.record_exit_fill(w.trade_id, delta, px, session, now, fee=self._fee(delta, px))
         if w.scale and not t["scaled"]:
             self.journal.set_scaled(w.trade_id, True, stop=t["entry_price"])   # 나머지는 본전 손절 + 트레일링
             self.notifier.send(f"🟡 분할 익절 {t['symbol']} {delta}주 @ ${px:.4f} → 나머지 {t['remaining']}주 트레일링")
@@ -234,6 +238,9 @@ class Trader:
             self.exit_reprices.pop(w.trade_id, None)
             self.notifier.send(f"🔵 청산 {t['symbol']} ({t['exit_reason']}) "
                                f"{t['pnl']:+.2f}$ ({t['pnl_pct']:+.1f}%)")
+
+    def _fee(self, qty: int, px: float) -> float:
+        return qty * px * self.tcfg.fee_pct / 100
 
     def _exit_price(self, b, aggressive: bool, exhausted: bool, session: str) -> tuple[bool, float | None]:
         """(낼 수 있는지, 가격). 가격 None = 시장가. 호가가 없으면 정규장의 공격적 청산만 시장가."""
@@ -551,6 +558,49 @@ class Trader:
         self.working[o["order_id"]] = Working(o["order_id"], trade_id, purpose, symbol, side, now, note=note,
                                               aggressive=aggressive, qty=qty, scale=scale, ids=[o["order_id"]])
         self.poll_orders(now, session)   # 즉시 체결분 반영
+
+    # ---------- 감시·보고 ----------
+    def watchdog(self, now: datetime, trade_date, session: str) -> None:
+        """수집기가 멈추면 전략이 오래된 데이터로 판단하게 된다 → 알림."""
+        b = self.cal.bounds(trade_date, session) if trade_date else None
+        if not b or (now - b[0]).total_seconds() < 900:
+            return                          # 세션 시작 직후는 아직 수집 전일 수 있다
+        last = self.mv.last_collect_ts() if hasattr(self.mv, "last_collect_ts") else None
+        age = (now - last).total_seconds() / 60 if last else None
+        self.status["collector_age_min"] = round(age, 1) if age is not None else None
+        if age is None or age > 10:
+            what = "한 번도 기록하지 않았" if age is None else f"{age:.0f}분째 멈춰 있"
+            self.notifier.send(f"⚠️ 수집기가 {what}습니다. python -m pennybot collect 창을 확인하세요.",
+                               key="collector-stale", every=3600)
+
+    def status_text(self) -> str:
+        st = self.status
+        lines = [f"[{st.get('mode', '-')}] {st.get('trade_date') or '-'} {st.get('session', '-')}"
+                 f" · 걸린 주문 {st.get('working', 0)} · 시장 {st.get('regime', '-')}"]
+        if self.control.load()["kill"]:
+            lines.append("⛔ 신규 매수 중단 상태")
+        held = self.journal.open_trades()
+        for t in held:
+            lines.append(f"{t['symbol']} {t['status']} {t['remaining']}주 @ ${t['entry_price'] or 0:.4f}"
+                         f" 손절 ${t['stop']:.4f}" + (" · 안전망" if t["backstop_id"] else ""))
+        if not held:
+            lines.append("보유 종목 없음")
+        return "\n".join(lines)
+
+    def report_text(self, trade_date=None) -> str:
+        td = str(trade_date or self.status.get("trade_date") or "")
+        rows = self.journal.q("""SELECT symbol, pnl, pnl_pct, exit_reason FROM trades
+                                 WHERE status='CLOSED' AND trade_date=? AND mode=? ORDER BY id""",
+                              (td, self.journal.mode))
+        nets = [r["pnl"] or 0 for r in rows]          # pnl 은 이미 수수료 차감
+        lines = [f"📊 {td} 결과: {len(rows)}건, 승 {sum(1 for n in nets if n > 0)}, "
+                 f"순손익 {sum(nets):+.2f}$ (수수료 차감)"]
+        lines += [f"  {r['symbol']} {r['pnl_pct']:+.1f}% {n:+.2f}$ ({r['exit_reason']})"
+                  for r, n in list(zip(rows, nets))[:15]]
+        left = self.journal.open_trades()
+        if left:
+            lines.append("⚠️ 아직 보유: " + ", ".join(f"{t['symbol']} {t['remaining']}주" for t in left))
+        return "\n".join(lines)
 
     # ---------- 계좌 ----------
     def account(self) -> Account:

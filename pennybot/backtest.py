@@ -137,12 +137,11 @@ def _stats(rows: list[dict]) -> dict:
             "expectancy": sum(r["net"] for r in rows) / n, "max_drawdown": dd}
 
 
-def report(journal: Journal, fee_pct: float, dates: list[str], train_frac: float) -> dict:
-    fee = fee_pct / 100
+def report(journal: Journal, dates: list[str], train_frac: float) -> dict:
     rows = journal.q("""SELECT id, strategy, symbol, trade_date, qty, entry_price, exit_value, pnl, pnl_pct,
                         exit_reason, entry_session, exit_session FROM trades WHERE status='CLOSED' ORDER BY id""")
     for r in rows:
-        r["net"] = r["pnl"] - fee * (r["entry_price"] * r["qty"] + r["exit_value"])
+        r["net"] = r["pnl"]                 # 매매 기록의 손익은 이미 수수료 차감
     cut = dates[min(int(len(dates) * train_frac), len(dates) - 1)] if dates else None
     train = [r for r in rows if cut is None or r["trade_date"] < cut]
     test = [r for r in rows if cut is not None and r["trade_date"] >= cut]
@@ -187,6 +186,7 @@ class Backtest:
         cal = replay_calendar(db, self.start, self.end)
         market = ReplayMarket(self.db_path, now_fn, half_spread_pct=self.half_spread_pct,
                               assumed_size=self.assumed_size)
+        self.tcfg.fee_pct = self.fee_pct
         ex = PaperExchange(market, self.tcfg.paper_cash, out / "paper.json", fee_pct=self.fee_pct)
         mv = MarketView(self.db_path, ReplayClient(self.db_path, cal, now_fn), cal, ex, clock=now_fn)
         journal = Journal(out / "backtest.db", mode="backtest")
@@ -212,7 +212,7 @@ class Backtest:
                      for t in journal.open_trades()]
         dates = [d for (d,) in db.q("""SELECT DISTINCT trade_date FROM prices WHERE trade_date BETWEEN ? AND ?
                                         ORDER BY 1""", (self.start.isoformat(), self.end.isoformat()))]
-        rep = report(journal, self.fee_pct, dates, self.train_frac)
+        rep = report(journal, dates, self.train_frac)
         rep.update({"created": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                     "start": self.start.isoformat(), "end": self.end.isoformat(), "days": len(dates),
                     "ticks": ticks, "params": self.params, "fee_pct": self.fee_pct,

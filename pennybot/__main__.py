@@ -44,6 +44,17 @@ def _fundamentals(cfg: Config, client):
     return dil, Fundamentals(client, dil)
 
 
+def setup_file_log(cfg: Config, name: str) -> None:
+    """state/logs/<name>.log 에도 남긴다 (창을 닫아도 기록이 남게). 5MB × 5개 순환."""
+    from logging.handlers import RotatingFileHandler
+    from pathlib import Path
+    d = Path(cfg.state_dir) / "logs"
+    d.mkdir(parents=True, exist_ok=True)
+    h = RotatingFileHandler(d / f"{name}.log", maxBytes=5_000_000, backupCount=5, encoding="utf-8")
+    h.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    logging.getLogger().addHandler(h)
+
+
 def _edgar(cfg: Config):
     from .screener.edgar import EdgarClient
     if not cfg.sec_user_agent:
@@ -84,6 +95,7 @@ def cmd_accounts(cfg: Config) -> None:
 def cmd_collect(cfg: Config, once: bool) -> None:
     from .collector import Collector, Store
     from .sessions import SessionCalendar
+    setup_file_log(cfg, "collect")
     client = make_client(cfg, "collector")
     dil, fund = _fundamentals(cfg, client)
     from .news import NewsClient
@@ -107,10 +119,19 @@ def cmd_trade(cfg: Config, once: bool) -> None:
     from .sessions import SessionCalendar
     from .trading import Control, Journal, LiveExchange, PaperExchange, TossMarket, Trader
     from .trading.market import MarketView
-    from .trading.notify import Notifier
+    from .trading.notify import Notifier, TelegramCommands
 
+    setup_file_log(cfg, "trade")
     client = make_client(cfg, "trader")
     t = cfg.trading
+    if cfg.is_live:
+        try:
+            rate = client.commission_rate("US")
+            if rate is not None:
+                t.fee_pct = rate * 100
+                logging.info("토스 미국 주식 수수료 %.3f%%", t.fee_pct)
+        except Exception as e:
+            logging.warning("수수료 조회 실패 → 설정값 %.3f%% 사용 (%s)", t.fee_pct, e)
     market, stream = TossMarket(client), None
     if t.use_stream:
         from . import stream as ws
@@ -124,7 +145,7 @@ def cmd_trade(cfg: Config, once: bool) -> None:
         ex = LiveExchange(client, market)
         logging.warning("⚠️  실거래 모드: 토스증권 계좌로 실제 주문이 나갑니다.")
     else:
-        ex = PaperExchange(market, t.paper_cash, Path(cfg.state_dir) / "paper_account.json")
+        ex = PaperExchange(market, t.paper_cash, Path(cfg.state_dir) / "paper_account.json", fee_pct=t.fee_pct)
     cal = SessionCalendar(client)
     if not Path(cfg.collector.db_path).exists():
         logging.warning("수집기 DB(%s)가 없습니다. 'python -m pennybot collect' 를 같이 돌려야 전략이 후보를 찾습니다.",
@@ -132,9 +153,14 @@ def cmd_trade(cfg: Config, once: bool) -> None:
         from .collector import Store
         Store(cfg.collector.db_path)
     _, fund = _fundamentals(cfg, client)
+    notifier = Notifier(t.notify_webhook, t.telegram_token, t.telegram_chat)
+    control = Control(cfg.state_dir)
     trader = Trader(ex, Journal(t.db_path, mode=cfg.mode), cal,
-                    MarketView(cfg.collector.db_path, client, cal, ex), t, Control(cfg.state_dir),
-                    Notifier(t.notify_webhook), fund=fund, stream=stream)
+                    MarketView(cfg.collector.db_path, client, cal, ex), t, control,
+                    notifier, fund=fund, stream=stream)
+    if t.telegram_token and t.telegram_chat and not once:
+        TelegramCommands(t.telegram_token, t.telegram_chat, control, trader, notifier).start()
+        notifier.send(f"🤖 매매 봇 시작 ({cfg.mode}). /상태 로 확인")
     if once:
         trader.tick()
     else:

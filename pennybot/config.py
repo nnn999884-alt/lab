@@ -112,6 +112,7 @@ class TradingConfig:
     day_open_wait_minutes: int = 15      # 데이마켓 개장 직후 호가가 얇을 때는 매수하지 않음
     min_book_ratio: float = 0.3          # 최우선 매도 잔량이 주문 수량의 30% 이상일 때만 (아니면 수량 축소)
     stale_alert_minutes: int = 30        # 강제 청산 시각이 이만큼 지나도 남아 있으면 알림
+    fee_pct: float = 0.1                 # 매매 수수료 % (실거래는 시작할 때 토스 /commissions 값으로 덮어씀)
     use_stream: bool = True              # 토스 웹소켓(호가·체결·내 주문 이벤트). 끊기면 자동으로 REST
     stream_max_age_seconds: float = 5.0  # 웹소켓 호가가 이보다 오래되면 REST 호가
     order_poll_fallback_seconds: int = 30  # 웹소켓 연결 중에도 주문을 이 주기로는 REST 확인
@@ -131,6 +132,8 @@ class TradingConfig:
     regime_symbol: str = "IWM"           # 소형주 시장 상태 (데이마켓에서도 거래됨)
     regime_drop_pct: float = 1.5         # 데이마켓 중 IWM 이 전일 종가 대비 이만큼 빠지면 신규 매수 중단
     notify_webhook: str = ""             # 디스코드/슬랙 웹훅 (환경변수 PENNYBOT_WEBHOOK 우선)
+    telegram_token: str = ""             # 텔레그램 봇 토큰·내 chat id: 환경변수 PENNYBOT_TELEGRAM_TOKEN / _CHAT
+    telegram_chat: str = ""
     strategies: dict = field(default_factory=lambda: {
         # gap_risk_pct: 밤사이 최악의 갭(%) — 수량은 손절폭이 아니라 이 갭을 기준으로 정한다
         "runner_overnight": {"enabled": True, "budget_pct": 0.40, "max_positions": 4,
@@ -229,6 +232,8 @@ def load_config(path: str | Path = "config.yaml") -> Config:
     cfg.toss.account = os.getenv("TOSS_ACCOUNT", "")
     cfg.sec_user_agent = os.getenv("SEC_USER_AGENT", "")
     cfg.trading.notify_webhook = os.getenv("PENNYBOT_WEBHOOK", cfg.trading.notify_webhook)
+    cfg.trading.telegram_token = os.getenv("PENNYBOT_TELEGRAM_TOKEN", "")
+    cfg.trading.telegram_chat = os.getenv("PENNYBOT_TELEGRAM_CHAT", "")
 
     # 실거래는 yaml + 환경변수 이중 확인
     if cfg.is_live and os.getenv("PENNYBOT_LIVE_CONFIRM") != "YES":
