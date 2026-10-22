@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
-from ..sessions import CLOSED, DAY, REGULAR, SessionCalendar
+from ..sessions import CLOSED, DAY, KST, REGULAR, SessionCalendar
 from .control import Control
 from .exchange import TERMINAL, Exchange
 from .journal import Journal
@@ -121,6 +121,7 @@ class Trader:
         if self.stream is not None:
             self.status["stream"] = "연결" if self.stream.healthy else f"끊김 → REST ({self.stream.last_error})"[:120]
 
+        self.sync_backstops(now, session)
         if session != CLOSED:
             ctl = self.control.load()
             if ctl["flatten"]:
@@ -294,6 +295,80 @@ class Trader:
         for key in list(self.working):
             self._cancel(key, why, now)
 
+    # ---------- 서버 손절 안전망 ----------
+    def _backstop_target(self, t: dict) -> tuple[int, float, float]:
+        trig = t["stop"] * (1 - self.tcfg.backstop_buffer_pct / 100)
+        return t["remaining"], trig, trig * (1 - self.tcfg.backstop_slippage_pct / 100)
+
+    def sync_backstops(self, now: datetime, session: str) -> None:
+        """보유 중인 매매마다 토스 조건주문(손절가 아래 매도)을 유지한다. 발동되면 그 주문을 이어받아 체결을 기록."""
+        if not self.tcfg.backstop:
+            return
+        busy = {w.trade_id for w in self.working.values()}
+        check = self._due("backstop", now, timedelta(seconds=self.tcfg.backstop_check_seconds))
+        for t in self.journal.open_trades():
+            sid = t["backstop_id"]
+            if sid and check and not self._check_backstop(t, now, session):
+                sid = None
+            if t["status"] != "OPEN" or t["remaining"] <= 0 or t["id"] in busy or not t["stop"]:
+                continue
+            qty, trig, lim = self._backstop_target(t)
+            if sid and t["backstop_qty"] == qty and abs((t["backstop_trigger"] or 0) - trig) <= trig * 0.005:
+                continue
+            if sid and not self._cancel_backstop(t, now, session):
+                continue
+            expire = (datetime.fromisoformat(t["deadline"]).astimezone(KST).date() + timedelta(days=1)).isoformat()
+            try:
+                new = self.ex.place_stop(t["symbol"], qty, trig, lim, expire)
+            except Exception as e:
+                log.warning("서버 손절 안전망 등록 실패 %s: %s", t["symbol"], e)
+                continue
+            self.journal.set_backstop(t["id"], new, qty, trig)
+            log.info("서버 손절 안전망 %s %d주 감시가 $%.4f", t["symbol"], qty, trig)
+
+    def _check_backstop(self, t: dict, now: datetime, session: str) -> bool:
+        """→ 아직 살아 있으면 True."""
+        try:
+            st = self.ex.stop_status(t["backstop_id"])
+        except Exception as e:
+            log.debug("조건주문 조회 실패 %s: %s", t["backstop_id"], e)
+            return True
+        if st.get("order_id"):
+            self._adopt_backstop(t, st["order_id"], now, session)
+            return False
+        if st.get("status") in ("EXPIRED", "CANCELED", "COMPLETED"):
+            self.journal.set_backstop(t["id"], None)
+            return False
+        return True
+
+    def _cancel_backstop(self, t: dict, now: datetime, session: str) -> bool:
+        """→ 취소됐으면 True. 이미 발동됐으면 그 주문을 이어받고 False (봇이 또 팔지 않게)."""
+        try:
+            self.ex.cancel_stop(t["backstop_id"])
+        except Exception as e:
+            if self._check_backstop(t, now, session):
+                log.warning("서버 손절 안전망 취소 실패 %s: %s", t["symbol"], e)
+            return False
+        self.journal.set_backstop(t["id"], None)
+        return True
+
+    def _adopt_backstop(self, t: dict, order_id: str, now: datetime, session: str) -> None:
+        self.journal.set_backstop(t["id"], None)
+        if any(order_id in w.ids for w in self.working.values()):
+            return
+        try:
+            o = self.ex.order(order_id)
+        except Exception:
+            o = {"order_id": order_id, "symbol": t["symbol"], "side": "SELL", "type": "LIMIT",
+                 "qty": t["remaining"], "price": None, "status": "OPEN", "filled": 0, "avg_price": None}
+        reason = "서버 손절 안전망 발동"
+        self.journal.set_exiting(t["id"], reason)
+        self.journal.log_order(o, trade_id=t["id"], purpose="exit", session=session, now=now, note=reason)
+        self.working[order_id] = Working(order_id, t["id"], "exit", t["symbol"], "SELL", now, note=reason,
+                                         aggressive=True, qty=o["qty"], ids=[order_id])
+        self.notifier.send(f"🛑 {t['symbol']} 서버 손절 안전망 발동 — 봇이 이어서 추적합니다")
+        self.poll_orders(now, session)
+
     # ---------- 청산 ----------
     def _bad_news(self, t: dict) -> str | None:
         """매수 이후 접수된 악재 공시(증자·상폐 등)."""
@@ -360,6 +435,8 @@ class Trader:
             if not ok:
                 log.info("%s 호가 없음 → 청산 보류 (%s)", t["symbol"], session)
                 continue
+            if t["backstop_id"] and not self._cancel_backstop(t, now, session):
+                continue                     # 안전망이 이미 발동 → 그 주문을 따라간다
             # 같은 매매의 매수 미체결분은 먼저 취소 (팔면서 사지 않게)
             for key, w in list(self.working.items()):
                 if w.trade_id == t["id"] and w.purpose == "entry":

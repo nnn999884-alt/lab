@@ -37,6 +37,7 @@ _GROUPS = {
     "/api/v1/rankings": "RANKING",
     "/api/v1/accounts": "ACCOUNT", "/api/v1/holdings": "ASSET",
     "/api/v1/buying-power": "ORDER_INFO", "/api/v1/sellable-quantity": "ORDER_INFO",
+    "/api/v1/commissions": "ORDER_INFO",
 }
 
 
@@ -47,6 +48,8 @@ def group_of(path: str, method: str = "GET") -> str:
         return "STOCK"
     if path.startswith("/api/v1/orders"):
         return "ORDER" if method != "GET" else "ORDER_HISTORY"
+    if path.startswith("/api/v1/conditional-orders"):
+        return "CONDITIONAL_ORDER" if method != "GET" else "CONDITIONAL_ORDER_HISTORY"
     return "DEFAULT"
 
 
@@ -160,6 +163,8 @@ class TossClient:
                 raise ValueError("TOSS_ACCOUNT(accountSeq)가 필요합니다. python -m pennybot accounts 로 확인하세요.")
             headers["X-Tossinvest-Account"] = self.account_seq
         force_token = False
+        # 주문 생성·정정·취소(POST /orders…, 조건주문)는 재시도하면 중복 위험 → 5xx·응답 대기 시간초과는 재시도하지 않는다
+        order_post = method == "POST" and path.startswith(("/api/v1/orders", "/api/v1/conditional-orders"))
         for attempt in range(retries + 1):
             self._throttle(group)
             headers["Authorization"] = f"Bearer {self._get_token(force_token)}"
@@ -167,7 +172,8 @@ class TossClient:
                 r = self.s.request(method, self.base_url + path, params=params, json=json_body,
                                    headers=headers, timeout=15)
             except requests.RequestException as e:
-                if attempt == retries:
+                # 연결 자체가 안 된 경우만 재시도 (보냈는데 응답만 못 받은 경우 주문이 이미 접수됐을 수 있음)
+                if attempt == retries or (order_post and not isinstance(e, requests.ConnectionError)):
                     raise
                 log.warning("네트워크 오류 %s %s: %s", method, path, e)
                 self._sleep(min(2 ** attempt, 30))
@@ -181,9 +187,7 @@ class TossClient:
                 log.warning("한도 초과 [%s] %.1fs 대기", group, wait)
                 self._sleep(wait)
                 continue
-            # 주문 생성·정정·취소(POST /orders…)는 재시도하면 중복 위험 → 5xx 여도 재시도하지 않는다
-            retry_5xx = not (method == "POST" and path.startswith("/api/v1/orders"))
-            if r.status_code >= 500 and retry_5xx and attempt < retries:
+            if r.status_code >= 500 and not order_post and attempt < retries:
                 self._sleep(min(2 ** attempt, 30))
                 continue
             if not r.ok:
@@ -264,6 +268,37 @@ class TossClient:
         """미국 주식은 가격만 정정 가능 (수량 전달 시 400). price=None 이면 시장가로 정정. → {'orderId': 새 id}"""
         body = {"orderType": "MARKET"} if price is None else {"orderType": "LIMIT", "price": us_price_str(price)}
         return self.request("POST", f"/api/v1/orders/{order_id}/modify", json_body=body, account=True)
+
+
+    def sellable_quantity(self, symbol: str) -> float:
+        r = self.request("GET", "/api/v1/sellable-quantity", params={"symbol": symbol}, account=True) or {}
+        return float(r.get("sellableQuantity") or 0)
+
+    def commission_rate(self, market: str = "US") -> float | None:
+        """매매 수수료율 (소수 비율, 0.001 = 0.1%)."""
+        for c in self.request("GET", "/api/v1/commissions", account=True) or []:
+            if c.get("marketCountry") == market and c.get("commissionRate") is not None:
+                return float(c["commissionRate"])
+        return None
+
+    # ---------- 조건주문 (미국 주식은 모든 세션에서 발동) ----------
+    def create_stop_order(self, symbol: str, qty: int, trigger: float, limit: float | None,
+                          expire: str, client_id: str | None = None) -> str:
+        """가격이 trigger 에 닿으면 매도. limit=None 이면 시장가. → conditionalOrderId"""
+        first = {"orderSide": "SELL", "triggerPrice": us_price_str(trigger)}
+        if limit is not None:
+            first["orderPrice"] = us_price_str(limit)
+        body = {"symbol": symbol, "type": "SINGLE", "quantity": str(int(qty)),
+                "orderType": "MARKET" if limit is None else "LIMIT", "expireDate": expire, "first": first}
+        if client_id:
+            body["clientOrderId"] = client_id
+        return self.request("POST", "/api/v1/conditional-orders", json_body=body, account=True)["conditionalOrderId"]
+
+    def get_conditional_order(self, cid: str) -> dict:
+        return self.request("GET", f"/api/v1/conditional-orders/{cid}", account=True)
+
+    def cancel_conditional_order(self, cid: str) -> None:
+        self.request("DELETE", f"/api/v1/conditional-orders/{cid}", account=True)
 
 
 def us_price_str(price: float) -> str:

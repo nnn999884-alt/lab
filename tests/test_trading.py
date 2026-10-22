@@ -330,6 +330,7 @@ def test_modify_lineage_sums_fills_across_ids(env):
     tr, market, mv, clock, j, ctl, ex = env
     market.set("PEN", 1.03, 1.035)
     tr.tick()
+    tr.tick()
     qty = j.q("SELECT qty FROM trades")[0]["qty"]
     clock[0] = et(9, 5)                              # 매도 구간
     market.set("PEN", 1.10, 1.12, size=100)          # 첫 주문은 100주만 체결
@@ -449,3 +450,48 @@ def test_stream_events_drive_order_polling(env):
     clock[0] += timedelta(seconds=5)
     tr.tick()
     assert len(calls) == 3
+
+
+def test_backstop_placed_resized_after_scale_and_cancelled_before_exit(env):
+    tr, market, mv, clock, j, ctl, ex = env
+    market.set("PEN", 1.03, 1.035)
+    tr.tick()
+    tr.tick()                                         # 매수 체결 다음 틱에 안전망
+    t = j.q("SELECT * FROM trades")[0]
+    st = ex.state["stops"][t["backstop_id"]]
+    assert st["qty"] == t["remaining"] and st["status"] == "WATCHING"
+    assert abs(st["trigger"] - t["stop"] * 0.97) < 1e-9 and abs(st["limit"] - st["trigger"] * 0.92) < 1e-9
+    clock[0] = et(5, 0)
+    market.set("PEN", 1.20, 1.21)                     # 분할 익절 → 수량·손절가(본전) 바뀜 → 안전망 다시 걸기
+    tr.tick()
+    tr.tick()
+    t = j.q("SELECT * FROM trades")[0]
+    assert ex.state["stops"][next(iter(ex.state["stops"]))]["status"] == "CANCELED"
+    new = ex.state["stops"][t["backstop_id"]]
+    assert new["qty"] == t["remaining"] and abs(new["trigger"] - t["entry_price"] * 0.97) < 1e-9
+    clock[0] = et(9, 40)
+    market.set("PEN", 1.10, 1.11)                     # 고점 1.20 −8% 아래 → 트레일링, 팔기 전에 안전망 취소
+    tr.tick()
+    t = j.q("SELECT * FROM trades")[0]
+    assert t["status"] == "CLOSED" and t["backstop_id"] is None
+    assert all(s["status"] == "CANCELED" for s in ex.state["stops"].values())
+
+
+def test_backstop_fires_while_bot_down_and_is_adopted(env, tmp_path):
+    tr, market, mv, clock, j, ctl, ex = env
+    market.set("PEN", 1.03, 1.035)
+    tr.tick()
+    tr.tick()
+    qty = j.q("SELECT qty FROM trades")[0]["qty"]
+    # 봇이 꺼진 사이 급락 → 토스 서버가 조건주문 발동 (모의: sync 가 서버 역할)
+    clock[0] = et(5, 0)
+    market.set("PEN", 0.88, 0.89)                     # 감시가 0.9036 아래, 지정가 0.83 위
+    ex.sync()
+    assert ex.positions().get("PEN") is None          # 이미 팔림
+    tr2 = Trader(PaperExchange(market, 10_000, tmp_path / "paper.json"), j, SessionCalendar(), mv, tr.tcfg, ctl,
+                 clock=lambda: clock[0])
+    tr2.tick()
+    t = j.q("SELECT * FROM trades")[0]
+    assert t["status"] == "CLOSED" and t["exit_reason"] == "서버 손절 안전망 발동" and t["exited_qty"] == qty
+    sells = j.q("SELECT * FROM orders WHERE purpose='exit'")
+    assert len(sells) == 1                             # 봇이 또 팔지 않았다

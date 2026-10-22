@@ -115,6 +115,12 @@ class TradingConfig:
     use_stream: bool = True              # 토스 웹소켓(호가·체결·내 주문 이벤트). 끊기면 자동으로 REST
     stream_max_age_seconds: float = 5.0  # 웹소켓 호가가 이보다 오래되면 REST 호가
     order_poll_fallback_seconds: int = 30  # 웹소켓 연결 중에도 주문을 이 주기로는 REST 확인
+    # 서버 손절 안전망: 보유 중에는 토스 조건주문(모든 세션 발동)으로 손절가 아래에 매도를 걸어 둔다.
+    # PC·봇이 꺼져도 동작. 평소에는 봇의 손절이 먼저 나가도록 손절가보다 buffer 만큼 아래
+    backstop: bool = True
+    backstop_buffer_pct: float = 3.0
+    backstop_slippage_pct: float = 8.0   # 발동 시 지정가 = 감시가 × (1 − 8%) (급락 중에도 체결되게)
+    backstop_check_seconds: int = 60
     # 리스크
     max_position_usd: float = 300.0
     max_position_pct: float = 0.05       # 계좌의 5%

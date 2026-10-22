@@ -50,6 +50,11 @@ class Exchange:
         """취소 요청. 실거래는 새로 발급된 (취소) 주문 id 를 돌려준다."""
     def modify(self, order_id: str, price: float | None) -> str:
         """가격 정정 (None = 시장가). 정정 후 이어지는 주문의 id 를 돌려준다."""
+    def place_stop(self, symbol: str, qty: int, trigger: float, limit: float | None, expire: str) -> str:
+        """서버 조건주문: 가격이 trigger 에 닿으면 매도 (봇이 꺼져도 동작). → 조건주문 id"""
+    def stop_status(self, stop_id: str) -> dict:
+        """{'status': WATCHING/ORDERING/ORDERED/COMPLETED/EXPIRED/CANCELED, 'order_id': 발동으로 생긴 주문 id 또는 None}"""
+    def cancel_stop(self, stop_id: str) -> None: ...
     def open_orders(self) -> list[dict]: ...
     def positions(self) -> dict[str, tuple[int, float]]: ...
     def cash(self) -> float: ...
@@ -117,6 +122,18 @@ class LiveExchange(Exchange):
     def open_orders(self):
         return [self._norm(o) for o in (self.c.list_orders("OPEN") or {}).get("orders", [])]
 
+    def place_stop(self, symbol, qty, trigger, limit, expire):
+        return self.c.create_stop_order(symbol, qty, trigger, limit, expire, client_id=uuid.uuid4().hex[:32])
+
+    def stop_status(self, stop_id):
+        d = self.c.get_conditional_order(stop_id) or {}
+        first = d.get("first") or {}
+        return {"status": first.get("status") or d.get("status") or "WATCHING",
+                "order_id": first.get("triggeredOrderId")}
+
+    def cancel_stop(self, stop_id):
+        self.c.cancel_conditional_order(stop_id)
+
     def positions(self):
         out = {}
         for it in (self.c.holdings() or {}).get("items", []):
@@ -138,10 +155,11 @@ class PaperExchange(Exchange):
         self.fee = fee_pct / 100          # 수수료 (토스 미국 주식 약 0.1%) — 백테스트용, 모의 거래는 0
         self.path = Path(state_path)
         self._ids = itertools.count(1)
-        self.state = {"cash": cash, "positions": {}, "orders": {}}
+        self.state = {"cash": cash, "positions": {}, "orders": {}, "stops": {}}
         if self.path.exists():
             self.state = json.loads(self.path.read_text(encoding="utf-8"))
-            self._ids = itertools.count(len(self.state["orders"]) + 1)
+            self.state.setdefault("stops", {})
+            self._ids = itertools.count(len(self.state["orders"]) + len(self.state["stops"]) + 1)
 
     def _save(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -167,7 +185,22 @@ class PaperExchange(Exchange):
         self.sync()
         return dict(self.state["orders"][oid])
 
+    def _trigger_stops(self) -> None:
+        """모의 조건주문: bid 가 감시가 이하가 되면 지정가 매도를 낸다 (토스 서버가 하는 일)."""
+        for st in self.state["stops"].values():
+            if st["status"] != "WATCHING":
+                continue
+            try:
+                b = self.market.book(st["symbol"])
+            except Exception:
+                continue
+            if b.has_quote and b.bid <= st["trigger"]:
+                st["status"] = "ORDERED"
+                st["order_id"] = self.place(st["symbol"], "SELL", st["qty"], st["limit"])["order_id"]
+                self._save()
+
     def sync(self):
+        self._trigger_stops()
         changed = False
         for o in self.state["orders"].values():
             if o["status"] != "OPEN":
@@ -231,6 +264,24 @@ class PaperExchange(Exchange):
 
     def open_orders(self):
         return [dict(o) for o in self.state["orders"].values() if o["status"] == "OPEN"]
+
+    def place_stop(self, symbol, qty, trigger, limit, expire):
+        sid = f"paper-stop-{next(self._ids)}"
+        self.state["stops"][sid] = {"symbol": symbol, "qty": int(qty), "trigger": trigger, "limit": limit,
+                                    "expire": expire, "status": "WATCHING", "order_id": None}
+        self._save()
+        return sid
+
+    def stop_status(self, stop_id):
+        st = self.state["stops"][stop_id]
+        return {"status": st["status"], "order_id": st["order_id"]}
+
+    def cancel_stop(self, stop_id):
+        st = self.state["stops"].get(stop_id)
+        if not st or st["status"] != "WATCHING":
+            raise RuntimeError(f"조건주문 취소 불가: {st and st['status']}")   # 이미 발동·만료
+        st["status"] = "CANCELED"
+        self._save()
 
     def positions(self):
         return {s: (int(q), float(a)) for s, (q, a) in self.state["positions"].items()}

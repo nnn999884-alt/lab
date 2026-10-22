@@ -22,7 +22,8 @@ CREATE TABLE IF NOT EXISTS trades (
     exit_price REAL, exit_ts TEXT, exit_session TEXT, exit_reason TEXT,
     exit_value REAL DEFAULT 0, exited_qty INTEGER DEFAULT 0,
     pnl REAL, pnl_pct REAL, reason TEXT, created TEXT,
-    scale_out REAL DEFAULT 1.0, trail_pct REAL DEFAULT 0, high_water REAL, scaled INTEGER DEFAULT 0);
+    scale_out REAL DEFAULT 1.0, trail_pct REAL DEFAULT 0, high_water REAL, scaled INTEGER DEFAULT 0,
+    backstop_id TEXT, backstop_qty INTEGER, backstop_trigger REAL, fees REAL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS orders (
     order_id TEXT PRIMARY KEY, trade_id INTEGER, ts TEXT, symbol TEXT, side TEXT, type TEXT,
     qty INTEGER, price REAL, status TEXT, filled INTEGER DEFAULT 0, avg_price REAL,
@@ -53,7 +54,8 @@ class Journal:
         self.db.executescript(SCHEMA)
         have = {r[1] for r in self.db.execute("PRAGMA table_info(trades)")}
         for col, typ in (("scale_out", "REAL DEFAULT 1.0"), ("trail_pct", "REAL DEFAULT 0"),
-                         ("high_water", "REAL"), ("scaled", "INTEGER DEFAULT 0")):
+                         ("high_water", "REAL"), ("scaled", "INTEGER DEFAULT 0"), ("backstop_id", "TEXT"),
+                         ("backstop_qty", "INTEGER"), ("backstop_trigger", "REAL"), ("fees", "REAL DEFAULT 0")):
             if col not in have:        # 예전 DB 이전
                 self.db.execute(f"ALTER TABLE trades ADD COLUMN {col} {typ}")
         self.mode = mode
@@ -100,6 +102,12 @@ class Journal:
         self._x("""UPDATE trades SET status='EXITING', exit_reason=CASE
                    WHEN exit_reason IS NULL THEN ? WHEN instr(exit_reason, ?) > 0 THEN exit_reason
                    ELSE exit_reason || ' + ' || ? END WHERE id=?""", (reason, reason, reason, trade_id))
+
+    def set_backstop(self, trade_id: int, stop_id: str | None, qty: int | None = None,
+                     trigger: float | None = None) -> None:
+        """서버 손절 안전망(토스 조건주문) 기록. None = 없음."""
+        self._x("UPDATE trades SET backstop_id=?, backstop_qty=?, backstop_trigger=? WHERE id=?",
+                (stop_id, qty, trigger, trade_id))
 
     def update_high(self, trade_id: int, price: float) -> None:
         self._x("UPDATE trades SET high_water=? WHERE id=? AND (high_water IS NULL OR high_water < ?)",
