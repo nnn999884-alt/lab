@@ -151,6 +151,6 @@ def test_rate_share_splits_limit_between_processes(tmp_path):
     ok = Resp(200, {"result": []}, {"X-RateLimit-Limit": "10"})
     s = FakeSession({("GET", "/api/v1/accounts"): [ok]})
     c = TossClient("id", "secret", "1", tmp_path / "tok.json", session=s, sleep=lambda x: None, rate_share=0.35)
-    assert abs(c._buckets.get("ACCOUNT", None) is None)   # 아직 버킷 없음
+    assert "ACCOUNT" not in c._buckets                    # 아직 버킷 없음
     c.accounts()
     assert abs(c._buckets["ACCOUNT"].min_interval - 1 / 3.5) < 1e-9   # 초당 10회 중 35% = 3.5회
