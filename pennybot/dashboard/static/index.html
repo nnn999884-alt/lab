@@ -454,6 +454,7 @@ async function loadTables() {
     { h: "수량", num: 1, f: r => r.remaining || r.planned_qty }, { h: "매수가", num: 1, f: r => fmtPx(r.entry_price) }, { h: "현재가", num: 1, f: r => fmtPx(r.last) },
     { h: "평가손익", num: 1, f: r => fmtUsd(r.unrealized, true), tone: r => tone(r.unrealized) }, { h: "수익률", num: 1, f: r => fmtPct(r.unrealized_pct), tone: r => tone(r.unrealized_pct) },
     { h: "손절", num: 1, f: r => fmtPx(r.stop) }, { h: "익절", num: 1, f: r => r.scaled ? `분할 완료 · 트레일 ${fmtPx((r.high_water || 0) * (1 - (r.trail_pct || 0) / 100))}` : fmtPx(r.target) }, { h: "매도 시작", f: r => kst(r.sell_from) }, { h: "강제 청산", f: r => kst(r.deadline) },
+    { h: "서버 안전망", f: r => r.backstop_id ? `${fmtPx(r.backstop_trigger)} 감시` : (r.status === "OPEN" ? "없음" : "-"), tone: r => r.status === "OPEN" && !r.backstop_id ? "neg" : null },
   ], pos, "보유 종목 없음");
   table($("orders"), [
     { h: "시각", f: r => kst(r.ts) }, { h: "종목", f: r => r.symbol }, { h: "구분", f: r => (r.side === "BUY" ? "매수" : "매도") + (r.type === "MARKET" ? "(시장가)" : "") },

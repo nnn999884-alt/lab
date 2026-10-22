@@ -91,6 +91,13 @@ trading:
   auto_disable_trades: 20       # 최근 20회 평균 손익이 음수면 그 전략 자동 정지
   regime_symbol: IWM
   regime_drop_pct: 1.5          # 데이마켓 중 IWM −1.5% 이하면 신규 매수 중단
+  max_weekly_loss_usd: 400      # 최근 7일 실현 손실 한도
+  loss_streak_stop: 4           # 4연속 손실이면
+  loss_streak_cooldown_hours: 24  # 24시간 신규 매수 쉼
+  fee_pct: 0.1                  # 수수료 % (실거래는 토스에서 조회한 값으로 자동 교체)
+  backstop: true                # 서버 손절 안전망 (토스 조건주문, PC 가 꺼져도 동작)
+  backstop_buffer_pct: 3        # 봇 손절가보다 3% 아래에 감시
+  backstop_slippage_pct: 8      # 발동 시 지정가 = 감시가 −8%
   use_stream: true              # 토스 웹소켓 (pip install websocket-client). 끊기면 자동으로 REST
   order_poll_fallback_seconds: 30
   strategies:                   # 바꾸고 싶은 키만 적으면 나머지는 기본값 (전체 목록은 pennybot/config.py)

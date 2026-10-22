@@ -57,6 +57,7 @@ def build(state_dir: str | Path = "state_demo", seed: int = 7) -> tuple[str, str
                            stop=px * 0.94, target=px * 1.08, sell_from=now + timedelta(hours=6),
                            deadline=now + timedelta(hours=8), reason="예시 데이터", now=now)
         j.record_entry_fill(tid, 200, px, "DAY", now)
+        j.set_backstop(tid, f"demo-stop-{tid}", 200, px * 0.94 * 0.97)
         j.log_order({"order_id": f"demo-{tid}", "symbol": sym, "side": "BUY", "type": "LIMIT", "qty": 200,
                      "price": px, "status": "FILLED", "filled": 200, "avg_price": px},
                     trade_id=tid, purpose="entry", session="DAY", now=now, note="예시 데이터")

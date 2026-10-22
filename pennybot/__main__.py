@@ -252,6 +252,24 @@ def cmd_backtest(cfg: Config, args) -> None:
     print(f"\n결과: {out}/report.json, 매매 기록: {out}/backtest.db (대시보드 '백테스트' 탭)")
 
 
+def cmd_telegram_setup(cfg: Config) -> None:
+    """텔레그램 chat id 찾기: 봇에게 아무 메시지나 보낸 뒤 실행."""
+    import requests
+    tok = cfg.trading.telegram_token
+    if not tok:
+        raise SystemExit("먼저 .env 에 PENNYBOT_TELEGRAM_TOKEN 을 넣으세요 (텔레그램 @BotFather → /newbot 으로 발급).")
+    r = requests.get(f"https://api.telegram.org/bot{tok}/getUpdates", timeout=15).json()
+    if not r.get("ok"):
+        raise SystemExit(f"토큰이 맞지 않습니다: {r.get('description')}")
+    chats = {(u.get("message") or {}).get("chat", {}).get("id"): (u.get("message") or {}).get("chat", {})
+             for u in r.get("result", []) if u.get("message")}
+    if not chats:
+        raise SystemExit("받은 메시지가 없습니다. 텔레그램에서 내 봇을 찾아 아무 말이나 보낸 뒤 다시 실행하세요.")
+    for cid, c in chats.items():
+        print(f"chat id: {cid}  ({c.get('first_name') or c.get('title') or ''})")
+    print("\n.env 에  PENNYBOT_TELEGRAM_CHAT=<위 숫자>  를 넣으면 알림·원격 제어가 켜집니다.")
+
+
 def cmd_screen(cfg: Config) -> None:
     from .screener import run_screen
     picks = run_screen(cfg.screener, _feed(cfg), _edgar(cfg), cfg.state_dir)
@@ -278,7 +296,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="미국 페니주 자동매매 (토스증권)")
     ap.add_argument("command", nargs="?", default="collect",
                     choices=["check", "accounts", "collect", "summarize", "trade", "dashboard", "probe-orders",
-                             "backtest", "screen", "run"])
+                             "backtest", "telegram-setup", "screen", "run"])
     ap.add_argument("--config", default="config.yaml")
     ap.add_argument("--once", action="store_true", help="collect/run: 한 번만 실행")
     ap.add_argument("--date", help="summarize: 미국 영업일 YYYY-MM-DD")
@@ -341,6 +359,7 @@ def _dispatch(cfg, args) -> None:
         "dashboard": lambda: cmd_dashboard(cfg, args.port, args.demo),
         "probe-orders": lambda: cmd_probe_orders(cfg, args.symbol, args.yes_real_order),
         "backtest": lambda: cmd_backtest(cfg, args),
+        "telegram-setup": lambda: cmd_telegram_setup(cfg),
         "screen": lambda: cmd_screen(cfg),
         "run": lambda: cmd_run(cfg, args.once),
     }[args.command]()
