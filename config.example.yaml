@@ -1,0 +1,46 @@
+# config.yaml 로 복사해서 사용하세요.  cp config.example.yaml config.yaml
+mode: paper            # paper(모의) | live(실거래: PENNYBOT_LIVE_CONFIRM=YES 도 필요)
+poll_seconds: 20
+paper_cash: 2000
+
+# 감시 종목 (당일 갭업 페니주를 장 전에 채워 넣기)
+watchlist:
+  - SNDL
+  - MULN
+  - BBIG
+
+strategy:
+  min_price: 0.50
+  max_price: 5.00
+  min_gap_pct: 10
+  min_day_volume: 1000000
+  min_dollar_volume: 1000000
+  max_spread_pct: 2.0
+  opening_range_minutes: 15
+  min_bar_rvol: 2.0
+  stop_loss_pct: 5
+  take_profit_pct: 12
+  trailing_stop_pct: 4
+  max_hold_minutes: 120
+  no_new_entries_after: "15:00"   # 미 동부시간
+  flatten_at: "15:50"
+
+risk:
+  max_position_usd: 200
+  max_open_positions: 3
+  max_daily_loss_usd: 100
+  max_trades_per_day: 10
+  entry_slippage_pct: 0.5
+  exit_slippage_pct: 1.0
+
+# 토스증권 Open API — 경로는 공식 명세(developers.tossinvest.com)와 대조 후 수정
+toss:
+  base_url: https://openapi.tossinvest.com
+  token_path: /oauth2/token
+  quote_path: /v1/quotes/{symbol}
+  candles_path: /v1/candles/{symbol}
+  positions_path: /v1/accounts/positions
+  cash_path: /v1/accounts/balance
+  orders_path: /v1/orders
+  order_path: /v1/orders/{order_id}
+  market: US
