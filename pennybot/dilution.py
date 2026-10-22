@@ -231,20 +231,52 @@ class DilutionService:
         path = self.dir / f"{f.accession}.json"
         if path.exists():
             return [Event(**{**e, "filed": date.fromisoformat(e["filed"])}) for e in json.loads(path.read_text())]
-        text = ""
+        text, ex10 = "", []
         if f.form.upper().startswith(TEXT_FORMS) and f.primary_doc:
             try:
                 text = self.edgar.document(cik, f)
             except Exception as e:
                 log.debug("공시 본문 실패 %s: %s", f.accession, e)
                 return classify(f.form, f.items, "", f.filed, f.accession)   # 캐시하지 않고 다음에 재시도
+            if f.form.upper().startswith(("8-K", "6-K")):
+                text, ex10 = self._with_exhibits(cik, f, text)
         evs = classify(f.form, f.items, text, f.filed, f.accession)
+        # 계약서(EX-10)는 해지 조항 같은 상투 문구가 많아 악재 판정에만 쓴다
+        have = {e.kind for e in evs}
+        for t in ex10:
+            for e in classify(f.form, "", t, f.filed, f.accession):
+                if e.direction < 0 and e.kind not in have:
+                    evs.append(e)
+                    have.add(e.kind)
         path.write_text(json.dumps([{**asdict(e), "filed": e.filed.isoformat()} for e in evs], ensure_ascii=False))
         return evs
 
+    def _with_exhibits(self, cik: int, f: ed.Filing, text: str) -> tuple[str, list[str]]:
+        """8-K/6-K 첨부: 보도자료(EX-99)는 본문에 붙여 그대로 판정, 계약서(EX-10)는 따로 돌려준다."""
+        try:
+            docs = self.edgar.exhibits(cik, f)
+        except Exception as e:
+            log.debug("첨부 목록 실패 %s: %s", f.accession, e)
+            return text, []
+        ex99 = [u for t, u in docs if t.upper().startswith("EX-99")][:2]
+        ex10 = [u for t, u in docs if t.upper().startswith("EX-10")][:2]
+        fetch = lambda u: clean_text(self.edgar.url_text(u))[:40000]
+        extra, contracts = [], []
+        for u in ex99:
+            try:
+                extra.append(fetch(u))
+            except Exception as e:
+                log.debug("첨부 실패 %s: %s", u, e)
+        for u in ex10:
+            try:
+                contracts.append(fetch(u))
+            except Exception as e:
+                log.debug("첨부 실패 %s: %s", u, e)
+        return text + " " + " ".join(extra), contracts
+
     def events(self, cik: int, today: date) -> list[Event]:
         filings = ed.parse_submissions(self.submissions(cik, today))
-        recent = [f for f in filings if (today - f.filed).days <= self.lookback]
+        recent = [f for f in filings if 0 <= (today - f.filed).days <= self.lookback]   # 미래 공시 제외
         # 증자 등록·효력·철회는 본문 없이 양식만으로 판정되므로 개수 제한 없이 모두 본다.
         # (공시가 많은 회사는 최근 40건 안에 3년 전 S-3 가 안 들어올 수 있다)
         out, texts = [], 0

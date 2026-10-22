@@ -112,3 +112,48 @@ def test_old_shelf_found_even_with_many_recent_8ks(tmp_path):
 
     p = DilutionService(Busy(), tmp_path, max_texts=40).profile(1, D, 30e6)
     assert p.shelf_active
+
+
+INDEX_HTML = """<table class="tableFile"><tr><th>Seq</th><th>Description</th><th>Document</th><th>Type</th><th>Size</th></tr>
+<tr><td>1</td><td>8-K</td><td><a href="/ix?doc=/Archives/edgar/data/1/000000000126000001/d8k.htm">d8k.htm</a></td><td>8-K</td><td>10</td></tr>
+<tr><td>2</td><td>PRESS RELEASE</td><td><a href="/Archives/edgar/data/1/000000000126000001/ex99-1.htm">ex99-1.htm</a></td><td>EX-99.1</td><td>5</td></tr>
+<tr><td>3</td><td>SPA</td><td><a href="/Archives/edgar/data/1/000000000126000001/ex10-1.htm">ex10-1.htm</a></td><td>EX-10.1</td><td>50</td></tr>
+</table>"""
+
+
+def test_parse_index():
+    docs = ed.parse_index(INDEX_HTML)
+    assert docs[0] == ("8-K", "https://www.sec.gov/Archives/edgar/data/1/000000000126000001/d8k.htm")
+    assert [t for t, _ in docs] == ["8-K", "EX-99.1", "EX-10.1"]
+
+
+class ExhibitEdgar(FakeEdgar):
+    def submissions(self, cik):
+        return {"filings": {"recent": {"form": ["8-K"], "filingDate": ["2026-10-20"], "accessionNumber": ["x-1"],
+                                       "primaryDocument": ["d8k.htm"], "items": ["8.01,9.01"]}}}
+
+    def document(self, cik, f):
+        return "Item 8.01 Other Events. See press release attached as Exhibit 99.1."
+
+    def exhibits(self, cik, f):
+        return ed.parse_index(INDEX_HTML)
+
+    def url_text(self, url):
+        if "ex99" in url:
+            return "<p>ACME announced today that it has terminated its At-The-Market sales agreement with Maxim.</p>"
+        # 계약서: 해지 조항 문구 + 증권매매계약
+        return "This Securities Purchase Agreement may be terminated ... the sales agreement shall terminate"
+
+
+def test_exhibits_change_classification(tmp_path):
+    evs = DilutionService(ExhibitEdgar(), tmp_path).events(1, D)
+    kinds = {(e.kind, e.direction) for e in evs}
+    assert ("ATM_TERMINATED", 1) in kinds                    # 보도자료(EX-99)에서 호재
+    assert ("SECURITIES_PURCHASE_AGREEMENT", -1) in kinds    # 계약서(EX-10)에서 악재만
+    assert sum(1 for k, d in kinds if k == "ATM_TERMINATED") == 1
+
+
+def test_future_filings_ignored(tmp_path):
+    e = FakeEdgar()
+    svc = DilutionService(e, tmp_path)
+    assert all(ev.filed <= date(2026, 6, 1) for ev in svc.events(1, date(2026, 6, 1)))

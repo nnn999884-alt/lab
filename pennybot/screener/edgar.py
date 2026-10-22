@@ -92,6 +92,15 @@ class EdgarClient:
     def filings(self, cik: int) -> list[Filing]:
         return parse_submissions(self.submissions(cik))
 
+    def exhibits(self, cik: int, f: Filing) -> list[tuple[str, str]]:
+        """공시 색인 페이지에서 첨부 문서 목록 → [(유형, URL)] 예: ('EX-99.1', 'https://...')."""
+        acc = f.accession.replace("-", "")
+        html = self._get(f"https://www.sec.gov/Archives/edgar/data/{cik}/{acc}/{f.accession}-index.htm").text
+        return parse_index(html)
+
+    def url_text(self, url: str) -> str:
+        return self._get(url).text
+
     def document(self, cik: int, f: Filing) -> str:
         """공시 본문(주 문서) 원문."""
         return self._get(ARCHIVE_URL.format(cik=cik, acc=f.accession.replace("-", ""),
@@ -104,6 +113,27 @@ class EdgarClient:
         # primaryDocument 는 'xslF345X05/form4.xml' 처럼 렌더링 경로 → 원본 XML 은 접두 제거
         doc = f.primary_doc.split("/")[-1]
         return self._get(ARCHIVE_URL.format(cik=cik, acc=f.accession.replace("-", ""), doc=doc)).text
+
+
+_ROW = re.compile(r"<tr[^>]*>(.*?)</tr>", re.I | re.S)
+_CELL = re.compile(r"<td[^>]*>(.*?)</td>", re.I | re.S)
+_HREF = re.compile(r'href="([^"]+)"', re.I)
+
+
+def parse_index(html: str) -> list[tuple[str, str]]:
+    """EDGAR '-index.htm' 의 문서 표 (순번·설명·문서·유형·크기)에서 (유형, 절대 URL)."""
+    out = []
+    for row in _ROW.findall(html):
+        cells = _CELL.findall(row)
+        if len(cells) < 4:
+            continue
+        href = _HREF.search(cells[2])
+        typ = re.sub(r"<[^>]+>", "", cells[3]).strip()
+        if not href or not typ:
+            continue
+        url = href.group(1).replace("/ix?doc=", "")
+        out.append((typ, url if url.startswith("http") else "https://www.sec.gov" + url))
+    return out
 
 
 def parse_submissions(j: dict) -> list[Filing]:
