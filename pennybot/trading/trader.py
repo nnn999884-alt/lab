@@ -50,6 +50,7 @@ class Working:
     aggressive: bool = False
     qty: int = 0                # 줄기 전체 주문 수량
     scale: bool = False         # 분할 익절 주문
+    checked_at: datetime | None = None   # 마지막 REST 주문 조회
     ids: list = field(default_factory=list)
     fills: dict = field(default_factory=dict)   # id → (filled, avg)
 
@@ -69,6 +70,7 @@ class Trader:
     notifier: Notifier = field(default_factory=Notifier)
     clock: object = field(default=lambda: datetime.now(timezone.utc))
     fund: object = None          # Fundamentals: 희석 프로필·펌프 신호 (없으면 수집기 공시만으로 판단)
+    stream: object = None        # TossStream: 내 주문 이벤트가 오면 그 주문만 조회 (없거나 끊기면 매 틱 REST)
 
     def __post_init__(self):
         self.risk = Risk(self.tcfg, self.journal, self.control)
@@ -104,6 +106,9 @@ class Trader:
         now = self.clock()
         trade_date, session = self.cal.classify(now)
         self.ex.sync()
+        if self.stream is not None:
+            self.stream.pin({w.symbol for w in self.working.values()} |
+                            {t["symbol"] for t in self.journal.open_trades()})
         self.poll_orders(now, session)
 
         if self.last_session is not None and session != self.last_session:
@@ -113,6 +118,8 @@ class Trader:
         self.last_session = session
         self.status = {"session": session, "trade_date": str(trade_date) if trade_date else None,
                        "mode": self.journal.mode, "working": len(self.working)}
+        if self.stream is not None:
+            self.status["stream"] = "연결" if self.stream.healthy else f"끊김 → REST ({self.stream.last_error})"[:120]
 
         if session != CLOSED:
             ctl = self.control.load()
@@ -136,15 +143,38 @@ class Trader:
             except Exception:
                 log.exception("틱 실패")
                 self.notifier.send("⚠️ 매매 엔진 오류 (로그 확인)")
-            sleep(5)
+            for _ in range(10):          # 5초 간격, 주문 이벤트가 오면 바로 다음 틱
+                if self.stream is not None and self.stream.has_events():
+                    break
+                sleep(0.5)
 
     def _entry_window(self, now: datetime, trade_date) -> bool:
         b = self.cal.bounds(trade_date, DAY)
         return bool(b) and now < b[1] - timedelta(minutes=self.tcfg.entry_cutoff_minutes)
 
     # ---------- 주문 추적 ----------
+    def _changed_orders(self) -> set[str] | None:
+        """웹소켓으로 이벤트가 온 주문 id. None = 전부 REST 로 확인 (스트림 없음·끊김·재연결 직후)."""
+        if self.stream is None or not self.stream.healthy or self.stream.take_resync():
+            return None
+        return {str(o.get("orderId")) for _, o in self.stream.order_events()}
+
+    def _poll_due(self, w: Working, now: datetime, changed: set[str]) -> bool:
+        if changed & set(w.ids + [w.order_id, w.cancel_id or ""]) or w.checked_at is None:
+            return True
+        if (now - w.checked_at).total_seconds() >= self.tcfg.order_poll_fallback_seconds:
+            return True             # 이벤트를 놓쳤을 수도 있으니 주기적으로는 REST 로 확인
+        age = (now - w.placed_at).total_seconds()
+        if w.cancel_sent:
+            return bool(w.cancel_at and (now - w.cancel_at).total_seconds() > 60)
+        return age > (self.tcfg.entry_ttl_seconds if w.purpose == "entry" else self.tcfg.exit_reprice_seconds)
+
     def poll_orders(self, now: datetime, session: str) -> None:
+        changed = self._changed_orders()
         for key, w in list(self.working.items()):
+            if changed is not None and not self._poll_due(w, now, changed):
+                continue
+            w.checked_at = now
             try:
                 cur = self.ex.order(w.current)
             except Exception as e:

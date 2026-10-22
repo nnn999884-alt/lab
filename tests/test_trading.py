@@ -408,3 +408,44 @@ def test_no_scale_when_full_take_profit(env):
     tr.tick()
     t = j.q("SELECT * FROM trades")[0]
     assert t["status"] == "CLOSED" and t["exit_reason"] == "익절"
+
+
+class FakeStream:
+    def __init__(self):
+        self.healthy, self.events, self.resync, self.pinned = True, [], False, set()
+        self.last_error = ""
+
+    def pin(self, syms): self.pinned = set(syms)
+    def take_resync(self):
+        r, self.resync = self.resync, False
+        return r
+    def order_events(self):
+        out, self.events = self.events, []
+        return out
+    def has_events(self): return bool(self.events)
+
+
+def test_stream_events_drive_order_polling(env):
+    tr, market, mv, clock, j, ctl, ex = env
+    tr.tcfg.entry_ttl_seconds = 10_000
+    st = tr.stream = FakeStream()
+    market.set("PEN", 1.00, 1.025)                    # 미체결 매수
+    tr.tick()
+    (oid,) = list(tr.working)
+    calls = []
+    real = ex.order
+    ex.order = lambda o: calls.append(o) or real(o)
+    clock[0] = et(1, 0, ) + timedelta(seconds=10)
+    tr.tick()
+    assert calls == [] and st.pinned == {"PEN"}       # 이벤트 없음 + 30초 안 → REST 조회 안 함
+    st.events = [("PARTIAL_FILL", {"orderId": oid})]
+    clock[0] += timedelta(seconds=5)
+    tr.tick()
+    assert calls == [oid]
+    clock[0] += timedelta(seconds=40)                 # 30초 지나면 이벤트 없어도 확인
+    tr.tick()
+    assert calls == [oid, oid]
+    st.healthy = False                                # 끊기면 매 틱 REST
+    clock[0] += timedelta(seconds=5)
+    tr.tick()
+    assert len(calls) == 3

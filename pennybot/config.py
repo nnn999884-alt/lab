@@ -112,6 +112,9 @@ class TradingConfig:
     day_open_wait_minutes: int = 15      # 데이마켓 개장 직후 호가가 얇을 때는 매수하지 않음
     min_book_ratio: float = 0.3          # 최우선 매도 잔량이 주문 수량의 30% 이상일 때만 (아니면 수량 축소)
     stale_alert_minutes: int = 30        # 강제 청산 시각이 이만큼 지나도 남아 있으면 알림
+    use_stream: bool = True              # 토스 웹소켓(호가·체결·내 주문 이벤트). 끊기면 자동으로 REST
+    stream_max_age_seconds: float = 5.0  # 웹소켓 호가가 이보다 오래되면 REST 호가
+    order_poll_fallback_seconds: int = 30  # 웹소켓 연결 중에도 주문을 이 주기로는 REST 확인
     # 리스크
     max_position_usd: float = 300.0
     max_position_pct: float = 0.05       # 계좌의 5%

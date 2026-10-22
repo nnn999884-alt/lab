@@ -110,11 +110,20 @@ def cmd_trade(cfg: Config, once: bool) -> None:
 
     client = make_client(cfg, "trader")
     t = cfg.trading
+    market, stream = TossMarket(client), None
+    if t.use_stream:
+        from . import stream as ws
+        if ws.available():
+            # 계정당 웹소켓 2개까지 → 매매 봇만 1개. 모의 모드는 시세만 (모의 주문은 토스에 없으므로)
+            stream = ws.TossStream(client, cfg.toss.account if cfg.is_live else None).start()
+            market = ws.StreamMarket(stream, market, t.stream_max_age_seconds)
+        else:
+            logging.warning("websocket-client 미설치 → REST 폴링만 사용 (pip install websocket-client)")
     if cfg.is_live:
-        ex = LiveExchange(client)
+        ex = LiveExchange(client, market)
         logging.warning("⚠️  실거래 모드: 토스증권 계좌로 실제 주문이 나갑니다.")
     else:
-        ex = PaperExchange(TossMarket(client), t.paper_cash, Path(cfg.state_dir) / "paper_account.json")
+        ex = PaperExchange(market, t.paper_cash, Path(cfg.state_dir) / "paper_account.json")
     cal = SessionCalendar(client)
     if not Path(cfg.collector.db_path).exists():
         logging.warning("수집기 DB(%s)가 없습니다. 'python -m pennybot collect' 를 같이 돌려야 전략이 후보를 찾습니다.",
@@ -124,7 +133,7 @@ def cmd_trade(cfg: Config, once: bool) -> None:
     _, fund = _fundamentals(cfg, client)
     trader = Trader(ex, Journal(t.db_path, mode=cfg.mode), cal,
                     MarketView(cfg.collector.db_path, client, cal, ex), t, Control(cfg.state_dir),
-                    Notifier(t.notify_webhook), fund=fund)
+                    Notifier(t.notify_webhook), fund=fund, stream=stream)
     if once:
         trader.tick()
     else:

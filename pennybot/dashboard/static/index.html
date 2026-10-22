@@ -408,6 +408,7 @@ async function loadOverview() {
   $("t-working").textContent = `걸린 주문 ${ov.working_orders}건`;
   $("t-regime").textContent = ov.regime || "-";
   $("t-scan").textContent = ov.trader.info.last_scan ? `마지막 스캔 ${kst(ov.trader.info.last_scan)} · 후보 ${ov.trader.info.candidates ?? 0}` : "데이마켓에서 5분마다 스캔";
+  if (ov.trader.info.stream) $("t-scan").textContent += ` · 실시간 ${ov.trader.info.stream}`;
   const mm = Object.entries(ov.mismatch || {});
   const box = $("mismatch");
   box.style.display = mm.length ? "block" : "none";

@@ -79,9 +79,9 @@ _LIVE_STATUS = {"PENDING": "OPEN", "PENDING_CANCEL": "OPEN", "PENDING_REPLACE": 
 
 
 class LiveExchange(Exchange):
-    def __init__(self, client: TossClient):
+    def __init__(self, client: TossClient, market=None):
         self.c = client
-        self.market = TossMarket(client)
+        self.market = market or TossMarket(client)   # 웹소켓 호가(StreamMarket) 또는 REST
 
     def book(self, symbol):
         return self.market.book(symbol)
