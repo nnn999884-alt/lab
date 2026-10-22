@@ -21,7 +21,8 @@ CREATE TABLE IF NOT EXISTS trades (
     stop REAL, target REAL, sell_from TEXT, deadline TEXT,
     exit_price REAL, exit_ts TEXT, exit_session TEXT, exit_reason TEXT,
     exit_value REAL DEFAULT 0, exited_qty INTEGER DEFAULT 0,
-    pnl REAL, pnl_pct REAL, reason TEXT, created TEXT);
+    pnl REAL, pnl_pct REAL, reason TEXT, created TEXT,
+    scale_out REAL DEFAULT 1.0, trail_pct REAL DEFAULT 0, high_water REAL, scaled INTEGER DEFAULT 0);
 CREATE TABLE IF NOT EXISTS orders (
     order_id TEXT PRIMARY KEY, trade_id INTEGER, ts TEXT, symbol TEXT, side TEXT, type TEXT,
     qty INTEGER, price REAL, status TEXT, filled INTEGER DEFAULT 0, avg_price REAL,
@@ -50,6 +51,11 @@ class Journal:
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript(SCHEMA)
+        have = {r[1] for r in self.db.execute("PRAGMA table_info(trades)")}
+        for col, typ in (("scale_out", "REAL DEFAULT 1.0"), ("trail_pct", "REAL DEFAULT 0"),
+                         ("high_water", "REAL"), ("scaled", "INTEGER DEFAULT 0")):
+            if col not in have:        # 예전 DB 이전
+                self.db.execute(f"ALTER TABLE trades ADD COLUMN {col} {typ}")
         self.mode = mode
 
     def _x(self, sql: str, args=()) -> sqlite3.Cursor:
@@ -61,12 +67,13 @@ class Journal:
 
     # ---------- trades ----------
     def open_trade(self, *, strategy, symbol, trade_date, planned_qty, stop, target,
-                   sell_from: datetime, deadline: datetime, reason: str, now: datetime) -> int:
+                   sell_from: datetime, deadline: datetime, reason: str, now: datetime,
+                   scale_out: float = 1.0, trail_pct: float = 0.0) -> int:
         cur = self._x("""INSERT INTO trades (strategy, symbol, mode, trade_date, status, planned_qty,
-                         stop, target, sell_from, deadline, reason, created)
-                         VALUES (?,?,?,?, 'PENDING', ?,?,?,?,?,?,?)""",
+                         stop, target, sell_from, deadline, reason, created, scale_out, trail_pct)
+                         VALUES (?,?,?,?, 'PENDING', ?,?,?,?,?,?,?,?,?)""",
                       (strategy, symbol, self.mode, trade_date, planned_qty, stop, target,
-                       now_iso(sell_from), now_iso(deadline), reason, now_iso(now)))
+                       now_iso(sell_from), now_iso(deadline), reason, now_iso(now), scale_out, trail_pct))
         return cur.lastrowid
 
     def trade(self, trade_id: int) -> dict:
@@ -89,8 +96,19 @@ class Journal:
         self._x("UPDATE trades SET status='CANCELED' WHERE id=? AND qty=0", (trade_id,))
 
     def set_exiting(self, trade_id: int, reason: str) -> None:
-        self._x("UPDATE trades SET status='EXITING', exit_reason=COALESCE(exit_reason, ?) WHERE id=?",
-                (reason, trade_id))
+        """사유는 쌓는다 (분할 익절 후 트레일링 청산 → '익절(분할) + 트레일링 스톱')."""
+        self._x("""UPDATE trades SET status='EXITING', exit_reason=CASE
+                   WHEN exit_reason IS NULL THEN ? WHEN instr(exit_reason, ?) > 0 THEN exit_reason
+                   ELSE exit_reason || ' + ' || ? END WHERE id=?""", (reason, reason, reason, trade_id))
+
+    def update_high(self, trade_id: int, price: float) -> None:
+        self._x("UPDATE trades SET high_water=? WHERE id=? AND (high_water IS NULL OR high_water < ?)",
+                (price, trade_id, price))
+
+    def set_scaled(self, trade_id: int, scaled: bool, stop: float | None = None) -> None:
+        """분할 익절 표시. 나머지 물량의 손절가는 본전 이상으로 올린다."""
+        self._x("UPDATE trades SET scaled=?, stop=MAX(stop, COALESCE(?, stop)) WHERE id=?",
+                (int(scaled), stop, trade_id))
 
     def record_exit_fill(self, trade_id: int, qty: int, price: float, session: str, now: datetime) -> dict:
         t = self.trade(trade_id)

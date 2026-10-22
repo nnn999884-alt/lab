@@ -129,7 +129,9 @@ class TradingConfig:
                              "min_day_change_pct": -8.0, "max_day_change_pct": 15.0,
                              "max_dilution_score": 45, "take_profit_pct": 12.0, "stop_loss_pct": 10.0,
                              "gap_risk_pct": 35.0, "sell_before_open_minutes": 30,
-                             "exit_after_open_minutes": 30},
+                             "exit_after_open_minutes": 30,
+                             # 익절가에서 절반만 팔고, 나머지는 고점 대비 −8% 트레일링 (강제 청산 시각까지)
+                             "scale_out_pct": 0.5, "trail_pct": 8.0},
         "dilution_catalyst": {"enabled": True, "budget_pct": 0.30, "max_positions": 3,
                               "max_runup_pct": 15.0, "max_dilution_score": 50,
                               "take_profit_pct": 10.0, "stop_loss_pct": 8.0, "gap_risk_pct": 25.0,

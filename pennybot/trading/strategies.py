@@ -39,6 +39,8 @@ class Plan:
     target: float = 0.0
     sell_from: datetime | None = None
     deadline: datetime | None = None
+    scale_out: float = 1.0      # 익절가에서 팔 비율 (1 = 전량)
+    trail_pct: float = 0.0      # 분할 익절 후 나머지: 고점 대비 이만큼 빠지면 청산 (0 = 없음)
 
 
 @dataclass
@@ -117,7 +119,8 @@ class Strategy:
         return Plan(self.name, sym, True, reason, score=score, price=price,
                     stop=price * (1 - p["stop_loss_pct"] / 100),
                     target=price * (1 + p["take_profit_pct"] / 100),
-                    sell_from=min(sell_from, deadline), deadline=deadline)
+                    sell_from=min(sell_from, deadline), deadline=deadline,
+                    scale_out=p.get("scale_out_pct", 1.0), trail_pct=p.get("trail_pct", 0.0))
 
     @staticmethod
     def _entry_price(b) -> float:

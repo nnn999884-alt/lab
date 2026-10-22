@@ -3,7 +3,7 @@
 매 틱(기본 5초):
   1. 주문 상태 확인 → 체결을 trades 에 반영, 매수 미체결 TTL 취소, 매도 재호가
   2. 세션이 바뀌면 걸려 있는 주문을 모두 취소 (토스 DAY 주문은 세션을 넘어 이어지므로 직접 정리)
-  3. 보유 종목 청산 판단: 강제 청산 시각 > 손절 > 익절 > 매도 시작 시각
+  3. 보유 종목 청산 판단: 강제 청산 시각 > 악재 공시 > 손절 > 트레일링 > 익절(분할) > 매도 시작 시각
   4. 데이마켓이면 전략 스캔 → 리스크 → 지정가 매수
   5. 계좌 스냅샷, 하트비트, 잔고 대조
 """
@@ -26,6 +26,8 @@ from .strategies import ALL, FINANCING_WORDS, Ctx, events_of
 HOLD_ALARM = FINANCING_WORDS | {"DELISTING_NOTICE", "OFFERING_FILED", "SHELF_FILED", "WARRANT_INDUCEMENT",
                                 "WARRANT_REPRICE", "CONVERTIBLE", "GOING_CONCERN"}   # 공시·보도자료 모두
 
+SCALE_REASON = "익절(분할)"
+
 log = logging.getLogger(__name__)
 
 
@@ -46,6 +48,8 @@ class Working:
     cancel_id: str | None = None
     cancel_at: datetime | None = None
     aggressive: bool = False
+    qty: int = 0                # 줄기 전체 주문 수량
+    scale: bool = False         # 분할 익절 주문
     ids: list = field(default_factory=list)
     fills: dict = field(default_factory=dict)   # id → (filled, avg)
 
@@ -84,6 +88,8 @@ class Trader:
                                    WHERE o.status='OPEN' AND t.mode=?""", (self.journal.mode,)):
             w = Working(o["order_id"], o["trade_id"], o["purpose"], o["symbol"], o["side"],
                         datetime.fromisoformat(o["updated"] or o["ts"]), o["filled"] or 0, o["avg_price"] or 0.0,
+                        note=o["note"] or "", qty=o["qty"] or 0,
+                        scale=o["purpose"] == "exit" and SCALE_REASON in (o["note"] or ""),
                         ids=[o["order_id"]], fills={o["order_id"]: (o["filled"] or 0, o["avg_price"] or 0.0)})
             self.working[o["order_id"]] = w
 
@@ -173,6 +179,8 @@ class Trader:
                     self.journal.entry_finished(w.trade_id)
                 else:
                     self.journal.exit_unfilled(w.trade_id)
+                    if w.scale:
+                        self.exit_reprices.pop(w.trade_id, None)   # 나머지 물량은 재호가 횟수를 새로 센다
                 continue
             if cur["status"] == "REPLACED" or w.cancel_sent:
                 continue          # 정정·취소 처리 중
@@ -188,6 +196,9 @@ class Trader:
             self.notifier.send(f"🟢 매수 체결 {w.symbol} {delta}주 @ ${px:.4f}")
             return
         t = self.journal.record_exit_fill(w.trade_id, delta, px, session, now)
+        if w.scale and not t["scaled"]:
+            self.journal.set_scaled(w.trade_id, True, stop=t["entry_price"])   # 나머지는 본전 손절 + 트레일링
+            self.notifier.send(f"🟡 분할 익절 {t['symbol']} {delta}주 @ ${px:.4f} → 나머지 {t['remaining']}주 트레일링")
         if t["status"] == "CLOSED":
             self.exit_reprices.pop(w.trade_id, None)
             self.notifier.send(f"🔵 청산 {t['symbol']} ({t['exit_reason']}) "
@@ -228,7 +239,7 @@ class Trader:
             self.journal.update_order(self.ex.order(old), now)   # 원주문은 REPLACED 로 기록
         except Exception:
             pass
-        left = max(self.journal.trade(w.trade_id)["remaining"], 0)
+        left = max(min(w.qty - w.filled, self.journal.trade(w.trade_id)["remaining"]), 0)
         self.journal.log_order({"order_id": new_id, "symbol": w.symbol, "side": w.side,
                                 "type": "MARKET" if price is None else "LIMIT", "qty": left, "price": price,
                                 "status": "OPEN", "filled": 0, "avg_price": None},
@@ -269,19 +280,27 @@ class Trader:
                 return "보유 중 악재 공시: " + ",".join(sorted(hit))
         return None
 
-    def _exit_reason(self, t: dict, bid: float, now: datetime) -> tuple[str, bool] | None:
-        """(사유, 공격적 매도 여부)"""
+    def _exit_reason(self, t: dict, bid: float, now: datetime) -> tuple[str, bool, int] | None:
+        """(사유, 공격적 매도 여부, 수량). 수량은 보통 남은 전량, 분할 익절이면 일부."""
+        left = t["remaining"]
         if now >= datetime.fromisoformat(t["deadline"]):
-            return "강제 청산 시각", True
+            return "강제 청산 시각", True, left
         bad = self._bad_news(t)
         if bad:
-            return bad, True
+            return bad, True, left
+        scaled, trail = bool(t.get("scaled")), t.get("trail_pct") or 0
         if bid > 0 and bid <= t["stop"]:
-            return "손절", True
-        if bid > 0 and t["target"] and bid >= t["target"]:
-            return "익절", False
-        if now >= datetime.fromisoformat(t["sell_from"]):
-            return "매도 구간", False
+            return ("본전 손절" if scaled else "손절"), True, left
+        hw = max(t.get("high_water") or 0, bid)
+        if scaled and trail and bid > 0 and bid <= hw * (1 - trail / 100):
+            return f"트레일링 스톱 (고점 ${hw:.4f} −{trail:g}%)", True, left
+        if not scaled and bid > 0 and t["target"] and bid >= t["target"]:
+            q = int(t["qty"] * (t.get("scale_out") or 1.0))
+            if 0 < q < left:
+                return SCALE_REASON, False, q
+            return "익절", False, left
+        if now >= datetime.fromisoformat(t["sell_from"]) and not (scaled and trail):
+            return "매도 구간", False, left      # 분할 익절 후 나머지는 트레일링으로 강제 청산 시각까지 들고 간다
         return None
 
     def manage_exits(self, now: datetime, session: str, force_reason: str | None = None) -> None:
@@ -299,10 +318,13 @@ class Trader:
             except Exception as e:
                 log.warning("호가 실패 %s: %s", t["symbol"], e)
                 continue
-            r = (force_reason, True) if force_reason else self._exit_reason(t, b.bid if b.has_quote else 0, now)
+            if b.has_quote and b.bid > (t["high_water"] or 0):
+                self.journal.update_high(t["id"], b.bid)
+            r = (force_reason, True, t["remaining"]) if force_reason else \
+                self._exit_reason(t, b.bid if b.has_quote else 0, now)
             if not r:
                 continue
-            reason, aggressive = r
+            reason, aggressive, qty = r
             exhausted = self.exit_reprices.get(t["id"], 0) >= self.tcfg.max_exit_reprices
             ok, price = self._exit_price(b, aggressive, exhausted, session)
             if not ok:
@@ -313,8 +335,8 @@ class Trader:
                 if w.trade_id == t["id"] and w.purpose == "entry":
                     self._cancel(key, "청산 시작", now)
             self.journal.set_exiting(t["id"], reason)
-            self._submit(t["id"], t["symbol"], "SELL", t["remaining"], price, "exit", session, now, reason,
-                         aggressive=aggressive)
+            self._submit(t["id"], t["symbol"], "SELL", qty, price, "exit", session, now, reason,
+                         aggressive=aggressive, scale=reason == SCALE_REASON)
 
     def flatten(self, now: datetime, session: str) -> None:
         self.manage_exits(now, session, force_reason="수동 전량 청산")
@@ -392,7 +414,8 @@ class Trader:
                 continue
             tid = self.journal.open_trade(strategy=p.strategy, symbol=p.symbol, trade_date=str(trade_date),
                                           planned_qty=qty, stop=p.stop, target=p.target,
-                                          sell_from=p.sell_from, deadline=p.deadline, reason=p.reason, now=now)
+                                          sell_from=p.sell_from, deadline=p.deadline, reason=p.reason, now=now,
+                                          scale_out=p.scale_out, trail_pct=p.trail_pct)
             self._submit(tid, p.symbol, "BUY", qty, p.price, "entry", session, now, p.reason)
             open_trades = self.journal.open_trades()
             acct.cash -= qty * p.price
@@ -400,7 +423,8 @@ class Trader:
         self.status["last_scan"] = now.isoformat(timespec="seconds")
         self.status["candidates"] = sum(1 for p in plans if p.ok)
 
-    def _submit(self, trade_id, symbol, side, qty, price, purpose, session, now, note, aggressive=False) -> None:
+    def _submit(self, trade_id, symbol, side, qty, price, purpose, session, now, note, aggressive=False,
+                scale=False) -> None:
         try:
             o = self.ex.place(symbol, side, qty, price)
         except Exception as e:
@@ -418,7 +442,7 @@ class Trader:
                 self.journal.exit_unfilled(trade_id)
             return
         self.working[o["order_id"]] = Working(o["order_id"], trade_id, purpose, symbol, side, now, note=note,
-                                              aggressive=aggressive, ids=[o["order_id"]])
+                                              aggressive=aggressive, qty=qty, scale=scale, ids=[o["order_id"]])
         self.poll_orders(now, session)   # 즉시 체결분 반영
 
     # ---------- 계좌 ----------

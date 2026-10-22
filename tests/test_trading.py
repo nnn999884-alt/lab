@@ -368,3 +368,43 @@ def test_cancel_rejected_is_retried(env):
     tr.tick()                                         # 1분 넘게 처리 중 → 취소 주문 확인 → 거부 → 재시도 가능
     tr.tick()
     assert len(calls) == 2
+
+
+def test_scale_out_then_trailing_stop(env):
+    """익절가에서 절반 매도 → 나머지는 본전 손절 + 고점 대비 −8% 트레일링, '매도 구간'에도 팔지 않는다."""
+    tr, market, mv, clock, j, ctl, ex = env
+    market.set("PEN", 1.03, 1.035)
+    tr.tick()
+    t = j.q("SELECT * FROM trades")[0]
+    qty, entry = t["qty"], t["entry_price"]
+    assert t["scale_out"] == 0.5 and t["trail_pct"] == 8.0
+    clock[0] = et(5, 0)
+    market.set("PEN", 1.20, 1.21)                     # +16% > 익절 12%
+    tr.tick()
+    t = j.q("SELECT * FROM trades")[0]
+    assert t["scaled"] == 1 and t["remaining"] == qty - qty // 2 and t["status"] == "OPEN"
+    assert t["stop"] == entry                          # 나머지는 본전 손절
+    clock[0] = et(9, 5)                                # 매도 구간이지만 트레일링 중 → 유지
+    market.set("PEN", 1.40, 1.41)
+    tr.tick()
+    t = j.q("SELECT * FROM trades")[0]
+    assert t["status"] == "OPEN" and t["high_water"] == 1.40
+    clock[0] = et(9, 40)
+    market.set("PEN", 1.28, 1.29)                      # 고점 1.40 × 0.92 = 1.288 아래
+    tr.tick()
+    t = j.q("SELECT * FROM trades")[0]
+    assert t["status"] == "CLOSED" and t["exit_reason"].startswith("익절(분할) + 트레일링 스톱")
+    assert t["exited_qty"] == qty and t["pnl"] > 0
+
+
+def test_no_scale_when_full_take_profit(env):
+    tr, market, mv, clock, j, ctl, ex = env
+    tr.tcfg.strategies["runner_overnight"]["scale_out_pct"] = 1.0
+    tr.strategies["runner_overnight"].p = tr.tcfg.strategies["runner_overnight"]
+    market.set("PEN", 1.03, 1.035)
+    tr.tick()
+    clock[0] = et(5, 0)
+    market.set("PEN", 1.20, 1.21)
+    tr.tick()
+    t = j.q("SELECT * FROM trades")[0]
+    assert t["status"] == "CLOSED" and t["exit_reason"] == "익절"
