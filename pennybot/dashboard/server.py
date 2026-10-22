@@ -1,0 +1,269 @@
+"""로컬 대시보드 서버 (python -m pennybot dashboard → http://127.0.0.1:8050).
+
+표준 라이브러리만 쓴다. state/trading.db(매매 기록)와 state/market.db(수집 데이터)를 읽기 전용으로 열고,
+제어 버튼(킬스위치·전량 청산·전략 켜기/끄기)은 state/control.json 에만 쓴다.
+토스 API 는 부르지 않는다 (토큰·호출 한도를 봇과 나눠 쓰지 않도록).
+
+127.0.0.1 에만 열리고, 제어 요청은 같은 출처(Origin)에서 온 것만 받는다.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import sqlite3
+from datetime import datetime, timedelta, timezone
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from urllib.parse import parse_qs, urlparse
+
+from ..sessions import SESSIONS, SessionCalendar
+from ..trading.control import Control
+
+log = logging.getLogger(__name__)
+STATIC = Path(__file__).parent / "static"
+
+
+class Data:
+    def __init__(self, cfg):
+        self.cfg = cfg
+        self.trading_db = cfg.trading.db_path
+        self.market_db = cfg.collector.db_path
+        self.control = Control(cfg.state_dir)
+        self.cal = SessionCalendar()      # 봇 하트비트가 없을 때만 쓰는 근사 캘린더
+
+    def _q(self, db: str, sql: str, args=()) -> list[dict]:
+        if not Path(db).exists():
+            return []
+        con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        con.row_factory = sqlite3.Row
+        try:
+            return [dict(r) for r in con.execute(sql, args).fetchall()]
+        except sqlite3.OperationalError:
+            return []
+        finally:
+            con.close()
+
+    def t(self, sql, args=()):
+        return self._q(self.trading_db, sql, args)
+
+    def m(self, sql, args=()):
+        return self._q(self.market_db, sql, args)
+
+    # ---------- 개요 ----------
+    def overview(self) -> dict:
+        now = datetime.now(timezone.utc)
+        hb = {r["component"]: r for r in self.t("SELECT * FROM heartbeat")}
+        trader = hb.get("trader")
+        info = json.loads(trader["info"]) if trader else {}
+        age = (now - datetime.fromisoformat(trader["ts"])).total_seconds() if trader else None
+        trade_date, session = self.cal.classify(now)
+        if age is not None and age < 120 and info.get("session"):
+            session, trade_date = info["session"], info.get("trade_date")
+        last_price = self.m("SELECT MAX(ts) AS ts FROM prices")
+        eq = self.t("SELECT * FROM equity ORDER BY ts DESC LIMIT 1")
+        ctl = self.control.load()
+        nxt = self.cal.next_change(now)
+        return {
+            "now": now.isoformat(timespec="seconds"),
+            "session": session, "trade_date": str(trade_date) if trade_date else None,
+            "next_change": nxt.isoformat() if nxt else None,
+            "mode": info.get("mode") or self.cfg.mode,
+            "trader": {"ts": trader["ts"] if trader else None, "age_s": age, "info": info},
+            "collector": {"last_price_ts": last_price[0]["ts"] if last_price else None},
+            "kill": ctl["kill"], "flatten": ctl["flatten"],
+            "equity": eq[0] if eq else None,
+            "open_trades": self.t("SELECT COUNT(*) AS n FROM trades WHERE status IN ('PENDING','OPEN','EXITING')")
+            [0]["n"] if Path(self.trading_db).exists() else 0,
+            "working_orders": info.get("working", 0),
+            "mismatch": info.get("mismatch") or {},
+            "regime": info.get("regime"),
+        }
+
+    def equity(self, days: int) -> list[dict]:
+        since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec="seconds")
+        return self.t("SELECT ts, equity, cash, day_pnl FROM equity WHERE ts >= ? ORDER BY ts", (since,))
+
+    def strategies(self) -> list[dict]:
+        ctl = self.control.load()["strategies"]
+        rows = self.t("""SELECT strategy, COUNT(*) AS trades, SUM(pnl > 0) AS wins, SUM(pnl) AS pnl,
+                         AVG(pnl) AS expectancy, AVG(pnl_pct) AS avg_pct
+                         FROM trades WHERE status='CLOSED' GROUP BY strategy""")
+        by = {r["strategy"]: r for r in rows}
+        n = self.cfg.trading.auto_disable_trades
+        out = []
+        for name, params in self.cfg.trading.strategies.items():
+            r = by.get(name, {})
+            recent = self.t("SELECT pnl FROM trades WHERE status='CLOSED' AND strategy=? ORDER BY id DESC LIMIT ?",
+                            (name, n))
+            auto_off = len(recent) >= n and sum(x["pnl"] for x in recent) / n < 0
+            out.append({"strategy": name, "config_enabled": params.get("enabled", True),
+                        "toggle": ctl.get(name, True), "auto_disabled": auto_off,
+                        "trades": r.get("trades", 0), "win_rate": (r["wins"] / r["trades"]) if r.get("trades") else None,
+                        "pnl": r.get("pnl") or 0.0, "expectancy": r.get("expectancy"), "avg_pct": r.get("avg_pct"),
+                        "open": self.t("SELECT COUNT(*) AS n FROM trades WHERE strategy=? AND status IN "
+                                       "('PENDING','OPEN','EXITING')", (name,))[0]["n"]
+                        if Path(self.trading_db).exists() else 0})
+        return out
+
+    def positions(self) -> list[dict]:
+        rows = self.t("SELECT * FROM trades WHERE status IN ('PENDING','OPEN','EXITING') ORDER BY id")
+        for r in rows:
+            p = self.m("SELECT last, ts FROM prices WHERE symbol=? ORDER BY ts DESC LIMIT 1", (r["symbol"],))
+            r["last"] = p[0]["last"] if p else None
+            r["last_ts"] = p[0]["ts"] if p else None
+            if r["last"] and r["entry_price"] and r["remaining"]:
+                r["unrealized"] = (r["last"] - r["entry_price"]) * r["remaining"]
+                r["unrealized_pct"] = (r["last"] / r["entry_price"] - 1) * 100
+        return rows
+
+    def orders(self, limit: int) -> list[dict]:
+        return self.t("SELECT * FROM orders ORDER BY ts DESC LIMIT ?", (limit,))
+
+    def trades(self, limit: int) -> list[dict]:
+        return self.t("SELECT * FROM trades WHERE status IN ('CLOSED','CANCELED') ORDER BY id DESC LIMIT ?", (limit,))
+
+    def signals(self, limit: int) -> list[dict]:
+        return self.t("SELECT * FROM signals ORDER BY ts DESC, ok DESC, score DESC LIMIT ?", (limit,))
+
+    # ---------- 수집 상태 ----------
+    def collector(self) -> dict:
+        r = self.m("SELECT MAX(trade_date) AS d FROM prices")
+        d = r[0]["d"] if r else None
+        per = {s: {"session": s, "prices": 0, "quotes": 0, "quotes_empty": 0, "bars": 0, "symbols_quoted": 0}
+               for s in SESSIONS}
+        if d:
+            for x in self.m("SELECT session, COUNT(*) AS n FROM prices WHERE trade_date=? GROUP BY session", (d,)):
+                per.get(x["session"], {})["prices"] = x["n"]
+            for x in self.m("""SELECT session, COUNT(*) AS n, SUM(bid IS NULL OR ask IS NULL) AS empty,
+                               COUNT(DISTINCT CASE WHEN bid IS NOT NULL AND ask IS NOT NULL THEN symbol END) AS syms
+                               FROM quotes WHERE trade_date=? GROUP BY session""", (d,)):
+                if x["session"] in per:
+                    per[x["session"]].update(quotes=x["n"], quotes_empty=x["empty"] or 0, symbols_quoted=x["syms"])
+            for x in self.m("SELECT session, COUNT(*) AS n FROM bars_1m WHERE trade_date=? GROUP BY session", (d,)):
+                per.get(x["session"], {})["bars"] = x["n"]
+        last = {}
+        for table in ("prices", "quotes", "bars_1m", "rankings"):
+            q = self.m(f"SELECT MAX(ts) AS ts FROM {table}")
+            last[table] = q[0]["ts"] if q else None
+        f = self.m("SELECT MAX(accepted) AS ts, COUNT(*) AS n FROM filings")
+        u = self.m("SELECT snapshot_date, COUNT(*) AS n FROM universe GROUP BY snapshot_date "
+                   "ORDER BY snapshot_date DESC LIMIT 1")
+        spreads = {x["session"]: x["med"] for x in self.m(
+            "SELECT session, AVG(spread_med_pct) AS med FROM session_summary WHERE trade_date=? GROUP BY session",
+            (d,))} if d else {}
+        for s in per:
+            per[s]["spread_med_pct"] = spreads.get(s)
+        return {"trade_date": d, "sessions": list(per.values()), "last": last,
+                "filings": f[0] if f else None, "universe": u[0] if u else None}
+
+    # ---------- 핵심 가설 점검 ----------
+    def research(self, days: int = 20) -> list[dict]:
+        """영업일별: 직전 영업일 주목 종목(랭킹)의 '데이마켓 종가 → 정규장 시가' 수익률 vs 나머지 종목."""
+        dates = [r["trade_date"] for r in self.m(
+            "SELECT DISTINCT trade_date FROM session_summary ORDER BY trade_date DESC LIMIT ?", (days,))]
+        out = []
+        for i, d in enumerate(dates):
+            prev = dates[i + 1] if i + 1 < len(dates) else None
+            rows = self.m("""SELECT a.symbol, a.close AS day_close, b.open AS reg_open
+                             FROM session_summary a JOIN session_summary b
+                               ON a.symbol=b.symbol AND a.trade_date=b.trade_date
+                             WHERE a.trade_date=? AND a.session='DAY' AND b.session='REGULAR'
+                               AND a.close > 0 AND b.open > 0""", (d,))
+            attn = {r["symbol"] for r in self.m(
+                """SELECT DISTINCT symbol FROM rankings WHERE trade_date=? AND session IN ('REGULAR','AFTER')""",
+                (prev,))} if prev else set()
+            groups = {"attention": [], "others": []}
+            for r in rows:
+                groups["attention" if r["symbol"] in attn else "others"].append(r["reg_open"] / r["day_close"] - 1)
+            item = {"trade_date": d}
+            for g, xs in groups.items():
+                xs.sort()
+                item[g] = {"n": len(xs), "mean": sum(xs) / len(xs) if xs else None,
+                           "median": xs[len(xs) // 2] if xs else None,
+                           "hit": sum(1 for x in xs if x > 0) / len(xs) if xs else None}
+            out.append(item)
+        return list(reversed(out))
+
+
+class Handler(BaseHTTPRequestHandler):
+    data: Data = None  # 서버 생성 시 주입
+
+    def log_message(self, fmt, *args):
+        log.debug(fmt, *args)
+
+    def _json(self, obj, status=200):
+        body = json.dumps(obj, ensure_ascii=False, default=str).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        u = urlparse(self.path)
+        qs = {k: v[0] for k, v in parse_qs(u.query).items()}
+        n = lambda k, d: max(1, min(int(qs.get(k, d)), 1000))
+        d = self.data
+        routes = {
+            "/api/overview": lambda: d.overview(),
+            "/api/equity": lambda: d.equity(n("days", 7)),
+            "/api/strategies": lambda: d.strategies(),
+            "/api/positions": lambda: d.positions(),
+            "/api/orders": lambda: d.orders(n("limit", 50)),
+            "/api/trades": lambda: d.trades(n("limit", 50)),
+            "/api/signals": lambda: d.signals(n("limit", 200)),
+            "/api/collector": lambda: d.collector(),
+            "/api/research": lambda: d.research(n("days", 20)),
+        }
+        if u.path in routes:
+            try:
+                return self._json(routes[u.path]())
+            except Exception as e:
+                log.exception("API 오류 %s", u.path)
+                return self._json({"error": str(e)}, 500)
+        if u.path in ("/", "/index.html"):
+            body = (STATIC / "index.html").read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            return self.wfile.write(body)
+        self._json({"error": "not found"}, 404)
+
+    def do_POST(self):
+        if urlparse(self.path).path != "/api/control":
+            return self._json({"error": "not found"}, 404)
+        origin = self.headers.get("Origin") or ""
+        host = self.headers.get("Host") or ""
+        if not origin or urlparse(origin).netloc != host:
+            return self._json({"error": "같은 출처의 요청만 허용합니다."}, 403)
+        try:
+            body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
+        except ValueError:
+            return self._json({"error": "잘못된 JSON"}, 400)
+        ctl = self.data.control
+        if "kill" in body:
+            d = ctl.update(kill=bool(body["kill"]))
+        elif body.get("flatten") is True:
+            d = ctl.update(flatten=True)
+        elif "strategy" in body and body["strategy"] in self.data.cfg.trading.strategies:
+            d = ctl.update(strategy=(body["strategy"], bool(body.get("enabled"))))
+        else:
+            return self._json({"error": "알 수 없는 제어 요청"}, 400)
+        log.info("제어 변경: %s", body)
+        self._json(d)
+
+
+def make_server(cfg, host: str = "127.0.0.1", port: int = 8050) -> ThreadingHTTPServer:
+    handler = type("BoundHandler", (Handler,), {"data": Data(cfg)})
+    return ThreadingHTTPServer((host, port), handler)
+
+
+def serve(cfg, port: int = 8050) -> None:
+    srv = make_server(cfg, port=port)
+    print(f"대시보드: http://127.0.0.1:{port}  (Ctrl+C 로 종료)")
+    try:
+        srv.serve_forever()
+    except KeyboardInterrupt:
+        pass

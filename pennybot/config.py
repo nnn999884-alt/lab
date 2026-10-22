@@ -87,6 +87,46 @@ class CollectorConfig:
 
 
 @dataclass
+class TradingConfig:
+    """세션 매매 엔진 (python -m pennybot trade). 숫자는 모두 백테스트 전 초안."""
+    db_path: str = "state/trading.db"
+    paper_cash: float = 2000.0
+    min_price: float = 0.50
+    max_price: float = 5.00
+    max_spread_pct: float = 3.0          # 데이마켓은 스프레드가 넓어 매매 기준보다 조금 느슨하게
+    entry_cutoff_minutes: int = 30       # 데이마켓 종료 30분 전부터 신규 매수 중단
+    scan_minutes: int = 5
+    forced_exit_minutes: int = 60        # 정규장 개장 후 N분에 전량 청산
+    entry_ttl_seconds: int = 300         # 매수 지정가 미체결 시 취소
+    exit_reprice_seconds: int = 60       # 매도 지정가 재호가 주기
+    exit_slippage_pct: float = 1.0       # 강제 청산 매도가 = bid × (1 − x%)
+    max_exit_reprices: int = 3           # 정규장에서 이 횟수 넘게 안 팔리면 시장가
+    # 리스크
+    max_position_usd: float = 300.0
+    max_position_pct: float = 0.05       # 계좌의 5%
+    risk_per_trade_pct: float = 0.01     # 손절 시 손실 계좌의 1%
+    max_open_positions: int = 8
+    max_daily_loss_usd: float = 150.0
+    auto_disable_trades: int = 20        # 최근 N회 평균 손익이 음수면 그 전략 자동 정지
+    regime_symbol: str = "IWM"           # 소형주 시장 상태 (데이마켓에서도 거래됨)
+    regime_drop_pct: float = 1.5         # 데이마켓 중 IWM 이 전일 종가 대비 이만큼 빠지면 신규 매수 중단
+    notify_webhook: str = ""             # 디스코드/슬랙 웹훅 (환경변수 PENNYBOT_WEBHOOK 우선)
+    strategies: dict = field(default_factory=lambda: {
+        "opening_premium": {"enabled": True, "budget_pct": 0.40, "max_positions": 4,
+                            "take_profit_pct": 8.0, "stop_loss_pct": 6.0,
+                            "min_change_pct": -5.0, "max_change_pct": 15.0,
+                            "sell_before_open_minutes": 30},
+        "filing_reaction": {"enabled": True, "budget_pct": 0.30, "max_positions": 3,
+                            "take_profit_pct": 10.0, "stop_loss_pct": 7.0,
+                            "min_insider_usd": 10000, "max_runup_pct": 10.0,
+                            "sell_before_open_minutes": 120},
+        "day_dip": {"enabled": True, "budget_pct": 0.30, "max_positions": 3,
+                    "dip_pct": 12.0, "stop_loss_pct": 8.0, "retrace": 0.5,
+                    "no_news_days": 3, "stall_minutes": 10},
+    })
+
+
+@dataclass
 class Config:
     mode: str = "paper"              # paper | live
     watchlist: list[str] = field(default_factory=list)
@@ -97,6 +137,7 @@ class Config:
     risk: RiskConfig = field(default_factory=RiskConfig)
     screener: ScreenerConfig = field(default_factory=ScreenerConfig)
     collector: CollectorConfig = field(default_factory=CollectorConfig)
+    trading: TradingConfig = field(default_factory=TradingConfig)
     toss: TossConfig = field(default_factory=TossConfig)
     sec_user_agent: str = ""
 
@@ -107,6 +148,16 @@ class Config:
     @property
     def auto_watchlist(self) -> bool:
         return self.watchlist == ["AUTO"]
+
+
+def _trading(d: dict) -> TradingConfig:
+    """전략별 설정은 기본값 위에 덮어쓴다 (일부 키만 바꿔도 되게)."""
+    d = dict(d)
+    over = d.pop("strategies", {}) or {}
+    t = TradingConfig(**d)
+    for name, params in over.items():
+        t.strategies[name] = {**t.strategies.get(name, {}), **(params or {})}
+    return t
 
 
 def _known(cls, d: dict):
@@ -139,6 +190,7 @@ def load_config(path: str | Path = "config.yaml") -> Config:
         risk=RiskConfig(**raw.get("risk", {})),
         screener=ScreenerConfig(**raw.get("screener", {})),
         collector=CollectorConfig(**raw.get("collector", {})),
+        trading=_trading(raw.get("trading", {})),
         toss=_known(TossConfig, raw.get("toss", {})),
     )
     # 비밀값은 환경변수로만 받는다 (yaml에 커밋 금지)
@@ -146,6 +198,7 @@ def load_config(path: str | Path = "config.yaml") -> Config:
     cfg.toss.client_secret = os.getenv("TOSS_CLIENT_SECRET", "")
     cfg.toss.account = os.getenv("TOSS_ACCOUNT", "")
     cfg.sec_user_agent = os.getenv("SEC_USER_AGENT", "")
+    cfg.trading.notify_webhook = os.getenv("PENNYBOT_WEBHOOK", cfg.trading.notify_webhook)
 
     # 실거래는 yaml + 환경변수 이중 확인
     if cfg.is_live and os.getenv("PENNYBOT_LIVE_CONFIRM") != "YES":

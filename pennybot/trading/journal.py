@@ -1,0 +1,172 @@
+"""매매 기록 (SQLite, state/trading.db). 대시보드가 이 파일을 읽는다.
+
+trades  : 한 번의 매수→매도 왕복. 상태 PENDING(매수 주문 중) → OPEN → EXITING → CLOSED / CANCELED
+orders  : 거래소에 낸 모든 주문과 체결 진행
+signals : 전략이 검토한 모든 후보와 통과/탈락 사유 (나중에 전략 검증용)
+equity  : 계좌 평가액 스냅샷
+heartbeat: 수집기·매매 봇이 살아 있는지
+"""
+from __future__ import annotations
+
+import json
+import sqlite3
+from datetime import datetime, timezone
+from pathlib import Path
+
+SCHEMA = """
+CREATE TABLE IF NOT EXISTS trades (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, strategy TEXT, symbol TEXT, mode TEXT, trade_date TEXT,
+    status TEXT, planned_qty INTEGER, qty INTEGER DEFAULT 0, remaining INTEGER DEFAULT 0,
+    entry_price REAL, entry_ts TEXT, entry_session TEXT,
+    stop REAL, target REAL, sell_from TEXT, deadline TEXT,
+    exit_price REAL, exit_ts TEXT, exit_session TEXT, exit_reason TEXT,
+    exit_value REAL DEFAULT 0, exited_qty INTEGER DEFAULT 0,
+    pnl REAL, pnl_pct REAL, reason TEXT, created TEXT);
+CREATE TABLE IF NOT EXISTS orders (
+    order_id TEXT PRIMARY KEY, trade_id INTEGER, ts TEXT, symbol TEXT, side TEXT, type TEXT,
+    qty INTEGER, price REAL, status TEXT, filled INTEGER DEFAULT 0, avg_price REAL,
+    purpose TEXT, session TEXT, note TEXT, updated TEXT);
+CREATE TABLE IF NOT EXISTS signals (
+    ts TEXT, trade_date TEXT, session TEXT, strategy TEXT, symbol TEXT, ok INTEGER,
+    reason TEXT, score REAL, price REAL);
+CREATE TABLE IF NOT EXISTS equity (
+    ts TEXT PRIMARY KEY, cash REAL, positions_value REAL, equity REAL, day_pnl REAL, mode TEXT);
+CREATE TABLE IF NOT EXISTS heartbeat (component TEXT PRIMARY KEY, ts TEXT, info TEXT);
+CREATE INDEX IF NOT EXISTS ix_trades_status ON trades (status);
+CREATE INDEX IF NOT EXISTS ix_signals_ts ON signals (ts);
+"""
+
+OPEN_STATES = ("PENDING", "OPEN", "EXITING")
+
+
+def now_iso(ts: datetime | None = None) -> str:
+    return (ts or datetime.now(timezone.utc)).astimezone(timezone.utc).isoformat(timespec="seconds")
+
+
+class Journal:
+    def __init__(self, path: str | Path, mode: str = "paper"):
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        self.db = sqlite3.connect(str(path), check_same_thread=False)
+        self.db.row_factory = sqlite3.Row
+        self.db.execute("PRAGMA journal_mode=WAL")
+        self.db.executescript(SCHEMA)
+        self.mode = mode
+
+    def _x(self, sql: str, args=()) -> sqlite3.Cursor:
+        with self.db:
+            return self.db.execute(sql, args)
+
+    def q(self, sql: str, args=()) -> list[dict]:
+        return [dict(r) for r in self.db.execute(sql, args).fetchall()]
+
+    # ---------- trades ----------
+    def open_trade(self, *, strategy, symbol, trade_date, planned_qty, stop, target,
+                   sell_from: datetime, deadline: datetime, reason: str, now: datetime) -> int:
+        cur = self._x("""INSERT INTO trades (strategy, symbol, mode, trade_date, status, planned_qty,
+                         stop, target, sell_from, deadline, reason, created)
+                         VALUES (?,?,?,?, 'PENDING', ?,?,?,?,?,?,?)""",
+                      (strategy, symbol, self.mode, trade_date, planned_qty, stop, target,
+                       now_iso(sell_from), now_iso(deadline), reason, now_iso(now)))
+        return cur.lastrowid
+
+    def trade(self, trade_id: int) -> dict:
+        return self.q("SELECT * FROM trades WHERE id=?", (trade_id,))[0]
+
+    def open_trades(self) -> list[dict]:
+        return self.q(f"SELECT * FROM trades WHERE status IN {OPEN_STATES} AND mode=? ORDER BY id",
+                      (self.mode,))
+
+    def record_entry_fill(self, trade_id: int, qty: int, price: float, session: str, now: datetime) -> None:
+        t = self.trade(trade_id)
+        new_qty = t["qty"] + qty
+        avg = ((t["entry_price"] or 0) * t["qty"] + price * qty) / new_qty
+        self._x("""UPDATE trades SET qty=?, remaining=remaining+?, entry_price=?, status='OPEN',
+                   entry_ts=COALESCE(entry_ts, ?), entry_session=COALESCE(entry_session, ?) WHERE id=?""",
+                (new_qty, qty, avg, now_iso(now), session, trade_id))
+
+    def entry_finished(self, trade_id: int) -> None:
+        """매수 주문이 끝났는데 체결이 0이면 취소 처리."""
+        self._x("UPDATE trades SET status='CANCELED' WHERE id=? AND qty=0", (trade_id,))
+
+    def set_exiting(self, trade_id: int, reason: str) -> None:
+        self._x("UPDATE trades SET status='EXITING', exit_reason=COALESCE(exit_reason, ?) WHERE id=?",
+                (reason, trade_id))
+
+    def record_exit_fill(self, trade_id: int, qty: int, price: float, session: str, now: datetime) -> dict:
+        t = self.trade(trade_id)
+        remaining = max(t["remaining"] - qty, 0)
+        exited = t["exited_qty"] + qty
+        value = t["exit_value"] + qty * price
+        self._x("UPDATE trades SET remaining=?, exited_qty=?, exit_value=? WHERE id=?",
+                (remaining, exited, value, trade_id))
+        if remaining == 0:
+            exit_price = value / exited
+            pnl = (exit_price - t["entry_price"]) * exited
+            self._x("""UPDATE trades SET status='CLOSED', exit_price=?, exit_ts=?, exit_session=?,
+                       pnl=?, pnl_pct=? WHERE id=?""",
+                    (exit_price, now_iso(now), session, pnl,
+                     (exit_price / t["entry_price"] - 1) * 100, trade_id))
+        return self.trade(trade_id)
+
+    def exit_unfilled(self, trade_id: int) -> None:
+        """매도 주문이 안 팔리고 끝나면 다시 OPEN 으로 (다음 틱에 재주문)."""
+        self._x("UPDATE trades SET status='OPEN' WHERE id=? AND status='EXITING' AND remaining>0",
+                (trade_id,))
+
+    def realized_pnl(self, trade_date: str) -> float:
+        r = self.q("SELECT COALESCE(SUM(pnl),0) AS p FROM trades WHERE status='CLOSED' AND trade_date=? AND mode=?",
+                   (trade_date, self.mode))
+        return r[0]["p"]
+
+    def traded_today(self, symbol: str, trade_date: str) -> bool:
+        return bool(self.q("SELECT 1 FROM trades WHERE symbol=? AND trade_date=? AND mode=? AND qty>0",
+                           (symbol, trade_date, self.mode)))
+
+    def strategy_stats(self, strategy: str | None = None, last_n: int | None = None) -> list[dict]:
+        rows = self.q("""SELECT strategy, pnl, pnl_pct FROM trades WHERE status='CLOSED' AND mode=?
+                         ORDER BY id DESC""", (self.mode,))
+        out: dict[str, list] = {}
+        for r in rows:
+            if strategy and r["strategy"] != strategy:
+                continue
+            lst = out.setdefault(r["strategy"], [])
+            if last_n is None or len(lst) < last_n:
+                lst.append(r)
+        stats = []
+        for name, lst in out.items():
+            n = len(lst)
+            wins = sum(1 for r in lst if r["pnl"] > 0)
+            stats.append({"strategy": name, "trades": n, "win_rate": wins / n if n else 0,
+                          "pnl": sum(r["pnl"] for r in lst),
+                          "expectancy": sum(r["pnl"] for r in lst) / n if n else 0,
+                          "avg_pct": sum(r["pnl_pct"] for r in lst) / n if n else 0})
+        return stats
+
+    # ---------- orders ----------
+    def log_order(self, o: dict, *, trade_id: int, purpose: str, session: str, now: datetime, note: str = "") -> None:
+        self._x("""INSERT OR REPLACE INTO orders (order_id, trade_id, ts, symbol, side, type, qty, price,
+                   status, filled, avg_price, purpose, session, note, updated)
+                   VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (o["order_id"], trade_id, now_iso(now), o["symbol"], o["side"], o["type"], o["qty"],
+                 o.get("price"), o["status"], o.get("filled", 0), o.get("avg_price"), purpose, session,
+                 note, now_iso(now)))
+
+    def update_order(self, o: dict, now: datetime) -> None:
+        self._x("UPDATE orders SET status=?, filled=?, avg_price=?, updated=? WHERE order_id=?",
+                (o["status"], o.get("filled", 0), o.get("avg_price"), now_iso(now), o["order_id"]))
+
+    # ---------- signals / equity / heartbeat ----------
+    def log_signals(self, rows: list[dict]) -> None:
+        if rows:
+            with self.db:
+                self.db.executemany("""INSERT INTO signals (ts, trade_date, session, strategy, symbol, ok,
+                                       reason, score, price) VALUES (:ts,:trade_date,:session,:strategy,
+                                       :symbol,:ok,:reason,:score,:price)""", rows)
+
+    def snapshot_equity(self, cash: float, positions_value: float, day_pnl: float, now: datetime) -> None:
+        self._x("INSERT OR REPLACE INTO equity VALUES (?,?,?,?,?,?)",
+                (now_iso(now), cash, positions_value, cash + positions_value, day_pnl, self.mode))
+
+    def beat(self, component: str, info: dict, now: datetime) -> None:
+        self._x("INSERT OR REPLACE INTO heartbeat VALUES (?,?,?)",
+                (component, now_iso(now), json.dumps(info, ensure_ascii=False, default=str)))

@@ -72,6 +72,28 @@ collector:
   edgar_poll_minutes: 5
   universe_refresh_hours: 24
 
+# 세션 매매 엔진 (python -m pennybot trade) — 숫자는 모두 백테스트 전 초안
+trading:
+  db_path: state/trading.db
+  paper_cash: 2000
+  min_price: 0.50
+  max_price: 5.00
+  max_spread_pct: 3.0
+  entry_cutoff_minutes: 30      # 데이마켓 종료 30분 전부터 신규 매수 중단
+  forced_exit_minutes: 60       # 정규장 개장 60분 뒤 전량 청산
+  max_position_usd: 300
+  max_position_pct: 0.05
+  risk_per_trade_pct: 0.01
+  max_open_positions: 8
+  max_daily_loss_usd: 150
+  auto_disable_trades: 20       # 최근 20회 평균 손익이 음수면 그 전략 자동 정지
+  regime_symbol: IWM
+  regime_drop_pct: 1.5          # 데이마켓 중 IWM −1.5% 이하면 신규 매수 중단
+  strategies:                   # 바꾸고 싶은 키만 적으면 나머지는 기본값
+    opening_premium: {enabled: true, budget_pct: 0.40, max_positions: 4, take_profit_pct: 8, stop_loss_pct: 6}
+    filing_reaction: {enabled: true, budget_pct: 0.30, max_positions: 3, min_insider_usd: 10000}
+    day_dip: {enabled: true, budget_pct: 0.30, max_positions: 3, dip_pct: 12}
+
 # 토스증권 Open API (공식 명세 v1.2.17: docs/toss-openapi-1.2.17.json)
 # 키·계좌는 .env 로만 받습니다. 엔드포인트는 코드에 고정돼 있습니다.
 toss:

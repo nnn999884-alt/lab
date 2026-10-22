@@ -3,6 +3,8 @@
   python -m pennybot accounts              # accountSeq 확인 → .env 의 TOSS_ACCOUNT
   python -m pennybot collect [--once]      # 24시간 세션별 데이터 수집 (state/market.db)
   python -m pennybot summarize --date D    # 영업일 D(미국 날짜)의 세션 요약 다시 만들기
+  python -m pennybot trade [--once]        # 세션 매매 엔진 (mode: paper 기본, live 는 이중 확인)
+  python -m pennybot dashboard [--demo]    # 로컬 대시보드 http://127.0.0.1:8050 (--demo: 예시 데이터)
   python -m pennybot screen                # (구) Coil & Catalyst 스크리닝
   python -m pennybot run [--once]          # (구) 매매 루프
 """
@@ -83,6 +85,46 @@ def cmd_summarize(cfg: Config, date: str) -> None:
     print(Store(cfg.collector.db_path).summarize(date), "행")
 
 
+def cmd_trade(cfg: Config, once: bool) -> None:
+    from pathlib import Path
+
+    from .sessions import SessionCalendar
+    from .trading import Control, Journal, LiveExchange, PaperExchange, TossMarket, Trader
+    from .trading.market import MarketView
+    from .trading.notify import Notifier
+
+    client = make_client(cfg)
+    t = cfg.trading
+    if cfg.is_live:
+        ex = LiveExchange(client)
+        logging.warning("⚠️  실거래 모드: 토스증권 계좌로 실제 주문이 나갑니다.")
+    else:
+        ex = PaperExchange(TossMarket(client), t.paper_cash, Path(cfg.state_dir) / "paper_account.json")
+    cal = SessionCalendar(client)
+    if not Path(cfg.collector.db_path).exists():
+        logging.warning("수집기 DB(%s)가 없습니다. 'python -m pennybot collect' 를 같이 돌려야 전략이 후보를 찾습니다.",
+                        cfg.collector.db_path)
+        from .collector import Store
+        Store(cfg.collector.db_path)
+    trader = Trader(ex, Journal(t.db_path, mode=cfg.mode), cal,
+                    MarketView(cfg.collector.db_path, client, cal, ex), t, Control(cfg.state_dir),
+                    Notifier(t.notify_webhook))
+    if once:
+        trader.tick()
+    else:
+        trader.run()
+
+
+def cmd_dashboard(cfg: Config, port: int, demo: bool) -> None:
+    from .dashboard import serve
+    if demo:
+        from .dashboard.demo import build
+        cfg.trading.db_path, cfg.collector.db_path = build("state_demo")
+        cfg.state_dir = "state_demo"
+        print("⚠️  예시 데이터(state_demo/)로 띄웁니다. 실제 계좌·시장 데이터가 아닙니다.")
+    serve(cfg, port)
+
+
 def cmd_screen(cfg: Config) -> None:
     from .screener import run_screen
     picks = run_screen(cfg.screener, _feed(cfg), _edgar(cfg), cfg.state_dir)
@@ -108,10 +150,12 @@ def cmd_run(cfg: Config, once: bool) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description="미국 페니주 자동매매 (토스증권)")
     ap.add_argument("command", nargs="?", default="collect",
-                    choices=["check", "accounts", "collect", "summarize", "screen", "run"])
+                    choices=["check", "accounts", "collect", "summarize", "trade", "dashboard", "screen", "run"])
     ap.add_argument("--config", default="config.yaml")
     ap.add_argument("--once", action="store_true", help="collect/run: 한 번만 실행")
     ap.add_argument("--date", help="summarize: 미국 영업일 YYYY-MM-DD")
+    ap.add_argument("--port", type=int, default=8050, help="dashboard 포트")
+    ap.add_argument("--demo", action="store_true", help="dashboard: 예시 데이터로 미리보기")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
 
@@ -124,6 +168,8 @@ def main() -> None:
         "accounts": lambda: cmd_accounts(cfg),
         "collect": lambda: cmd_collect(cfg, args.once),
         "summarize": lambda: cmd_summarize(cfg, args.date),
+        "trade": lambda: cmd_trade(cfg, args.once),
+        "dashboard": lambda: cmd_dashboard(cfg, args.port, args.demo),
         "screen": lambda: cmd_screen(cfg),
         "run": lambda: cmd_run(cfg, args.once),
     }[args.command]()
