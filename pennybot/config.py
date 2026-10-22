@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 
 import yaml
@@ -65,17 +65,25 @@ class ScreenerConfig:
 @dataclass
 class TossConfig:
     base_url: str = "https://openapi.tossinvest.com"
-    token_path: str = "/oauth2/token"
-    quote_path: str = "/v1/quotes/{symbol}"
-    candles_path: str = "/v1/candles/{symbol}"
-    positions_path: str = "/v1/accounts/positions"
-    cash_path: str = "/v1/accounts/balance"
-    orders_path: str = "/v1/orders"
-    order_path: str = "/v1/orders/{order_id}"
-    market: str = "US"
+    token_path: str = "state/toss_token.json"   # 프로세스 간 토큰 공유 (client 당 유효 토큰 1개)
     client_id: str = ""
     client_secret: str = ""
-    account: str = ""
+    account: str = ""                           # accountSeq (GET /api/v1/accounts)
+
+
+@dataclass
+class CollectorConfig:
+    db_path: str = "state/market.db"
+    markets: list = field(default_factory=lambda: ["NASDAQ", "NYSE", "AMEX"])
+    min_price: float = 0.20          # 수집은 매매 범위보다 넓게
+    max_price: float = 10.0
+    price_poll_seconds: int = 60     # 유니버스 전체 현재가 (200개씩 묶음 조회)
+    watch_size: int = 120            # 호가·1분봉을 촘촘히 받을 종목 수
+    orderbook_poll_seconds: int = 60
+    candle_sync_minutes: int = 30    # 감시 종목 1분봉 동기화 주기 (세션 종료 시에도 실행)
+    ranking_poll_minutes: int = 10
+    edgar_poll_minutes: int = 5
+    universe_refresh_hours: int = 24
 
 
 @dataclass
@@ -88,6 +96,7 @@ class Config:
     strategy: StrategyConfig = field(default_factory=StrategyConfig)
     risk: RiskConfig = field(default_factory=RiskConfig)
     screener: ScreenerConfig = field(default_factory=ScreenerConfig)
+    collector: CollectorConfig = field(default_factory=CollectorConfig)
     toss: TossConfig = field(default_factory=TossConfig)
     sec_user_agent: str = ""
 
@@ -98,6 +107,12 @@ class Config:
     @property
     def auto_watchlist(self) -> bool:
         return self.watchlist == ["AUTO"]
+
+
+def _known(cls, d: dict):
+    """예전 설정 파일의 사라진 키(엔드포인트 경로 등)는 무시한다."""
+    names = {f.name for f in fields(cls)}
+    return cls(**{k: v for k, v in d.items() if k in names})
 
 
 def _watchlist(v) -> list[str]:
@@ -123,7 +138,8 @@ def load_config(path: str | Path = "config.yaml") -> Config:
         strategy=StrategyConfig(**raw.get("strategy", {})),
         risk=RiskConfig(**raw.get("risk", {})),
         screener=ScreenerConfig(**raw.get("screener", {})),
-        toss=TossConfig(**raw.get("toss", {})),
+        collector=CollectorConfig(**raw.get("collector", {})),
+        toss=_known(TossConfig, raw.get("toss", {})),
     )
     # 비밀값은 환경변수로만 받는다 (yaml에 커밋 금지)
     cfg.toss.client_id = os.getenv("TOSS_CLIENT_ID", "")

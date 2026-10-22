@@ -58,14 +58,22 @@ screener:
     offering_block_days: 30     # 증자공시 30일 이내 → 제외
     offering_penalty_days: 90   # 90일 이내 → -25점
 
-# 토스증권 Open API — 경로는 공식 명세(developers.tossinvest.com)와 대조 후 수정
+# 세션별 데이터 수집기 (python -m pennybot collect)
+collector:
+  db_path: state/market.db
+  markets: [NASDAQ, NYSE, AMEX]
+  min_price: 0.20             # 수집은 매매 범위($0.5~$5)보다 넓게
+  max_price: 10.0
+  price_poll_seconds: 60      # 유니버스 전체 현재가 (200개씩 묶음)
+  watch_size: 120             # 호가·1분봉을 촘촘히 받을 종목 수
+  orderbook_poll_seconds: 60
+  candle_sync_minutes: 30
+  ranking_poll_minutes: 10
+  edgar_poll_minutes: 5
+  universe_refresh_hours: 24
+
+# 토스증권 Open API (공식 명세 v1.2.17: docs/toss-openapi-1.2.17.json)
+# 키·계좌는 .env 로만 받습니다. 엔드포인트는 코드에 고정돼 있습니다.
 toss:
   base_url: https://openapi.tossinvest.com
-  token_path: /oauth2/token
-  quote_path: /v1/quotes/{symbol}
-  candles_path: /v1/candles/{symbol}
-  positions_path: /v1/accounts/positions
-  cash_path: /v1/accounts/balance
-  orders_path: /v1/orders
-  order_path: /v1/orders/{order_id}
-  market: US
+  token_path: state/toss_token.json   # 수집기·봇이 토큰을 공유 (재발급 시 이전 토큰 무효)

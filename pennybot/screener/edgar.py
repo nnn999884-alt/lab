@@ -12,11 +12,12 @@ SEC 는 User-Agent 에 연락처를 요구한다 → 환경변수 SEC_USER_AGENT
 from __future__ import annotations
 
 import logging
+import re
 import threading
 import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 
 import requests
 
@@ -25,6 +26,9 @@ log = logging.getLogger(__name__)
 TICKERS_URL = "https://www.sec.gov/files/company_tickers_exchange.json"
 SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik:010d}.json"
 ARCHIVE_URL = "https://www.sec.gov/Archives/edgar/data/{cik}/{acc}/{doc}"
+# 최신 접수 공시 Atom 피드. <updated> 에 접수 시각이 시간대와 함께 들어 있다 (세션 판정용)
+CURRENT_URL = ("https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type={form}"
+               "&company=&dateb=&owner=include&start=0&count=100&output=atom")
 
 OFFERING_FORMS = ("424B", "S-1", "S-3", "F-1", "F-3")
 LATE_FILING_FORMS = ("NT 10-K", "NT 10-Q", "NT 20-F")
@@ -52,6 +56,7 @@ class Filing:
     accession: str
     primary_doc: str
     items: str = ""
+    accepted: str = ""   # submissions API 의 acceptanceDateTime (원문 그대로)
 
 
 class EdgarClient:
@@ -83,6 +88,9 @@ class EdgarClient:
     def filings(self, cik: int) -> list[Filing]:
         return parse_submissions(self._get(SUBMISSIONS_URL.format(cik=cik)).json())
 
+    def current(self, form: str) -> list[dict]:
+        return parse_current_atom(self._get(CURRENT_URL.format(form=form)).text)
+
     def form4_xml(self, cik: int, f: Filing) -> str:
         # primaryDocument 는 'xslF345X05/form4.xml' 처럼 렌더링 경로 → 원본 XML 은 접두 제거
         doc = f.primary_doc.split("/")[-1]
@@ -99,7 +107,33 @@ def parse_submissions(j: dict) -> list[Filing]:
             accession=r["accessionNumber"][i],
             primary_doc=r.get("primaryDocument", [""] * (i + 1))[i],
             items=(r.get("items") or [""] * (i + 1))[i] or "",
+            accepted=(r.get("acceptanceDateTime") or [""] * (i + 1))[i] or "",
         ))
+    return out
+
+
+_ATOM = "{http://www.w3.org/2005/Atom}"
+_TITLE = re.compile(r"^(?P<form>.+?) - .*\((?P<cik>\d{10})\) \((?P<role>[A-Za-z ]+)\)\s*$")
+
+
+def parse_current_atom(xml_text: str) -> list[dict]:
+    """최신 공시 피드 → [{form, cik, role, accession, accepted(datetime, 시간대 포함)}].
+
+    Form 4 는 같은 공시가 Issuer(회사)와 Reporting(내부자) 두 줄로 나온다 → 회사 쪽만 쓰려면 role 로 거른다.
+    """
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError:
+        return []
+    out = []
+    for e in root.iter(f"{_ATOM}entry"):
+        m = _TITLE.match((e.findtext(f"{_ATOM}title") or "").strip())
+        acc = re.search(r"accession-number=([\d-]+)", e.findtext(f"{_ATOM}id") or "")
+        upd = e.findtext(f"{_ATOM}updated")
+        if not (m and acc and upd):
+            continue
+        out.append({"form": m["form"].strip(), "cik": int(m["cik"]), "role": m["role"].strip(),
+                    "accession": acc.group(1), "accepted": datetime.fromisoformat(upd)})
     return out
 
 
