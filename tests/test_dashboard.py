@@ -95,7 +95,9 @@ def test_external_host_is_read_only_without_password(server):
     ext = "https://abc.trycloudflare.com"
     req = urllib.request.Request(base + "/api/overview", headers={"Host": "abc.trycloudflare.com"})
     with urllib.request.urlopen(req) as r:                                   # 보기는 된다
-        assert json.loads(r.read())["mode"] == "paper"
+        ov = json.loads(r.read())
+        assert ov["mode"] == "paper" and ov["readonly"] is True
+    assert get(base + "/api/overview")["readonly"] is False                  # 이 컴퓨터에서는 조작 가능
     req = urllib.request.Request(base + "/api/control", data=b'{"kill": true}', method="POST",
                                  headers={"Content-Type": "application/json", "Host": "abc.trycloudflare.com",
                                           "Origin": ext})

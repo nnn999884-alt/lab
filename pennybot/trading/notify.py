@@ -107,8 +107,13 @@ def _desc(r) -> str:
         return ""
 
 
-HELP = ("명령: /상태 · /정지 (신규 매수 중단) · /재개 · /청산 확인 (보유 전량 청산) · /리포트 [영업일]\n"
-        "영어도 됩니다: /status /kill /resume /flatten confirm /report")
+HELP = ("📖 명령\n"
+        "/상태 — 세션·보유 종목\n"
+        "/리포트 [영업일] — 일일 리포트 (예: /리포트 2026-10-21)\n"
+        "/대시보드 — 대시보드 외부 주소\n"
+        "/정지 — 신규 매수 중단 · /재개 — 다시 켜기\n"
+        "/청산 확인 — 보유 종목 전량 청산\n"
+        "영어도 됩니다: /status /report /dashboard /kill /resume /flatten confirm")
 
 
 class TelegramCommands:
@@ -170,6 +175,9 @@ class TelegramCommands:
         if cmd.split()[0] in ("/리포트", "/report"):
             arg = cmd.split()[1] if len(cmd.split()) > 1 else None      # /리포트 2026-10-21
             return self.trader.report_text(arg)
+        if cmd in ("/대시보드", "/dashboard"):
+            url = self.trader.dashboard_url()
+            return f"📊 대시보드: {url}" if url else "외부 주소가 꺼져 있습니다. 봇 컴퓨터에서 tunnel.bat 을 실행하세요."
         if cmd.startswith("/"):
             return HELP
         return None

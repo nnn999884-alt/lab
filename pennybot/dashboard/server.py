@@ -293,6 +293,11 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
         return False
 
+    def _readonly(self) -> bool:
+        """비밀번호 없이 외부 주소(터널)로 들어온 요청은 보기만: 주소를 아는 누구나 청산·정지를 누를 수 있게 되므로."""
+        host = urlparse("//" + (self.headers.get("Host") or "")).hostname
+        return not self.data.cfg.dashboard_password and host not in ("127.0.0.1", "localhost")
+
     def do_GET(self):
         if not self._authorized():
             return
@@ -301,7 +306,7 @@ class Handler(BaseHTTPRequestHandler):
         n = lambda k, d: max(1, min(int(qs.get(k, d)), 1000))
         d = self.data
         routes = {
-            "/api/overview": lambda: d.overview(),
+            "/api/overview": lambda: {**d.overview(), "readonly": self._readonly()},
             "/api/equity": lambda: d.equity(n("days", 7)),
             "/api/strategies": lambda: d.strategies(),
             "/api/positions": lambda: d.positions(),
@@ -339,8 +344,7 @@ class Handler(BaseHTTPRequestHandler):
         host = self.headers.get("Host") or ""
         if not origin or urlparse(origin).netloc != host:
             return self._json({"error": "같은 출처의 요청만 허용합니다."}, 403)
-        # 비밀번호 없이 외부 주소(터널)로 들어온 요청은 보기만: 주소를 아는 누구나 청산·정지를 누를 수 있게 되므로
-        if not self.data.cfg.dashboard_password and urlparse("//" + host).hostname not in ("127.0.0.1", "localhost"):
+        if self._readonly():
             return self._json({"error": "외부 주소에서는 보기만 됩니다. 조작은 이 컴퓨터나 텔레그램으로"
                                         " (.env 에 PENNYBOT_DASHBOARD_PASSWORD 를 넣으면 외부에서도 조작 가능)."}, 403)
         try:

@@ -18,6 +18,7 @@ from ..sessions import CLOSED, DAY, KST, REGULAR, SessionCalendar
 from .control import Control
 from ..toss_api import TossApiError
 from .exchange import TERMINAL, Exchange
+from . import messages as msg
 from .journal import Journal
 from .notify import Notifier
 from .risk import Account, Risk
@@ -74,6 +75,7 @@ class Trader:
     fund: object = None          # Fundamentals: 희석 프로필·펌프 신호 (없으면 수집기 공시만으로 판단)
     stream: object = None        # TossStream: 내 주문 이벤트가 오면 그 주문만 조회 (없거나 끊기면 매 틱 REST)
     reports_dir: str | None = None   # 일일 리포트 파일 폴더 (None = 알림만)
+    link: object = None          # () -> 대시보드 외부 주소 | None (터널이 켜져 있을 때만)
 
     def __post_init__(self):
         self.risk = Risk(self.tcfg, self.journal, self.control)
@@ -129,8 +131,10 @@ class Trader:
             log.debug("열린 주문 조회 실패: %s", e)
             unknown = []
         if unknown:
-            self.notifier.send("⚠️ 봇이 모르는 열린 주문: " + ", ".join(f"{o['symbol']} {o['side']} {o['qty']}주"
-                                                                  for o in unknown[:10]) + " — 직접 확인하세요")
+            self.notifier.send(msg.warn("봇이 모르는 열린 주문",
+                                        ", ".join(f"{o['symbol']} {'매수' if o['side'] == 'BUY' else '매도'} {o['qty']}주"
+                                                  for o in unknown[:10]),
+                                        "토스 앱에서 직접 확인하세요"))
 
     def _due(self, name: str, now: datetime, every: timedelta) -> bool:
         if now >= self._next.get(name, datetime.min.replace(tzinfo=timezone.utc)):
@@ -184,7 +188,9 @@ class Trader:
             return fn(*args)
         except Exception as e:
             log.exception("%s 실패", name)
-            self.notifier.send(f"⚠️ {name} 실패: {type(e).__name__}: {e}"[:300], key=f"stage-{name}", every=1800)
+            self.notifier.send(msg.warn(f"매매 엔진 단계 실패 · {name}", f"{type(e).__name__}: {e}"[:300],
+                                        "같은 오류는 30분에 한 번만 알립니다. 반복되면 state/logs/trade.log 확인"),
+                               key=f"stage-{name}", every=1800)
             return None
 
     def run(self, sleep=time.sleep) -> None:
@@ -194,7 +200,9 @@ class Trader:
                 self.tick()
             except Exception as e:
                 log.exception("틱 실패")
-                self.notifier.send(f"⚠️ 매매 엔진 오류: {type(e).__name__}: {e}"[:300], key="tick-error", every=1800)
+                self.notifier.send(msg.warn("매매 엔진 오류", f"{type(e).__name__}: {e}"[:300],
+                                            "같은 오류는 30분에 한 번만 알립니다. 반복되면 state/logs/trade.log 확인"),
+                                   key="tick-error", every=1800)
             for _ in range(10):          # 5초 간격, 주문 이벤트가 오면 바로 다음 틱
                 if self.stream is not None and self.stream.has_events():
                     break
@@ -326,16 +334,15 @@ class Trader:
     def _on_fill(self, w: Working, delta: int, px: float, session: str, now: datetime) -> None:
         if w.purpose == "entry":
             self.journal.record_entry_fill(w.trade_id, delta, px, session, now, fee=self._fee(delta, px))
-            self.notifier.send(f"🟢 매수 체결 {w.symbol} {delta}주 @ ${px:.4f}")
+            self.notifier.send(msg.buy_filled(self.journal.trade(w.trade_id), delta, px, session))
             return
         t = self.journal.record_exit_fill(w.trade_id, delta, px, session, now, fee=self._fee(delta, px))
         if w.scale and not t["scaled"]:
             self.journal.set_scaled(w.trade_id, True, stop=t["entry_price"])   # 나머지는 본전 손절 + 트레일링
-            self.notifier.send(f"🟡 분할 익절 {t['symbol']} {delta}주 @ ${px:.4f} → 나머지 {t['remaining']}주 트레일링")
+            self.notifier.send(msg.scaled_out(t, delta, px))
         if t["status"] == "CLOSED":
             self.exit_reprices.pop(w.trade_id, None)
-            self.notifier.send(f"🔵 청산 {t['symbol']} ({t['exit_reason']}) "
-                               f"{t['pnl']:+.2f}$ ({t['pnl_pct']:+.1f}%)")
+            self.notifier.send(msg.closed(self.journal.trade(w.trade_id)))
 
     def _fee(self, qty: int, px: float) -> float:
         return qty * px * self.tcfg.fee_pct / 100
@@ -484,7 +491,7 @@ class Trader:
         self.journal.log_order(o, trade_id=t["id"], purpose="exit", session=session, now=now, note=reason)
         self.working[order_id] = Working(order_id, t["id"], "exit", t["symbol"], "SELL", now, note=reason,
                                          aggressive=True, qty=o["qty"], ids=[order_id])
-        self.notifier.send(f"🛑 {t['symbol']} 서버 손절 안전망 발동 — 봇이 이어서 추적합니다")
+        self.notifier.send(msg.backstop_fired(t))
         self.poll_orders(now, session)
 
     # ---------- 청산 ----------
@@ -537,8 +544,9 @@ class Trader:
             late = (now - datetime.fromisoformat(t["deadline"])).total_seconds() / 60
             if late > self.tcfg.stale_alert_minutes and t["id"] not in self._stale_alerted:
                 self._stale_alerted.add(t["id"])
-                self.notifier.send(f"⚠️ {t['symbol']} 강제 청산 시각이 {late:.0f}분 지났는데 {t['remaining']}주 남음 "
-                                   f"(호가 없음/거래정지 가능성) — 직접 확인하세요")
+                self.notifier.send(msg.warn(f"청산 지연 · {t['symbol']}",
+                                            f"강제 청산 시각이 {late:.0f}분 지났는데 {t['remaining']}주 남음 (호가 없음·거래정지 가능성)",
+                                            "토스 앱에서 직접 확인하세요"))
             try:
                 b = self.ex.book(t["symbol"])
             except Exception as e:
@@ -699,7 +707,8 @@ class Trader:
         n = self._exit_fail.get(trade_id, (0, now))[0] + 1
         self._exit_fail[trade_id] = (n, now + timedelta(seconds=min(30 * 2 ** (n - 1), 600)))
         if n >= 3:
-            self.notifier.send(f"⚠️ {symbol} 매도 주문이 {n}번 연속 실패 ({why}). 잔고·거래정지를 확인하세요",
+            self.notifier.send(msg.warn(f"매도 실패 · {symbol}", f"{n}번 연속 실패 ({why})",
+                                        "잔고·거래정지를 확인하세요. 봇은 간격을 늘려 계속 시도합니다"),
                                key=f"exit-fail-{trade_id}", every=1800)
 
     # ---------- 감시·보고 ----------
@@ -713,22 +722,32 @@ class Trader:
         self.status["collector_age_min"] = round(age, 1) if age is not None else None
         if age is None or age > 10:
             what = "한 번도 기록하지 않았" if age is None else f"{age:.0f}분째 멈춰 있"
-            self.notifier.send(f"⚠️ 수집기가 {what}습니다. python -m pennybot collect 창을 확인하세요.",
+            self.notifier.send(msg.warn("수집기 멈춤", f"수집기가 {what}습니다. 전략이 오래된 데이터로 판단하게 됩니다",
+                                        "pennybot 수집기 창을 확인하세요 (꺼졌으면 start.bat)"),
                                key="collector-stale", every=3600)
 
+    def dashboard_url(self) -> str | None:
+        try:
+            return self.link() if self.link else None
+        except Exception:
+            return None
+
     def status_text(self) -> str:
+        from .strategies import SESSION_KO
         st = self.status
-        lines = [f"[{st.get('mode', '-')}] {st.get('trade_date') or '-'} {st.get('session', '-')}"
-                 f" · 걸린 주문 {st.get('working', 0)} · 시장 {st.get('regime', '-')}"]
+        mode = "실거래" if st.get("mode") == "live" else "모의매매"
+        lines = [f"📋 상태 · {mode} · {SESSION_KO.get(st.get('session'), st.get('session') or '-')}",
+                 f"영업일 {st.get('trade_date') or '-'} · 걸린 주문 {st.get('working', 0)}건 · 시장 {st.get('regime', '-')}"]
         if self.control.load()["kill"]:
-            lines.append("⛔ 신규 매수 중단 상태")
+            lines.append("⛔ 신규 매수 중단 상태 (/재개 로 켜기)")
         held = self.journal.open_trades()
+        status_ko = {"PENDING": "매수 주문 중", "OPEN": "보유", "EXITING": "매도 주문 중"}
         for t in held:
-            lines.append(f"{t['symbol']} {t['status']} {t['remaining']}주 @ ${t['entry_price'] or 0:.4f}"
-                         f" 손절 ${t['stop']:.4f}" + (" · 안전망" if t["backstop_id"] else ""))
+            lines.append(f"• {t['symbol']} {status_ko.get(t['status'], t['status'])} {t['remaining']}주 @ {msg.px(t['entry_price'])}"
+                         f" · 손절 {msg.px(t['stop'])}" + (" · 안전망" if t["backstop_id"] else ""))
         if not held:
             lines.append("보유 종목 없음")
-        return "\n".join(lines)
+        return msg.with_link("\n".join(lines), self.dashboard_url())
 
     def _completed_day(self, now: datetime):
         """정규장이 이미 끝난 가장 최근 영업일 (그날 매매가 끝난 날)."""
@@ -752,7 +771,7 @@ class Trader:
         if self.reports_dir:
             from .report import build, save
             save(build(self.journal, day.isoformat(), now, self.mismatch), text, self.reports_dir)
-        self.notifier.send(text)
+        self.notifier.send(msg.with_link(text, self.dashboard_url()))
         self.journal.set_meta("last_report", day.isoformat())
 
     def report_text(self, trade_date=None) -> str:
@@ -801,8 +820,8 @@ class Trader:
         self.mismatch = {s: {"bot": a, "account": b} for s, (a, b) in diff.items()}
         if diff:
             log.warning("잔고 불일치 (봇 기록, 실제 계좌): %s", diff)
-            self.notifier.send("⚠️ 잔고 불일치 (봇 기록 / 실제 계좌): " +
-                               ", ".join(f"{s} {a}/{b}주" for s, (a, b) in diff.items()) +
-                               (" — 봇 기록이 더 많은 종목이 있어 신규 매수를 멈춥니다"
-                                if any(a > b for a, b in diff.values()) else ""),
+            self.notifier.send(msg.warn("잔고 불일치",
+                                        "봇 기록 / 실제 계좌: " + ", ".join(f"{s} {a}/{b}주" for s, (a, b) in diff.items()),
+                                        "봇 기록이 더 많은 종목이 있어 신규 매수를 멈춥니다"
+                                        if any(a > b for a, b in diff.values()) else "직접 산 종목이면 무시해도 됩니다"),
                                key="mismatch-" + ",".join(sorted(diff)), every=3600)

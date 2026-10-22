@@ -54,8 +54,9 @@ button.danger { border-color: var(--critical); color: var(--critical-text); }
 button.active { background: var(--critical); color: #fff; border-color: var(--critical); }
 button:focus-visible, .seg button:focus-visible { outline: 2px solid var(--series-1); outline-offset: 2px; }
 .grid { display: grid; gap: 16px; }
-.tiles { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin-bottom: 16px; }
-.two { grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); }
+.tiles { grid-template-columns: repeat(auto-fit, minmax(min(180px, 100%), 1fr)); margin-bottom: 16px; }
+.two { grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); }
+.reportgrid { grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); }
 .card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 16px; min-width: 0; }
 .tile .label { color: var(--text-secondary); font-size: 12.5px; }
 .tile .value { font-size: 24px; font-weight: 650; font-variant-numeric: tabular-nums; margin-top: 2px; }
@@ -84,7 +85,7 @@ table { border-collapse: collapse; width: 100%; font-size: 12.5px; font-variant-
 th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
 th { color: var(--text-secondary); font-weight: 600; position: sticky; top: 0; background: var(--surface-1); }
 td.num, th.num { text-align: right; }
-.strats { grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.strats { grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr)); }
 .strat h3 { font-size: 14px; margin: 0; display: flex; align-items: center; gap: 8px; }
 .swatch { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
 .kv { display: grid; grid-template-columns: auto 1fr; gap: 2px 12px; font-size: 12.5px; margin: 8px 0; }
@@ -94,6 +95,38 @@ td.num, th.num { text-align: right; }
 .warnbox { border: 1px solid var(--serious); border-radius: 8px; padding: 8px 12px; margin-bottom: 16px; display: none; }
 details summary { cursor: pointer; color: var(--text-secondary); font-size: 12.5px; margin-top: 8px; }
 .loading { opacity: .55; transition: opacity .2s; }
+.chart svg { touch-action: pan-y; }          /* 차트 위에서 손가락을 옆으로 밀면 값 보기, 위아래는 스크롤 */
+.controls { display: flex; gap: 8px; flex-wrap: wrap; }
+.readonly-note { display: none; font-size: 12px; color: var(--text-muted); }
+body.readonly .controls, body.readonly .strat button { display: none; }
+body.readonly .readonly-note { display: inline; }
+
+/* ---------- 휴대폰 ---------- */
+@media (max-width: 640px) {
+  main { padding: 12px; }
+  header { gap: 8px; margin-bottom: 12px; }
+  h1 { font-size: 17px; margin-right: 4px; }
+  header .spacer { flex-basis: 100%; height: 0; }    /* 버튼은 다음 줄로 */
+  .controls { width: 100%; }
+  .controls button { flex: 1; padding: 9px 8px; }     /* 손가락으로 누르기 쉬운 크기 */
+  .pill { font-size: 12px; padding: 3px 8px; white-space: normal; }
+  .grid { gap: 12px; }
+  .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-bottom: 12px; }
+  .card { padding: 12px; border-radius: 10px; }
+  .tile .value { font-size: 19px; }
+  .tile .note { font-size: 11px; }
+  section { margin-bottom: 12px; }
+  .reportgrid { grid-template-columns: minmax(0, 1fr); }
+  .report { max-height: 60vh; }
+  table { font-size: 12px; }
+  th, td { padding: 6px 6px; }
+  /* 넓은 표는 옆으로 밀어 보고, 첫 칸(시각·종목)은 고정 */
+  .tablewrap { -webkit-overflow-scrolling: touch; }
+  .tablewrap td:first-child, .tablewrap th:first-child { position: sticky; left: 0; background: var(--surface-1); z-index: 1; }
+  .tablewrap th:first-child { z-index: 2; }
+  .strat button { width: 100%; padding: 9px; }
+  .tip { white-space: normal; max-width: 80vw; }
+}
 </style>
 </head>
 <body>
@@ -105,9 +138,12 @@ details summary { cursor: pointer; color: var(--text-secondary); font-size: 12.5
     <span class="pill" id="trader-hb">매매 엔진 -</span>
     <span class="pill" id="collector-hb">수집기 -</span>
     <span class="spacer"></span>
-    <button id="kill-btn" class="danger" aria-pressed="false">킬스위치 켜기</button>
-    <button id="flatten-btn" class="danger">전량 청산</button>
-    <button id="theme-btn" title="밝게/어둡게">테마</button>
+    <span class="readonly-note">외부 주소 · 보기 전용 (조작은 텔레그램 /정지 /청산 확인)</span>
+    <div class="controls">
+      <button id="kill-btn" class="danger" aria-pressed="false">킬스위치 켜기</button>
+      <button id="flatten-btn" class="danger">전량 청산</button>
+      <button id="theme-btn" title="밝게/어둡게">테마</button>
+    </div>
   </header>
 
   <div class="warnbox" id="mismatch"></div>
@@ -189,7 +225,7 @@ details summary { cursor: pointer; color: var(--text-secondary); font-size: 12.5
   <section class="card">
     <h2>일일 리포트</h2>
     <p class="sub">영업일이 끝나면 한국 시간 07:30 에 알림으로 보내고 여기에 남깁니다</p>
-    <div class="grid two" style="grid-template-columns:minmax(0,1fr) minmax(0,2fr)">
+    <div class="grid reportgrid">
       <div class="tablewrap" style="max-height:420px"><table id="reports"></table></div>
       <pre id="report-text" class="report">리포트가 아직 없습니다.</pre>
     </div>
@@ -308,12 +344,14 @@ function lineChart(box, pts, { valueFmt = v => v, height = 220 } = {}) {
     let best = 0; pts.forEach((p, i) => { if (Math.abs(X(p.t) - sx) < Math.abs(X(pts[best].t) - sx)) best = i; });
     return pts[best];
   };
-  hit.addEventListener("pointermove", e => {
+  const move = e => {
     const p = pick(e.clientX);
     hair.setAttribute("x1", X(p.t)); hair.setAttribute("x2", X(p.t)); hair.setAttribute("visibility", "visible");
     dot.setAttribute("cx", X(p.t)); dot.setAttribute("cy", Y(p.v)); dot.setAttribute("visibility", "visible");
     showTip(e, [["", valueFmt(p.v), css("--series-1")], ["", kst(new Date(p.t).toISOString()) + " (한국시간)"]]);
-  });
+  };
+  hit.addEventListener("pointermove", move);
+  hit.addEventListener("pointerdown", move);      // 휴대폰: 탭하면 그 시점 값
   hit.addEventListener("pointerleave", () => { hair.setAttribute("visibility", "hidden"); dot.setAttribute("visibility", "hidden"); hideTip(); });
 }
 
@@ -352,9 +390,12 @@ function barChart(box, items, { valueFmt = v => v, height = 200, empty = "데이
     const bar = el("path", { d, fill: css(it.color || "--series-1") }, g);
     el("rect", { x: cx - slot / 2, y: m.t, width: slot, height: H - m.t - m.b, fill: "transparent" }, g);
     if (showAll && it.v != null) txt("text", valueFmt(it.v), { x: cx, y: v >= 0 ? top - 5 : top + h + 12, "text-anchor": "middle", fill: css("--text-primary") }, svg);
-    if (showAll || i % Math.ceil(items.length / 8) === 0) txt("text", it.label, { x: cx, y: H - 8, "text-anchor": "middle" }, svg);
+    // 좁은 화면: 칸에 안 들어가는 이름은 줄인다 (전체 이름은 툴팁)
+    const maxc = Math.max(2, Math.floor(slot / 11)), lab = it.label.length > maxc ? it.label.slice(0, maxc - 1) + "…" : it.label;
+    if (showAll || i % Math.ceil(items.length / 8) === 0) txt("text", lab, { x: cx, y: H - 8, "text-anchor": "middle" }, svg);
     const on = e => { bar.setAttribute("opacity", "0.8"); showTip(e, it.tip || [["", valueFmt(it.v), css(it.color || "--series-1")], ["", it.label]]); };
     g.addEventListener("pointermove", on);
+    g.addEventListener("pointerdown", on);         // 휴대폰: 탭하면 툴팁
     g.addEventListener("focus", e => { const b = g.getBoundingClientRect(); on({ pageX: b.left + window.scrollX + b.width / 2, pageY: b.top + window.scrollY }); });
     g.addEventListener("pointerleave", () => { bar.removeAttribute("opacity"); hideTip(); });
     g.addEventListener("blur", () => { bar.removeAttribute("opacity"); hideTip(); });
@@ -398,6 +439,7 @@ let days = 7, ov = null;
 
 async function loadOverview() {
   ov = await api("/api/overview");
+  document.body.classList.toggle("readonly", !!ov.readonly);
   $("mode").textContent = ov.mode === "live" ? "실거래" : "모의매매";
   $("mode").style.borderColor = ov.mode === "live" ? css("--critical") : "";
   const nxt = ov.next_change ? Math.max(0, Math.round((new Date(ov.next_change) - Date.now()) / 60000)) : null;
@@ -625,7 +667,13 @@ async function refresh() {
 }
 refresh();
 setInterval(refresh, 10000);
-let rt; addEventListener("resize", () => { clearTimeout(rt); rt = setTimeout(refresh, 200); });
+let rt, lastW = innerWidth;
+addEventListener("resize", () => {
+  // 휴대폰은 스크롤할 때 주소창이 숨으며 높이만 바뀐다 → 너비가 바뀔 때만 다시 그림
+  if (innerWidth === lastW) return;
+  lastW = innerWidth; clearTimeout(rt); rt = setTimeout(refresh, 200);
+});
+document.addEventListener("pointerdown", e => { if (!e.target.closest(".chart")) hideTip(); });
 </script>
 </body>
 </html>

@@ -120,6 +120,7 @@ def cmd_trade(cfg: Config, once: bool) -> None:
     from .sessions import SessionCalendar
     from .trading import Control, Journal, LiveExchange, PaperExchange, TossMarket, Trader
     from .trading.market import MarketView
+    from .trading import messages as msg
     from .trading.notify import Notifier, TelegramCommands
 
     setup_file_log(cfg, "trade")
@@ -158,10 +159,11 @@ def cmd_trade(cfg: Config, once: bool) -> None:
     control = Control(cfg.state_dir)
     trader = Trader(ex, Journal(t.db_path, mode=cfg.mode), cal,
                     MarketView(cfg.collector.db_path, client, cal, ex), t, control,
-                    notifier, fund=fund, stream=stream, reports_dir=str(Path(cfg.state_dir) / "reports"))
+                    notifier, fund=fund, stream=stream, reports_dir=str(Path(cfg.state_dir) / "reports"),
+                    link=lambda: tunnel_url(cfg))
     if t.telegram_token and t.telegram_chat and not once:
         TelegramCommands(t.telegram_token, t.telegram_chat, control, trader, notifier).start()
-        notifier.send(f"🤖 매매 봇 시작 ({cfg.mode}). /상태 로 확인")
+        notifier.send(msg.started(cfg.mode, tunnel_url(cfg)))
     if once:
         trader.tick()
     else:
@@ -239,18 +241,34 @@ def cmd_tunnel(cfg: Config, port: int) -> None:
                          " https://github.com/cloudflare/cloudflared/releases 에서 tools 폴더에 넣으세요.")
     t = cfg.trading
     notifier = Notifier(t.notify_webhook, t.telegram_token, t.telegram_chat, background=False)
+    url_file = Path(cfg.state_dir) / "tunnel_url.txt"     # 매매 봇이 알림·/대시보드 에 붙인다
+    url_file.unlink(missing_ok=True)
     p = subprocess.Popen([str(exe), "tunnel", "--no-autoupdate", "--url", f"http://127.0.0.1:{port}"],
                          stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, errors="replace")
     sent = False
-    for line in p.stderr:
-        m = re.search(r"https://[a-z0-9-]+\.trycloudflare\.com", line)
-        if m and not sent:
-            sent = True
-            print(f"외부 주소: {m.group(0)}  ({how})")
-            notifier.send(f"🌐 대시보드 외부 주소: {m.group(0)}\n({how})")
-        elif " ERR " in line:
-            logging.warning("cloudflared: %s", line.strip())
+    try:
+        for line in p.stderr:
+            m = re.search(r"https://[a-z0-9-]+\.trycloudflare\.com", line)
+            if m and not sent:
+                sent = True
+                url_file.parent.mkdir(parents=True, exist_ok=True)
+                url_file.write_text(m.group(0), encoding="utf-8")
+                print(f"외부 주소: {m.group(0)}  ({how})")
+                notifier.send(f"🌐 대시보드 외부 주소\n{m.group(0)}\n{how}")
+            elif " ERR " in line:
+                logging.warning("cloudflared: %s", line.strip())
+    finally:
+        url_file.unlink(missing_ok=True)
     raise SystemExit(f"cloudflared 종료 (코드 {p.wait()})")
+
+
+def tunnel_url(cfg: Config) -> str | None:
+    """tunnel 이 켜져 있으면 대시보드 외부 주소."""
+    from pathlib import Path
+    try:
+        return Path(cfg.state_dir, "tunnel_url.txt").read_text(encoding="utf-8").strip() or None
+    except OSError:
+        return None
 
 
 def cmd_backtest(cfg: Config, args) -> None:
