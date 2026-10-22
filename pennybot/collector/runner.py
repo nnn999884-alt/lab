@@ -80,6 +80,8 @@ class Collector:
         if self._due("universe", now, timedelta(hours=c.universe_refresh_hours)) or not self.universe:
             self._run("universe", self.refresh_universe, now)
 
+        if self._last_session is None:
+            self._run("catch_up", self.catch_up_summaries)
         # 세션이 바뀌면: 직전 세션의 1분봉을 마저 받고, 애프터마켓이 끝났으면 요약
         cur = (trade_date, session)
         if self._last_session and cur != self._last_session:
@@ -286,6 +288,19 @@ class Collector:
         n = self.store.summarize(trade_date)
         log.info("세션 요약 %s: %d행", trade_date, n)
         self._run("runners", self.record_runners, trade_date)
+
+    def catch_up_summaries(self, days: int = 5) -> None:
+        """수집기가 애프터마켓 종료 순간에 꺼져 있었으면 그날 요약·급등주가 빠진다 → 시작할 때 메운다."""
+        dates = [d for (d,) in self.store.query(
+            "SELECT DISTINCT trade_date FROM prices WHERE session='AFTER' ORDER BY trade_date DESC LIMIT ?", (days,))]
+        now = self.clock()
+        for d in dates:
+            b = self.cal.bounds(datetime.fromisoformat(d).date(), AFTER)
+            if b and now < b[1]:
+                continue      # 아직 진행 중인 영업일
+            if not self.store.query("SELECT 1 FROM session_summary WHERE trade_date=? LIMIT 1", (d,)):
+                log.info("빠진 세션 요약 보충: %s", d)
+                self.summarize(d)
 
     def record_runners(self, trade_date: str) -> None:
         """정규장 종가 기준 급등주를 기록하고, 희석 프로필·펌프 신호를 함께 남긴다 (다음 날 결과와 비교용)."""

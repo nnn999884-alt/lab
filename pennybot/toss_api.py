@@ -79,14 +79,15 @@ class TokenStore:
 
 @dataclass
 class _Bucket:
-    min_interval: float = 0.1   # 헤더로 한도를 알기 전 기본값: 초당 10회 (명세 예시값)
+    min_interval: float
     next_at: float = 0.0
 
 
 class TossClient:
     def __init__(self, client_id: str, client_secret: str, account_seq: str | int | None = None,
                  token_path: str | Path = "state/toss_token.json", base_url: str = BASE_URL,
-                 session: requests.Session | None = None, sleep=time.sleep, clock=time.time):
+                 session: requests.Session | None = None, sleep=time.sleep, clock=time.time,
+                 rate_share: float = 0.9):
         if not (client_id and client_secret):
             raise ValueError("TOSS_CLIENT_ID / TOSS_CLIENT_SECRET 환경변수가 필요합니다.")
         self.client_id, self.client_secret = client_id, client_secret
@@ -98,6 +99,7 @@ class TossClient:
         self._lock = threading.Lock()
         self._buckets: dict[str, _Bucket] = {}
         self._sleep, self._clock = sleep, clock
+        self.rate_share = rate_share   # 이 프로세스가 쓸 한도 비율 (수집기·봇이 나눠 씀)
 
     # ---------- 인증 ----------
     def _issue_token(self) -> str:
@@ -124,7 +126,8 @@ class TossClient:
 
     # ---------- 공통 요청 ----------
     def _throttle(self, group: str) -> None:
-        b = self._buckets.setdefault(group, _Bucket())
+        # 헤더로 한도를 알기 전에는 명세 예시값(초당 10회) × 내 몫
+        b = self._buckets.setdefault(group, _Bucket(1.0 / (10 * self.rate_share)))
         with self._lock:
             now = self._clock()
             wait = b.next_at - now
@@ -135,8 +138,8 @@ class TossClient:
     def _learn_limits(self, group: str, r: requests.Response) -> None:
         lim = r.headers.get("X-RateLimit-Limit")
         if lim and lim.isdigit() and int(lim) > 0:
-            # 한도의 90%만 쓴다 (다른 프로세스 몫과 시계 오차 여유)
-            self._buckets[group].min_interval = 1.0 / (int(lim) * 0.9)
+            # 그룹 한도 중 이 프로세스 몫만 쓴다
+            self._buckets[group].min_interval = 1.0 / (int(lim) * self.rate_share)
 
     @staticmethod
     def _error(r: requests.Response) -> TossApiError:

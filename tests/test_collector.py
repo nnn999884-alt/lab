@@ -208,3 +208,14 @@ def test_record_runners_with_dilution_profile(tmp_path):
     r = store.query("SELECT symbol, round(change_pct), round(close_loc, 2), rotation, dilution_bucket, "
                     "dilution_reasons, pump_flags FROM runners")
     assert r == [("PEN", 56.0, 0.91, 3.0, "low", "ATM_TERMINATED", "공시·촉매 없는 급등")]
+
+
+def test_catch_up_summaries_on_start(tmp_path):
+    col, toss, store, clock = make(tmp_path, et(1, 0, D + timedelta(days=1)))   # 다음 날 데이마켓에 시작
+    store.put_prices([{"symbol": "PEN", "ts": "2026-10-21T21:00:00+00:00", "trade_date": "2026-10-21",
+                       "session": "AFTER", "last": 1.0, "price_ts": None}])
+    store.put_quotes([{"symbol": "PEN", "ts": "2026-10-21T21:00:00+00:00", "trade_date": "2026-10-21",
+                       "session": "AFTER", "bid": 0.99, "bid_size": 1, "ask": 1.01, "ask_size": 1,
+                       "levels": 1, "book_ts": None}])
+    col.tick()
+    assert store.query("SELECT COUNT(*) FROM session_summary WHERE trade_date='2026-10-21'")[0][0] >= 1

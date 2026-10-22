@@ -141,9 +141,12 @@ class RunnerOvernight(Strategy):
         if not prev:
             return []
         out = []
-        for r in ctx.mv.runners(prev):
+        for r in ctx.mv.runners(prev, self.p["min_runner_pct"]):
             sym = r["symbol"]
             if sym in ctx.held or r["change_pct"] < self.p["min_runner_pct"]:
+                continue
+            if r.get("unverified"):
+                out.append(self._reject(sym, "전날 마감 위치·거래량 확인 불가 (수집기 기록 없음)"))
                 continue
             if r.get("close_loc") is not None and r["close_loc"] < self.p["min_close_loc"]:
                 out.append(self._reject(sym, f"전날 +{r['change_pct']:.0f}%였지만 고가 대비 밀려 마감"))

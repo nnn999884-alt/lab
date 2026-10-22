@@ -22,9 +22,10 @@ from .engine import Engine
 from .toss_api import TossClient
 
 
-def make_client(cfg: Config) -> TossClient:
+def make_client(cfg: Config, role: str = "other") -> TossClient:
     t = cfg.toss
-    return TossClient(t.client_id, t.client_secret, t.account or None, t.token_path, t.base_url)
+    share = {"collector": t.rate_share_collector, "trader": t.rate_share_trader}.get(role, t.rate_share_other)
+    return TossClient(t.client_id, t.client_secret, t.account or None, t.token_path, t.base_url, rate_share=share)
 
 
 def _feed(cfg: Config):
@@ -81,7 +82,7 @@ def cmd_accounts(cfg: Config) -> None:
 def cmd_collect(cfg: Config, once: bool) -> None:
     from .collector import Collector, Store
     from .sessions import SessionCalendar
-    client = make_client(cfg)
+    client = make_client(cfg, "collector")
     dil, fund = _fundamentals(cfg, client)
     col = Collector(client, Store(cfg.collector.db_path), SessionCalendar(client), cfg.collector,
                     dil.edgar if dil else None, dilution=dil, fundamentals=fund)
@@ -104,7 +105,7 @@ def cmd_trade(cfg: Config, once: bool) -> None:
     from .trading.market import MarketView
     from .trading.notify import Notifier
 
-    client = make_client(cfg)
+    client = make_client(cfg, "trader")
     t = cfg.trading
     if cfg.is_live:
         ex = LiveExchange(client)

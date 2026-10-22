@@ -116,8 +116,9 @@ class MarketView:
         return [{"form": f, "items": i or "", "accepted": a, "events": e or ""} for f, i, a, e in rows]
 
     # ---------- 급등주 ----------
-    def runners(self, trade_date: date) -> list[dict]:
-        """수집기가 기록한 급등주 (정규장 종가 기준). 기록이 없으면 현재가 기록으로 바로 계산."""
+    def runners(self, trade_date: date, min_pct: float = 30.0) -> list[dict]:
+        """수집기가 기록한 급등주 (정규장 종가 기준). 기록이 없으면 현재가 기록으로 계산하고,
+        마감 위치·거래량은 토스 일봉으로 채운다 (빠지면 전략 필터가 사실상 꺼지므로)."""
         keys = ("symbol", "prev_close", "close", "change_pct", "high", "low", "volume", "close_loc",
                 "dilution_score", "pump_flags")
         rows = self.q(f"SELECT {', '.join(keys)} FROM runners WHERE trade_date=? ORDER BY change_pct DESC",
@@ -134,11 +135,26 @@ class MarketView:
                     WHERE session='REGULAR' AND trade_date IN (?, ?) GROUP BY symbol, trade_date) m
                 ON p.symbol=m.symbol AND p.ts=m.ts)
             SELECT a.symbol, b.last, a.last FROM last a JOIN last b ON a.symbol=b.symbol
-            WHERE a.trade_date=? AND b.trade_date=? AND b.last > 0 AND a.last / b.last - 1 >= 0.2
-            ORDER BY a.last / b.last DESC""",
-                      (trade_date.isoformat(), prev.isoformat(), trade_date.isoformat(), prev.isoformat()))
-        return [{"symbol": s, "prev_close": pc, "close": c, "change_pct": (c / pc - 1) * 100, "volume": None,
-                 "close_loc": None} for s, pc, c in rows]
+            WHERE a.trade_date=? AND b.trade_date=? AND b.last > 0 AND a.last / b.last - 1 >= ?
+            ORDER BY a.last / b.last DESC LIMIT 40""",
+                      (trade_date.isoformat(), prev.isoformat(), trade_date.isoformat(), prev.isoformat(),
+                       min_pct / 100))
+        out = []
+        for sym, pc, c in rows:
+            r = {"symbol": sym, "prev_close": pc, "close": c, "change_pct": (c / pc - 1) * 100,
+                 "volume": None, "close_loc": None}
+            try:
+                res = self.c.candles(sym, "1d", 3) or {}
+                for cd in res.get("candles", []):
+                    if cd["timestamp"][:10] == trade_date.isoformat():
+                        h, lo = float(cd["highPrice"]), float(cd["lowPrice"])
+                        r.update(volume=float(cd["volume"]), close_loc=(c - lo) / (h - lo) if h > lo else None)
+            except Exception as e:
+                log.debug("급등주 일봉 보충 실패 %s: %s", sym, e)
+            if r["close_loc"] is None:
+                r["unverified"] = True       # 마감 위치를 모르면 전략이 걸러낸다
+            out.append(r)
+        return out
 
     def toss_hot(self, trade_date: date, top: int = 30) -> list[str]:
         """이번 데이마켓의 최신 '토스증권 거래대금' 실시간 랭킹 (한국 개인 매수가 몰리는 종목)."""

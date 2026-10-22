@@ -34,7 +34,8 @@ class Risk:
             return False, f"자동 정지: 최근 {n}회 평균 손익 ${st[0]['expectancy']:.2f}"
         return True, ""
 
-    def can_enter(self, strategy: str, symbol: str, trade_date: str, open_trades: list[dict]) -> str | None:
+    def can_enter(self, strategy: str, symbol: str, trade_date: str, open_trades: list[dict],
+                  unrealized: float = 0.0) -> str | None:
         c = self.ctl.load()
         if c["kill"]:
             return "킬스위치"
@@ -43,8 +44,9 @@ class Risk:
         ok, why = self.strategy_enabled(strategy)
         if not ok:
             return why
-        if self.j.realized_pnl(trade_date) <= -self.t.max_daily_loss_usd:
-            return "영업일 손실 한도 도달"
+        # 실현 손실 + 보유 종목 평가 손실 (이익은 아직 내 돈이 아니므로 더하지 않는다)
+        if self.j.realized_pnl(trade_date) + min(unrealized, 0.0) <= -self.t.max_daily_loss_usd:
+            return "영업일 손실 한도 도달 (평가 손실 포함)"
         if len(open_trades) >= self.t.max_open_positions:
             return "전체 동시 보유 한도"
         if sum(1 for t in open_trades if t["strategy"] == strategy) >= self.t.strategies[strategy]["max_positions"]:

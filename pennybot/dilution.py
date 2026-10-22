@@ -244,11 +244,20 @@ class DilutionService:
 
     def events(self, cik: int, today: date) -> list[Event]:
         filings = ed.parse_submissions(self.submissions(cik, today))
-        relevant = [f for f in filings if (today - f.filed).days <= self.lookback and
-                    (f.form.upper().startswith(TEXT_FORMS) or f.form.upper() in FORM_EVENTS)]
-        out = []
-        for f in relevant[: self.max_texts]:     # 최신순
-            out += self._events_for(cik, f)
+        recent = [f for f in filings if (today - f.filed).days <= self.lookback]
+        # 증자 등록·효력·철회는 본문 없이 양식만으로 판정되므로 개수 제한 없이 모두 본다.
+        # (공시가 많은 회사는 최근 40건 안에 3년 전 S-3 가 안 들어올 수 있다)
+        out, texts = [], 0
+        for f in recent:                          # 최신순
+            form = f.form.upper()
+            if form in FORM_EVENTS and form not in ("RW", "S-3", "S-1"):
+                out += classify(f.form, f.items, "", f.filed, f.accession)
+            elif form.startswith(TEXT_FORMS):
+                if texts < self.max_texts:
+                    out += self._events_for(cik, f)
+                    texts += 1
+                elif form in FORM_EVENTS:
+                    out += classify(f.form, f.items, "", f.filed, f.accession)
         return out
 
     def profile(self, cik: int, today: date, market_cap: float | None) -> Profile:

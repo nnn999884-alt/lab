@@ -96,3 +96,19 @@ def test_service_caches_and_builds_profile(tmp_path):
     assert e.doc_calls == calls
     assert svc.company(1, D)["country"] == "F4"
     assert isinstance(ed.parse_submissions(e.submissions(1))[0], ed.Filing)
+
+
+def test_old_shelf_found_even_with_many_recent_8ks(tmp_path):
+    class Busy(FakeEdgar):
+        def submissions(self, cik):
+            n = 60
+            return {"filings": {"recent": {
+                "form": ["8-K"] * n + ["S-3"], "filingDate": ["2026-10-01"] * n + ["2024-03-01"],
+                "accessionNumber": [f"b{i}" for i in range(n + 1)], "primaryDocument": ["d.htm"] * (n + 1),
+                "items": ["8.01"] * n + [""]}}}
+
+        def document(self, cik, f):
+            return "nothing relevant"
+
+    p = DilutionService(Busy(), tmp_path, max_texts=40).profile(1, D, 30e6)
+    assert p.shelf_active

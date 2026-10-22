@@ -69,6 +69,10 @@ class TossConfig:
     client_id: str = ""
     client_secret: str = ""
     account: str = ""                           # accountSeq (GET /api/v1/accounts)
+    # 그룹별 초당 한도를 프로세스끼리 나눠 쓴다 (합이 1 이하). 둘 다 90%를 쓰면 합쳐서 한도 초과
+    rate_share_collector: float = 0.55
+    rate_share_trader: float = 0.35
+    rate_share_other: float = 0.1
 
 
 @dataclass
@@ -101,7 +105,11 @@ class TradingConfig:
     entry_ttl_seconds: int = 300         # 매수 지정가 미체결 시 취소
     exit_reprice_seconds: int = 60       # 매도 지정가 재호가 주기
     exit_slippage_pct: float = 1.0       # 강제 청산 매도가 = bid × (1 − x%)
-    max_exit_reprices: int = 3           # 정규장에서 이 횟수 넘게 안 팔리면 시장가
+    max_exit_reprices: int = 3           # 정규장에서 이 횟수 넘게 안 팔리면 최종 청산가로
+    final_exit_slippage_pct: float = 5.0 # 최종 청산 지정가 = bid × (1 − x%). 호가가 아예 없을 때만 시장가
+    day_open_wait_minutes: int = 15      # 데이마켓 개장 직후 호가가 얇을 때는 매수하지 않음
+    min_book_ratio: float = 0.3          # 최우선 매도 잔량이 주문 수량의 30% 이상일 때만 (아니면 수량 축소)
+    stale_alert_minutes: int = 30        # 강제 청산 시각이 이만큼 지나도 남아 있으면 알림
     # 리스크
     max_position_usd: float = 300.0
     max_position_pct: float = 0.05       # 계좌의 5%

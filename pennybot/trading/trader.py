@@ -20,7 +20,11 @@ from .exchange import TERMINAL, Exchange
 from .journal import Journal
 from .notify import Notifier
 from .risk import Account, Risk
-from .strategies import ALL, Ctx
+from .strategies import ALL, FINANCING_WORDS, Ctx, events_of
+
+# 들고 있는 동안 이런 공시가 나오면 즉시 청산 (급등주 최대 위험: 밤사이 증자 발표)
+HOLD_ALARM = FINANCING_WORDS | {"DELISTING_NOTICE", "OFFERING_FILED", "SHELF_FILED", "WARRANT_INDUCEMENT",
+                                "WARRANT_REPRICE", "CONVERTIBLE"}
 
 log = logging.getLogger(__name__)
 
@@ -36,6 +40,7 @@ class Working:
     filled: int = 0
     avg: float = 0.0
     note: str = ""
+    cancel_sent: bool = False   # 취소 요청을 이미 보냄 (처리 중에는 다시 보내지 않는다)
 
 
 @dataclass
@@ -58,12 +63,14 @@ class Trader:
         self.last_session = None
         self._next: dict[str, datetime] = {}
         self.status: dict = {}
+        self._stale_alerted: set[int] = set()
         self._recover()
 
     # ---------- 공통 ----------
     def _recover(self) -> None:
-        """재시작 시 아직 열려 있는 주문을 다시 추적한다."""
-        for o in self.journal.q("SELECT * FROM orders WHERE status='OPEN'"):
+        """재시작 시 아직 열려 있는 주문을 다시 추적한다 (같은 모드의 주문만: 모의 주문을 실계좌에 조회하지 않게)."""
+        for o in self.journal.q("""SELECT o.* FROM orders o JOIN trades t ON o.trade_id = t.id
+                                   WHERE o.status='OPEN' AND t.mode=?""", (self.journal.mode,)):
             self.working[o["order_id"]] = Working(o["order_id"], o["trade_id"], o["purpose"], o["symbol"],
                                                   o["side"], datetime.fromisoformat(o["ts"]),
                                                   o["filled"] or 0, o["avg_price"] or 0.0)
@@ -146,6 +153,8 @@ class Trader:
                 else:
                     self.journal.exit_unfilled(w.trade_id)
                 continue
+            if w.cancel_sent:
+                continue          # 취소 처리 중 (실거래는 PENDING_CANCEL 동안 OPEN 으로 보인다)
             age = (now - w.placed_at).total_seconds()
             if w.purpose == "entry" and age > self.tcfg.entry_ttl_seconds:
                 self._cancel(oid, "매수 미체결 TTL")
@@ -154,8 +163,13 @@ class Trader:
                 self._cancel(oid, "매도 재호가")
 
     def _cancel(self, oid: str, why: str) -> None:
+        w = self.working.get(oid)
+        if w and w.cancel_sent:
+            return
         try:
             self.ex.cancel(oid)
+            if w:
+                w.cancel_sent = True
             log.info("주문 취소 %s (%s)", oid, why)
         except Exception as e:
             log.warning("취소 실패 %s: %s", oid, e)
@@ -165,10 +179,28 @@ class Trader:
             self._cancel(oid, why)
 
     # ---------- 청산 ----------
+    def _bad_news(self, t: dict) -> str | None:
+        """매수 이후 접수된 악재 공시(증자·상폐 등)."""
+        since = datetime.fromisoformat(t["entry_ts"]) if t.get("entry_ts") else None
+        if not since:
+            return None
+        try:
+            filings = self.mv.filings_for(t["symbol"], 3, self.clock())
+        except Exception:
+            return None
+        for f in filings:
+            hit = events_of(f) & HOLD_ALARM
+            if hit and datetime.fromisoformat(f["accepted"]) >= since:
+                return "보유 중 악재 공시: " + ",".join(sorted(hit))
+        return None
+
     def _exit_reason(self, t: dict, bid: float, now: datetime) -> tuple[str, bool] | None:
         """(사유, 공격적 매도 여부)"""
         if now >= datetime.fromisoformat(t["deadline"]):
             return "강제 청산 시각", True
+        bad = self._bad_news(t)
+        if bad:
+            return bad, True
         if bid > 0 and bid <= t["stop"]:
             return "손절", True
         if bid > 0 and t["target"] and bid >= t["target"]:
@@ -182,6 +214,11 @@ class Trader:
         for t in self.journal.open_trades():
             if t["status"] != "OPEN" or t["remaining"] <= 0 or t["id"] in exiting:
                 continue
+            late = (now - datetime.fromisoformat(t["deadline"])).total_seconds() / 60
+            if late > self.tcfg.stale_alert_minutes and t["id"] not in self._stale_alerted:
+                self._stale_alerted.add(t["id"])
+                self.notifier.send(f"⚠️ {t['symbol']} 강제 청산 시각이 {late:.0f}분 지났는데 {t['remaining']}주 남음 "
+                                   f"(호가 없음/거래정지 가능성) — 직접 확인하세요")
             try:
                 b = self.ex.book(t["symbol"])
             except Exception as e:
@@ -192,17 +229,19 @@ class Trader:
                 continue
             reason, aggressive = r
             price: float | None
+            exhausted = self.exit_reprices.get(t["id"], 0) >= self.tcfg.max_exit_reprices
             if b.has_quote:
-                price = b.bid * (1 - self.tcfg.exit_slippage_pct / 100) if aggressive else b.bid
+                slip = self.tcfg.final_exit_slippage_pct if aggressive and exhausted else self.tcfg.exit_slippage_pct
+                price = b.bid * (1 - slip / 100) if aggressive else b.bid
+            elif session == REGULAR and aggressive:
+                price = None      # 정규장인데 호가가 아예 없을 때만 시장가
             else:
-                price = None
-            # 정규장에서 재호가를 여러 번 했는데도 안 팔리거나 호가가 없으면 시장가
-            if session == REGULAR and (price is None or (aggressive and
-                                       self.exit_reprices.get(t["id"], 0) >= self.tcfg.max_exit_reprices)):
-                price = None
-            elif price is None:
                 log.info("%s 호가 없음 → 청산 보류 (%s)", t["symbol"], session)
                 continue
+            # 같은 매매의 매수 미체결분은 먼저 취소 (팔면서 사지 않게)
+            for oid, w in list(self.working.items()):
+                if w.trade_id == t["id"] and w.purpose == "entry":
+                    self._cancel(oid, "청산 시작")
             self.journal.set_exiting(t["id"], reason)
             self._submit(t["id"], t["symbol"], "SELL", t["remaining"], price, "exit", session, now, reason)
 
@@ -223,7 +262,24 @@ class Trader:
             return False, f"{sym} 데이마켓 {(b.mid / pc - 1) * 100:+.1f}%"
         return True, ""
 
+    def _unrealized(self, open_trades: list[dict]) -> float:
+        total = 0.0
+        for t in open_trades:
+            if not t["remaining"] or not t["entry_price"]:
+                continue
+            try:
+                b = self.ex.book(t["symbol"])
+                px = b.bid if b.has_quote else b.last
+            except Exception:
+                continue
+            if px:
+                total += (px - t["entry_price"]) * t["remaining"]
+        return total
+
     def scan_and_enter(self, now: datetime, trade_date, session: str) -> None:
+        day = self.cal.bounds(trade_date, DAY)
+        if day and now < day[0] + timedelta(minutes=self.tcfg.day_open_wait_minutes):
+            return    # 데이마켓 개장 직후는 호가가 얇다
         open_trades = self.journal.open_trades()
         ctx = Ctx(now, trade_date, session, self.cal, self.mv, self.tcfg, fund=self.fund,
                   held={t["symbol"] for t in open_trades})
@@ -248,11 +304,20 @@ class Trader:
 
         rows = [row(p, p.ok, p.reason) for p in plans]
         acct = self.account()
+        unrealized = self._unrealized(open_trades) if any(p.ok for p in plans) else 0.0
         for p in sorted((p for p in plans if p.ok), key=lambda p: p.score, reverse=True):
-            block = self.risk.can_enter(p.strategy, p.symbol, str(trade_date), open_trades)
+            block = self.risk.can_enter(p.strategy, p.symbol, str(trade_date), open_trades, unrealized)
             qty = 0 if block else self.risk.size(p.strategy, p.price, p.stop, acct)
+            if not block and qty > 0:
+                # 호가 잔량이 얇으면 수량을 줄인다: 최우선 매도 잔량 ≥ 주문의 min_book_ratio
+                try:
+                    b = self.ex.book(p.symbol)
+                    cap = int(b.ask_size / self.tcfg.min_book_ratio) if b.ask_size else 0
+                    qty = min(qty, cap)
+                except Exception:
+                    pass
             if block or qty <= 0:
-                rows.append(row(p, False, f"리스크: {block or '수량 0'}"))
+                rows.append(row(p, False, f"리스크: {block or '수량 0 (호가 잔량 부족 등)'}"))
                 continue
             tid = self.journal.open_trade(strategy=p.strategy, symbol=p.symbol, trade_date=str(trade_date),
                                           planned_qty=qty, stop=p.stop, target=p.target,

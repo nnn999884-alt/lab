@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import pytest
 
@@ -41,7 +41,7 @@ class FakeMV:
         self.hot = []
 
     def prev_trade_date(self, d): return PREV
-    def runners(self, d): return self.run
+    def runners(self, d, min_pct=30.0): return self.run
     def toss_hot(self, d): return self.hot
     def prev_close(self, sym, d, allow_api=True): return self.closes.get(sym)
     def ret_5d(self, sym, d): return 0.1
@@ -139,9 +139,11 @@ def test_forced_exit_market_order_when_no_quote_in_regular(env):
     tr, market, mv, clock, j, ctl, ex = env
     market.set("PEN", 1.03, 1.035)
     tr.tick()
-    tr.tcfg.forced_exit_minutes = 0
-    clock[0] = et(9, 31)                     # 정규장, 강제 청산 시각 지남
-    market.set("PEN", 0, 0)                  # 호가 없음
+    clock[0] = et(9, 45)                     # 정규장, 매도 구간이지만 강제 청산 전 + 호가 없음 → 기다림
+    market.set("PEN", 0, 0)
+    tr.tick()
+    assert not j.q("SELECT * FROM orders WHERE purpose='exit'")
+    clock[0] = et(10, 1)                     # 러너는 개장 30분 뒤 강제 청산 → 호가 없으면 시장가
     tr.tick()
     o = j.q("SELECT * FROM orders WHERE purpose='exit'")
     assert o and o[-1]["type"] == "MARKET"
@@ -231,6 +233,51 @@ def test_day_dip_off_by_default(env):
     assert not tr.risk.strategy_enabled("day_dip")[0]
 
 
+def test_exit_reprice_counts_once_per_order_and_final_limit(env):
+    """취소 처리 중(실거래 PENDING_CANCEL)에 매 틱 재취소·재호가 카운트가 쌓이면 안 된다."""
+    tr, market, mv, clock, j, ctl, ex = env
+    market.set("PEN", 1.03, 1.035)
+    tr.tick()
+    tid = j.q("SELECT id FROM trades")[0]["id"]
+    clock[0] = et(9, 5)                      # 매도 구간
+    market.set("PEN", 1.06, 1.07)
+    ex.sync = lambda: None                   # 체결되지 않게
+    ex.cancel = lambda oid: None             # 취소 요청이 '처리 중'으로 남는 상황
+    tr.tick()
+    for k in range(10):
+        clock[0] = et(9, 7) + timedelta(seconds=5 * k)
+        tr.tick()
+    assert tr.exit_reprices.get(tid, 0) == 1
+
+
+def test_bad_filing_while_holding_triggers_exit(env):
+    tr, market, mv, clock, j, ctl, ex = env
+    market.set("PEN", 1.03, 1.035)
+    tr.tick()
+    clock[0] = et(5, 0)                       # 프리마켓, 아직 매도 구간 전
+    mv.recent["PEN"] = [{"form": "424B5", "items": "", "accepted": et(4, 50).isoformat(),
+                         "events": "TAKEDOWN"}]
+    tr.tick()
+    t = j.q("SELECT * FROM trades")[0]
+    assert t["status"] == "CLOSED" and t["exit_reason"].startswith("보유 중 악재 공시")
+
+
+def test_unrealized_loss_counts_toward_daily_limit(env):
+    tr, market, mv, clock, j, ctl, ex = env
+    market.set("PEN", 1.03, 1.035)
+    tr.tick()
+    tr.tcfg.max_daily_loss_usd = 20
+    mv.run.append({"symbol": "NEW", "prev_close": 1, "close": 1.5, "change_pct": 50, "volume": 9e6,
+                   "close_loc": 0.9})
+    tr.fake_fund.share_map["NEW"] = 5e6
+    market.set("NEW", 1.5, 1.505)
+    market.set("PEN", 0.95, 0.96)              # 평가 손실 약 $22 (손절 −10% 전)
+    clock[0] = et(1, 10)
+    tr.tick()
+    assert [t["symbol"] for t in j.q("SELECT symbol FROM trades")] == ["PEN"]
+    assert any("평가 손실" in r["reason"] for r in j.q("SELECT reason FROM signals WHERE symbol='NEW'"))
+
+
 def test_restart_recovers_working_orders(env, tmp_path):
     tr, market, mv, clock, j, ctl, ex = env
     tr.tcfg.entry_ttl_seconds = 10_000
@@ -260,7 +307,7 @@ def test_risk_sizing_daily_loss_and_auto_disable(tmp_path):
     ok, why = risk.strategy_enabled("day_ignition")
     assert not ok and "자동 정지" in why
     tcfg.max_daily_loss_usd = 3
-    assert risk.can_enter("runner_overnight", "X", str(D), []) == "영업일 손실 한도 도달"
+    assert risk.can_enter("runner_overnight", "X", str(D), []).startswith("영업일 손실 한도 도달")
 
 
 def test_paper_partial_fill_and_reject():
