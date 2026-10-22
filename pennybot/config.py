@@ -89,6 +89,10 @@ class CollectorConfig:
     edgar_poll_minutes: int = 5
     runner_min_pct: float = 30.0     # 정규장 종가 기준 이만큼 오른 종목을 급등주로 기록
     news_poll_minutes: int = 2
+    short_data: bool = True          # 공매도(FINRA)·대차(IBKR)·SSR·Reg SHO·거래정지 수집
+    borrow_poll_minutes: int = 30    # IBKR 대차 파일은 15분마다 갱신
+    halts_poll_minutes: int = 2
+    short_daily_poll_minutes: int = 60   # FINRA·SSR·Reg SHO 일별 파일 (나오면 한 번만 저장)
     news_feeds: list = field(default_factory=list)   # 비우면 news.DEFAULT_FEEDS
     universe_refresh_hours: int = 24
 

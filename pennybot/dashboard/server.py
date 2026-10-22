@@ -83,6 +83,24 @@ class Data:
             "regime": info.get("regime"),
         }
 
+    def symbol(self, sym: str) -> dict:
+        from ..brief import brief
+        return brief(self.market_db, sym)
+
+    def shorts(self) -> list[dict]:
+        """감시 종목(최근 호가를 받는 종목) + 보유 종목의 공매도·대차, 대차 수수료 높은 순."""
+        from ..brief import watch_shorts
+        last = self.m("SELECT MAX(ts) AS ts FROM quotes")
+        syms = []
+        if last and last[0]["ts"]:
+            since = (datetime.fromisoformat(last[0]["ts"]) - timedelta(minutes=15)).isoformat(timespec="seconds")
+            syms = [r["symbol"] for r in self.m("SELECT DISTINCT symbol FROM quotes WHERE ts >= ?", (since,))]
+        held = [r["symbol"] for r in self.t("SELECT DISTINCT symbol FROM trades WHERE status IN ('PENDING','OPEN','EXITING')")]
+        rows = watch_shorts(self.market_db, list(dict.fromkeys(held + syms))[:150])
+        for r in rows:
+            r["held"] = r["symbol"] in held
+        return sorted(rows, key=lambda r: (not r["held"], -(r["fee_rate"] or 0), -(r["short_ratio"] or 0)))
+
     def equity(self, days: int) -> list[dict]:
         since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec="seconds")
         return self.t("SELECT ts, equity, cash, day_pnl FROM equity WHERE ts >= ? ORDER BY ts", (since,))
@@ -319,6 +337,8 @@ class Handler(BaseHTTPRequestHandler):
             "/api/dilution": lambda: d.dilution_events(n("limit", 60)),
             "/api/backtests": lambda: _backtests(d.cfg.state_dir, n("limit", 10)),
             "/api/reports": lambda: _reports(d.cfg.state_dir, n("limit", 30)),
+            "/api/shorts": lambda: d.shorts(),
+            "/api/symbol": lambda: d.symbol(qs.get("s", "")[:12]),
         }
         if u.path in routes:
             try:

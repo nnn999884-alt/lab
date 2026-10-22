@@ -144,10 +144,39 @@ def build(state_dir: str | Path = "state_demo", seed: int = 7) -> tuple[str, str
                      "session": rnd.choice(["DAY", "AFTER", "PRE"]), "insider_buy_usd": None,
                      "events": ev, "direction": dr, "amount": 4.5e6 if dr < 0 else None}
                     for i, (ev, dr) in enumerate(events)])
+    _demo_shorts(st, rnd, now, syms + [f"S{k}" for k in range(80)])
     (d / "control.json").write_text(json.dumps({"kill": False, "flatten": False, "strategies": {}}), encoding="utf-8")
     _demo_backtests(d, rnd, now)
     _demo_reports(d, j, now)
     return str(d / "trading.db"), str(d / "market.db")
+
+
+def _demo_shorts(st: Store, rnd, now, syms: list[str]) -> None:
+    """공매도 비율·대차·SSR·Reg SHO·거래정지 예시."""
+    days = [(now - timedelta(days=k)).date() for k in range(1, 9)]
+    days = [x for x in days if x.weekday() < 5][:5]
+    sv, bo = [], []
+    for s in syms:
+        base = rnd.uniform(0.25, 0.65)
+        for x in days:
+            tot = rnd.uniform(2e5, 8e6)
+            sv.append({"trade_date": x.isoformat(), "symbol": s, "short_volume": tot * min(0.95, max(0.05, rnd.gauss(base, 0.08))),
+                       "exempt_volume": 0, "total_volume": tot})
+        fee = rnd.choice([0.25, 0.3, 0.5, 1.2, 4.8, 18.5, 47.0, 120.0])
+        avail = rnd.choice([3_000_000, 800_000, 150_000, 40_000, 6_000, 0])
+        for ts in (now - timedelta(hours=25), now):
+            bo.append({"ts": now_iso(ts), "symbol": s, "fee_rate": fee * (0.7 if ts != now else 1), "rebate_rate": 3.6 - fee,
+                       "available": avail * (1.8 if ts != now else 1)})
+    st.put_short_volume(sv)
+    st.put_borrow(bo)
+    td = now.date().isoformat()
+    st.put_ssr([{"trade_date": td, "symbol": s, "trigger_time": "10/22/2026 10:41:00 AM"} for s in ("PENX", "S3", "S17")])
+    st.put_reg_sho([{"trade_date": td, "symbol": s} for s in ("BIOZ", "S5")])
+    st.put_halts([{"symbol": "PENX", "halt_ts": now_iso(now - timedelta(hours=20)), "reason": "LUDP",
+                   "reason_ko": "변동성 정지(LULD)", "resume_ts": now_iso(now - timedelta(hours=20) + timedelta(minutes=5))},
+                  {"symbol": "S9", "halt_ts": now_iso(now - timedelta(hours=5)), "reason": "T1", "reason_ko": "뉴스 대기",
+                   "resume_ts": None}])
+    st.put_universe([{"snapshot_date": td, "symbol": "PENX", "market": "NASDAQ", "name": "Penx Therapeutics (예시)", "last": 1.14}])
 
 
 def _demo_reports(d: Path, j: Journal, now) -> None:

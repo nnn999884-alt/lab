@@ -43,12 +43,15 @@ def iso(ts: datetime) -> str:
 class Collector:
     def __init__(self, client, store: Store, calendar: SessionCalendar, cfg: CollectorConfig,
                  edgar_client: ed.EdgarClient | None = None,
-                 clock=lambda: datetime.now(timezone.utc), dilution=None, fundamentals=None, news=None):
+                 clock=lambda: datetime.now(timezone.utc), dilution=None, fundamentals=None, news=None,
+                 short=None):
         self.c, self.store, self.cal, self.cfg = client, store, calendar, cfg
         self.edgar = edgar_client
         self.dilution = dilution          # DilutionService: 공시 본문으로 희석 이벤트 판정
         self.fund = fundamentals          # Fundamentals: 급등주 희석 프로필·펌프 신호
         self.news = news                  # NewsClient: 보도자료 피드
+        self.short = short                # ShortData: 공매도·대차·SSR·Reg SHO·거래정지
+        self._short_done: set[tuple[str, str]] = set()   # (종류, 날짜) 이미 받은 일별 파일
         self._seen_news: set[str] = set()
         self.clock = clock
         self.universe: dict[str, dict] = {}       # symbol -> {market, name, last}
@@ -98,6 +101,13 @@ class Collector:
             self._run("edgar", self.poll_edgar, now)
         if self.news and self._due("news", now, timedelta(minutes=c.news_poll_minutes)):
             self._run("news", self.poll_news, now)
+        if self.short and c.short_data:      # 휴장 중에도 (일별 파일은 장 마감 뒤에 나온다)
+            if self._due("short_daily", now, timedelta(minutes=c.short_daily_poll_minutes)):
+                self._run("short_daily", self.poll_short_daily, now)
+            if self._due("borrow", now, timedelta(minutes=c.borrow_poll_minutes)):
+                self._run("borrow", self.poll_borrow, now)
+            if self._due("halts", now, timedelta(minutes=c.halts_poll_minutes)):
+                self._run("halts", self.poll_halts)
         if session == CLOSED:
             return
         if self._due("rankings", now, timedelta(minutes=c.ranking_poll_minutes)):
@@ -302,6 +312,43 @@ class Collector:
         if rows:
             self.store.put_news(rows)
             log.info("새 보도자료 %d건 (유니버스 종목)", len(rows))
+
+    # ---------- 공매도·대차 ----------
+    def poll_short_daily(self, now: datetime) -> None:
+        """최근 평일 5일치 FINRA 공매도·SSR·Reg SHO 파일 중 아직 안 받은 것 (휴장일·미공개 파일은 다음에 다시)."""
+        jobs = (("short_volume", self.short.finra, self.store.put_short_volume),
+                ("ssr", self.short.ssr, self.store.put_ssr),
+                ("reg_sho", self.short.threshold, self.store.put_reg_sho))
+        for day in self.short.recent_days(now):
+            for kind, fetch, put in jobs:
+                key = (kind, day.isoformat())
+                if key in self._short_done:
+                    continue
+                if self.store.query(f"SELECT 1 FROM {kind} WHERE trade_date=? LIMIT 1", key[1:]):
+                    self._short_done.add(key)
+                    continue
+                rows = fetch(day)
+                if not rows:
+                    continue                       # 아직 안 나왔거나 휴장일
+                self._short_done.add(key)
+                mine = [r for r in rows if r["symbol"] in self.universe]
+                put(mine)
+                log.info("%s %s: %d종목 (유니버스)", kind, day, len(mine))
+
+    def poll_borrow(self, now: datetime) -> None:
+        _, rows = self.short.borrow()
+        ts = iso(now)
+        mine = [{"ts": ts, **r} for r in rows if r["symbol"] in self.universe]
+        self.store.put_borrow(mine)
+        log.debug("대차 %d종목", len(mine))
+
+    def poll_halts(self) -> None:
+        rows = [r for r in self.short.halts() if r["symbol"] in self.universe]
+        new = [r for r in rows if not self.store.query(
+            "SELECT 1 FROM halts WHERE symbol=? AND halt_ts=? AND resume_ts IS ?", (r["symbol"], r["halt_ts"], r["resume_ts"]))]
+        if new:
+            self.store.put_halts(new)
+            log.info("거래정지 %d건: %s", len(new), ", ".join(f"{r['symbol']}({r['reason_ko']})" for r in new[:10]))
 
     def _lookup(self, cik: int, accession: str) -> ed.Filing | None:
         filings = self._safe(lambda: self.edgar.filings(cik)) or []

@@ -95,6 +95,21 @@ td.num, th.num { text-align: right; }
 .warnbox { border: 1px solid var(--serious); border-radius: 8px; padding: 8px 12px; margin-bottom: 16px; display: none; }
 details summary { cursor: pointer; color: var(--text-secondary); font-size: 12.5px; margin-top: 8px; }
 .loading { opacity: .55; transition: opacity .2s; }
+#shorts tbody tr { cursor: pointer; }
+#lookup-sym { font: inherit; padding: 7px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--btn);
+  color: var(--text-primary); width: 9em; text-transform: uppercase; }
+/* 탭: 넓은 화면은 위쪽, 휴대폰은 화면 아래 고정 */
+.tabs { display: flex; gap: 4px; margin-bottom: 16px; position: sticky; top: 0; z-index: 10; padding: 6px 0;
+  background: var(--surface-0); }
+.tabs button { border-radius: 999px; padding: 6px 16px; display: inline-flex; gap: 6px; align-items: center; }
+.tabs button[aria-pressed="true"] { background: var(--text-primary); color: var(--surface-1); border-color: var(--text-primary); font-weight: 600; }
+.tab[hidden] { display: none; }
+.brief-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 14px; margin-bottom: 8px; }
+.brief-head .big { font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.brief-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr)); }
+.flag { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; border: 1px solid var(--serious); color: var(--text-primary); margin-right: 6px; }
+.evlist { margin: 0; padding: 0; list-style: none; font-size: 12.5px; }
+.evlist li { padding: 5px 0; border-bottom: 1px solid var(--border); }
 .chart svg { touch-action: pan-y; }          /* 차트 위에서 손가락을 옆으로 밀면 값 보기, 위아래는 스크롤 */
 .controls { display: flex; gap: 8px; flex-wrap: wrap; }
 .readonly-note { display: none; font-size: 12px; color: var(--text-muted); }
@@ -103,7 +118,20 @@ body.readonly .readonly-note { display: inline; }
 
 /* ---------- 휴대폰 ---------- */
 @media (max-width: 640px) {
-  main { padding: 12px; }
+  main { padding: 12px 12px calc(76px + env(safe-area-inset-bottom)); }
+  .tabs { position: fixed; top: auto; bottom: 0; left: 0; right: 0; margin: 0; padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
+    gap: 0; border-top: 1px solid var(--border); background: var(--surface-1); }
+  .tabs button { flex: 1; flex-direction: column; gap: 1px; border: 0; border-radius: 10px; padding: 6px 0; font-size: 11.5px; background: transparent; }
+  .tabs button span { font-size: 18px; line-height: 1.1; }
+  .tabs button[aria-pressed="true"] { background: var(--btn-hover); color: var(--text-primary); }
+  .sub.long { display: none; }                  /* 설명 문장은 넓은 화면에서만 */
+  body:not([data-tab="home"]) header .controls, body:not([data-tab="home"]) header .spacer { display: none; }   /* 조작 버튼은 홈에서만 */
+  #trader-hb, #collector-hb { font-size: 11px; }
+  .strats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .strat h3 { font-size: 13px; }
+  .strat .kv { font-size: 11.5px; gap: 1px 6px; }
+  .strat .kv span:nth-child(n+7) { display: none; }   /* 거래·승률·평균 손익만 */
+  .strat button { padding: 6px; }
   header { gap: 8px; margin-bottom: 12px; }
   h1 { font-size: 17px; margin-right: 4px; }
   header .spacer { flex-basis: 100%; height: 0; }    /* 버튼은 다음 줄로 */
@@ -124,7 +152,7 @@ body.readonly .readonly-note { display: inline; }
   .tablewrap { -webkit-overflow-scrolling: touch; }
   .tablewrap td:first-child, .tablewrap th:first-child { position: sticky; left: 0; background: var(--surface-1); z-index: 1; }
   .tablewrap th:first-child { z-index: 2; }
-  .strat button { width: 100%; padding: 9px; }
+  .strat button { width: 100%; }
   .tip { white-space: normal; max-width: 80vw; }
 }
 </style>
@@ -148,113 +176,150 @@ body.readonly .readonly-note { display: inline; }
 
   <div class="warnbox" id="mismatch"></div>
 
-  <div class="grid tiles">
-    <div class="card tile"><div class="label">계좌 평가액</div><div class="value" id="t-equity">-</div><div class="note" id="t-cash"></div></div>
-    <div class="card tile"><div class="label">오늘 실현 손익 (미국 영업일)</div><div class="value" id="t-daypnl">-</div><div class="note" id="t-date"></div></div>
-    <div class="card tile"><div class="label">보유·진행 중 매매</div><div class="value" id="t-open">-</div><div class="note" id="t-working"></div></div>
-    <div class="card tile"><div class="label">시장 상태</div><div class="value" id="t-regime" style="font-size:16px">-</div><div class="note" id="t-scan"></div></div>
-  </div>
+  <nav class="tabs" id="tabs" aria-label="화면">
+    <button data-tab="home" aria-pressed="true"><span aria-hidden="true">🏠</span>홈</button>
+    <button data-tab="symbol" aria-pressed="false"><span aria-hidden="true">🔎</span>종목</button>
+    <button data-tab="trade" aria-pressed="false"><span aria-hidden="true">📋</span>매매</button>
+    <button data-tab="analysis" aria-pressed="false"><span aria-hidden="true">📊</span>분석</button>
+  </nav>
 
-  <section class="card">
-    <div class="filters" role="group" aria-label="기간">
-      <div class="seg" id="range">
-        <button data-days="1" aria-pressed="false">1일</button>
-        <button data-days="7" aria-pressed="true">7일</button>
-        <button data-days="30" aria-pressed="false">30일</button>
-      </div>
+  <!-- ===== 홈: 지금 상태 ===== -->
+  <div class="tab" data-tab="home">
+    <div class="grid tiles">
+      <div class="card tile"><div class="label">계좌 평가액</div><div class="value" id="t-equity">-</div><div class="note" id="t-cash"></div></div>
+      <div class="card tile"><div class="label">오늘 실현 손익</div><div class="value" id="t-daypnl">-</div><div class="note" id="t-date"></div></div>
+      <div class="card tile"><div class="label">보유·진행 중</div><div class="value" id="t-open">-</div><div class="note" id="t-working"></div></div>
+      <div class="card tile"><div class="label">시장 상태</div><div class="value" id="t-regime" style="font-size:16px">-</div><div class="note" id="t-scan"></div></div>
     </div>
-    <h2>계좌 평가액</h2>
-    <p class="sub">5분마다 기록한 현금 + 보유 종목 평가액 (USD)</p>
-    <div class="chart" id="equity-chart"></div>
-  </section>
 
-  <section>
-    <div class="grid two">
+    <section class="card">
+      <h2>보유·진행 중 매매</h2>
+      <p class="sub long">현재가는 수집기가 1분마다 받은 값입니다.</p>
+      <div class="tablewrap"><table id="positions"></table></div>
+    </section>
+
+    <section class="card">
+      <div class="filters" role="group" aria-label="기간">
+        <div class="seg" id="range">
+          <button data-days="1" aria-pressed="false">1일</button>
+          <button data-days="7" aria-pressed="true">7일</button>
+          <button data-days="30" aria-pressed="false">30일</button>
+        </div>
+      </div>
+      <h2>계좌 평가액</h2>
+      <p class="sub long">5분마다 기록한 현금 + 보유 종목 평가액 (USD)</p>
+      <div class="chart" id="equity-chart"></div>
+    </section>
+
+    <section class="grid two">
       <div class="card">
         <h2>전략별 누적 손익</h2>
-        <p class="sub">청산된 매매의 실현 손익 합계 (USD)</p>
+        <p class="sub long">청산된 매매의 실현 손익 합계 (USD)</p>
         <div class="chart" id="strat-chart"></div>
       </div>
       <div class="card">
         <h2>전략</h2>
-        <p class="sub">끄면 그 전략의 신규 매수만 멈춥니다. 보유 종목 청산은 계속됩니다.</p>
+        <p class="sub long">끄면 그 전략의 신규 매수만 멈춥니다. 보유 종목 청산은 계속됩니다.</p>
         <div class="grid strats" id="strats"></div>
       </div>
-    </div>
-  </section>
+    </section>
+  </div>
 
-  <section class="card">
-    <h2>보유·진행 중 매매</h2>
-    <p class="sub">현재가는 수집기가 1분마다 받은 값입니다.</p>
-    <div class="tablewrap"><table id="positions"></table></div>
-  </section>
+  <!-- ===== 종목: 조회 + 공매도·대차 ===== -->
+  <div class="tab" data-tab="symbol" hidden>
+    <section class="card" id="lookup-card">
+      <h2>종목 조회</h2>
+      <p class="sub long">시세 흐름·호가·공매도 비율·대차·SSR·거래정지·공시를 한눈에. 아래 표의 종목을 눌러도 됩니다</p>
+      <form class="filters" id="lookup-form">
+        <input id="lookup-sym" placeholder="종목 (예: PENX)" autocomplete="off" autocapitalize="characters" spellcheck="false">
+        <button type="submit">조회</button>
+      </form>
+      <div id="lookup"></div>
+    </section>
 
-  <section class="grid two">
-    <div class="card"><h2>최근 주문</h2><p class="sub">매수·매도 주문과 체결 상태</p>
-      <div class="tablewrap" style="max-height:360px"><table id="orders"></table></div></div>
-    <div class="card"><h2>최근 청산</h2><p class="sub">끝난 매매 (취소 포함)</p>
-      <div class="tablewrap" style="max-height:360px"><table id="trades"></table></div></div>
-  </section>
+    <section class="card">
+      <h2>공매도·대차</h2>
+      <p class="sub">감시·보유 종목, 대차 수수료 높은 순. 누르면 위에서 조회</p>
+      <details class="sub"><summary>항목 설명</summary>
+        공매도 비율 = FINRA 일별 공매도 거래량 ÷ 거래량 (장외 보고분) · 대차 = IBKR 수수료(연%)·빌릴 수 있는 수량 ·
+        SSR = 전일 −10% 로 오늘 공매도 호가 제한 · Reg SHO = 결제불이행이 쌓인 종목</details>
+      <div class="tablewrap" style="max-height:60vh"><table id="shorts"></table></div>
+    </section>
+  </div>
 
-  <section class="card">
-    <h2>전략 후보</h2>
-    <p class="sub">최근 스캔에서 검토한 종목과 통과·탈락 사유</p>
-    <div class="filters"><label><input type="checkbox" id="only-ok"> 통과한 후보만</label></div>
-    <div class="tablewrap" style="max-height:360px"><table id="signals"></table></div>
-  </section>
+  <!-- ===== 매매: 주문·청산·후보 ===== -->
+  <div class="tab" data-tab="trade" hidden>
+    <section class="grid two">
+      <div class="card"><h2>최근 주문</h2><p class="sub long">매수·매도 주문과 체결 상태</p>
+        <div class="tablewrap" style="max-height:50vh"><table id="orders"></table></div></div>
+      <div class="card"><h2>최근 청산</h2><p class="sub long">끝난 매매 (취소 포함)</p>
+        <div class="tablewrap" style="max-height:50vh"><table id="trades"></table></div></div>
+    </section>
 
-  <section class="card">
-    <h2>급등주 추적</h2>
-    <p class="sub">정규장 종가 기준 +30% 이상 오른 종목과 다음 영업일 흐름 (급등일 종가 대비)</p>
-    <div class="grid two">
-      <div>
-        <h2 style="font-size:13px">희석 위험별 다음 날 정규장 첫 가격 평균 수익률</h2>
-        <div class="chart" id="runner-chart"></div>
+    <section class="card">
+      <h2>전략 후보</h2>
+      <p class="sub long">최근 스캔에서 검토한 종목과 통과·탈락 사유</p>
+      <div class="filters"><label><input type="checkbox" id="only-ok"> 통과한 후보만</label></div>
+      <div class="tablewrap" style="max-height:60vh"><table id="signals"></table></div>
+    </section>
+
+    <section class="card">
+      <h2>일일 리포트</h2>
+      <p class="sub long">영업일이 끝나면 한국 시간 07:30 에 알림으로 보내고 여기에 남깁니다</p>
+      <div class="grid reportgrid">
+        <div class="tablewrap" style="max-height:420px"><table id="reports"></table></div>
+        <pre id="report-text" class="report">리포트가 아직 없습니다.</pre>
       </div>
-      <div class="tablewrap"><table id="runner-buckets"></table></div>
-    </div>
-    <div class="tablewrap" style="max-height:420px;margin-top:12px"><table id="runners"></table></div>
-  </section>
+    </section>
+  </div>
 
-  <section class="card">
-    <h2>공시·보도자료 이벤트</h2>
-    <p class="sub">SEC 공시 본문과 보도자료로 판정한 사건. ▲ 호재, ▼ 악재</p>
-    <div class="tablewrap" style="max-height:360px"><table id="dilution"></table></div>
-  </section>
+  <!-- ===== 분석: 가설 검증·수집 상태 ===== -->
+  <div class="tab" data-tab="analysis" hidden>
+    <section class="card">
+      <h2>급등주 추적</h2>
+      <p class="sub long">정규장 종가 기준 +30% 이상 오른 종목과 다음 영업일 흐름 (급등일 종가 대비)</p>
+      <div class="grid two">
+        <div>
+          <h2 style="font-size:13px">희석 위험별 다음 날 정규장 첫 가격 평균 수익률</h2>
+          <div class="chart" id="runner-chart"></div>
+        </div>
+        <div class="tablewrap"><table id="runner-buckets"></table></div>
+      </div>
+      <details><summary>급등주 목록</summary>
+        <div class="tablewrap" style="max-height:60vh;margin-top:8px"><table id="runners"></table></div></details>
+    </section>
 
-  <section class="card">
-    <h2>일일 리포트</h2>
-    <p class="sub">영업일이 끝나면 한국 시간 07:30 에 알림으로 보내고 여기에 남깁니다</p>
-    <div class="grid reportgrid">
-      <div class="tablewrap" style="max-height:420px"><table id="reports"></table></div>
-      <pre id="report-text" class="report">리포트가 아직 없습니다.</pre>
-    </div>
-  </section>
+    <section class="card">
+      <h2>공시·보도자료 이벤트</h2>
+      <p class="sub long">SEC 공시 본문과 보도자료로 판정한 사건. ▲ 호재, ▼ 악재</p>
+      <div class="tablewrap" style="max-height:60vh"><table id="dilution"></table></div>
+    </section>
 
-  <section class="card">
-    <h2>백테스트</h2>
-    <p class="sub" id="bt-sub">python -m pennybot backtest 결과. 수수료 반영 순손익, 학습(앞 70%)·검증(뒤 30%) 구간을 나눠 봅니다</p>
-    <div class="tablewrap"><table id="backtests"></table></div>
-    <details><summary>최신 실행 · 전략별 / 개별 매매</summary>
-      <div class="tablewrap"><table id="bt-strategies"></table></div>
-      <div class="tablewrap" style="max-height:360px;margin-top:12px"><table id="bt-trades"></table></div></details>
-  </section>
+    <section class="grid two">
+      <div class="card">
+        <h2>가설 점검: 주목 종목의 개장 프리미엄</h2>
+        <p class="sub long">전날 주목 종목의 데이마켓 종가 → 정규장 시가 평균 수익률 (영업일별)</p>
+        <div class="chart" id="research-chart"></div>
+        <details><summary>표로 보기 · 주목 종목 vs 나머지</summary><div class="tablewrap"><table id="research"></table></div></details>
+      </div>
+      <div class="card">
+        <h2>세션별 호가 확보율</h2>
+        <p class="sub long" id="coll-sub">감시 종목 호가 스냅샷 중 매수·매도 호가가 모두 있던 비율</p>
+        <div class="chart" id="quote-chart"></div>
+        <details><summary>표로 보기 · 수집 현황</summary><div class="tablewrap"><table id="collector"></table></div>
+          <p class="sub" id="coll-last"></p></details>
+      </div>
+    </section>
 
-  <section class="grid two">
-    <div class="card">
-      <h2>세션별 호가 확보율</h2>
-      <p class="sub" id="coll-sub">감시 종목 호가 스냅샷 중 매수·매도 호가가 모두 있던 비율</p>
-      <div class="chart" id="quote-chart"></div>
-      <details><summary>표로 보기 · 수집 현황</summary><div class="tablewrap"><table id="collector"></table></div>
-        <p class="sub" id="coll-last"></p></details>
-    </div>
-    <div class="card">
-      <h2>가설 점검: 주목 종목의 개장 프리미엄</h2>
-      <p class="sub">전날 주목 종목의 데이마켓 종가 → 정규장 시가 평균 수익률 (영업일별)</p>
-      <div class="chart" id="research-chart"></div>
-      <details><summary>표로 보기 · 주목 종목 vs 나머지</summary><div class="tablewrap"><table id="research"></table></div></details>
-    </div>
-  </section>
+    <section class="card">
+      <h2>백테스트</h2>
+      <p class="sub long" id="bt-sub">python -m pennybot backtest 결과. 수수료 반영 순손익, 학습(앞 70%)·검증(뒤 30%) 구간을 나눠 봅니다</p>
+      <div class="tablewrap"><table id="backtests"></table></div>
+      <details><summary>최신 실행 · 전략별 / 개별 매매</summary>
+        <div class="tablewrap"><table id="bt-strategies"></table></div>
+        <div class="tablewrap" style="max-height:360px;margin-top:12px"><table id="bt-trades"></table></div></details>
+    </section>
+  </div>
 </main>
 <div class="tip" id="tip" role="status"></div>
 
@@ -637,6 +702,97 @@ async function loadBacktests() {
   ], last && last.trades ? last.trades.slice().reverse() : [], "없음");
 }
 
+const fmtQty = v => v == null ? "-" : v >= 1e6 ? (v / 1e6).toFixed(1) + "M" : v >= 1e3 ? Math.round(v / 1e3) + "K" : String(Math.round(v));
+const ratio = v => v == null ? null : Math.round(v * 100) + "%";
+
+async function loadShorts() {
+  const rows = await api("/api/shorts");
+  table($("shorts"), [
+    { h: "종목", f: r => r.symbol + (r.held ? " (보유)" : "") },
+    { h: "공매도 비율", num: 1, f: r => ratio(r.short_ratio) }, { h: "5일 평균", num: 1, f: r => ratio(r.short_ratio_5d) },
+    { h: "대차 수수료", num: 1, f: r => r.fee_rate == null ? null : r.fee_rate.toFixed(1) + "%", tone: r => r.fee_rate >= 20 ? "neg" : null },
+    { h: "빌릴 수 있는 수량", num: 1, f: r => fmtQty(r.available), tone: r => r.available != null && r.available < 10000 ? "neg" : null },
+    { h: "SSR", f: r => r.ssr ? "제한" : null }, { h: "Reg SHO", f: r => r.reg_sho ? "목록" : null },
+    { h: "최근 정지", f: r => r.halt ? `${r.halt.halt_ts.slice(5, 16).replace("T", " ")} ${r.halt.reason_ko}` : null },
+  ], rows, "감시 종목이 없습니다 (수집기가 장중에 호가 받는 종목을 고릅니다)");
+  $("shorts").querySelectorAll("tbody tr").forEach((tr, i) => {
+    if (!rows[i]) return;
+    tr.tabIndex = 0;
+    tr.onclick = tr.onkeydown = e => { if (e.type === "click" || e.key === "Enter") lookup(rows[i].symbol).then(() => $("lookup-card").scrollIntoView({ behavior: "smooth" })); };
+  });
+}
+
+function kvBox(title, pairs) {
+  const card = document.createElement("div");
+  const h = document.createElement("h2"); h.style.fontSize = "13px"; h.textContent = title; card.appendChild(h);
+  const kv = document.createElement("div"); kv.className = "kv";
+  pairs.forEach(([k, v, t]) => { const a = document.createElement("span"); a.textContent = k; const b = document.createElement("span"); b.textContent = v ?? "-"; if (t) b.className = t; kv.appendChild(a); kv.appendChild(b); });
+  card.appendChild(kv);
+  return card;
+}
+
+async function lookup(sym) {
+  sym = (sym || "").trim().toUpperCase();
+  if (!sym) return;
+  $("lookup-sym").value = sym;
+  const box = $("lookup");
+  const b = await api("/api/symbol?s=" + encodeURIComponent(sym));
+  box.replaceChildren();
+  if (!b.found) { const d = document.createElement("div"); d.className = "empty"; d.textContent = `${sym}: 수집기 기록이 없습니다 (유니버스 $0.2~$10 밖이거나 아직 수집 전)`; box.appendChild(d); return; }
+  const head = document.createElement("div"); head.className = "brief-head";
+  const add = (cls, text) => { const s = document.createElement("span"); if (cls) s.className = cls; s.textContent = text; head.appendChild(s); return s; };
+  add("big", `${b.symbol} ${b.price ? fmtPx(b.price.last) : ""}`);
+  if (b.change_pct != null) { const s = add("", fmtPct(b.change_pct)); s.className = tone(b.change_pct) || ""; }
+  if (b.name) add("sub", b.name + (b.market ? ` · ${b.market}` : ""));
+  box.appendChild(head);
+  const flags = document.createElement("div");
+  if (b.ssr) { const f = document.createElement("span"); f.className = "flag"; f.textContent = "SSR 공매도 호가 제한"; flags.appendChild(f); }
+  if (b.reg_sho) { const f = document.createElement("span"); f.className = "flag"; f.textContent = `Reg SHO 결제불이행 (${b.reg_sho_days}일 기록)`; flags.appendChild(f); }
+  if (b.halts.length) { const f = document.createElement("span"); f.className = "flag"; f.textContent = `최근 7일 거래정지 ${b.halts.length}회`; flags.appendChild(f); }
+  if (flags.childNodes.length) { flags.style.marginBottom = "10px"; box.appendChild(flags); }
+  const grid = document.createElement("div"); grid.className = "brief-grid";
+  const q = b.quote, sh = b.short, bo = b.borrow;
+  grid.appendChild(kvBox("시세", [
+    ["세션", b.price ? `${SESS[b.price.session] || b.price.session} · ${b.price.trade_date}` : "-"],
+    ["기준가 (전 정규장)", fmtPx(b.prev_close)],
+    ...(b.sessions || []).map(x => [SESS[x.session] || x.session, fmtPx(x.last)]),
+    ["호가", q && q.bid && q.ask ? `${fmtPx(q.bid)} / ${fmtPx(q.ask)}` : "-"],
+    ["스프레드", q && q.bid && q.ask ? ((q.ask / q.bid - 1) * 100).toFixed(1) + "%" : "-"],
+  ]));
+  grid.appendChild(kvBox("공매도·대차", [
+    ["공매도 비율 (최근일)", sh.ratio == null ? "-" : `${ratio(sh.ratio)} · ${sh.latest.trade_date}`],
+    ["5일 평균", ratio(sh.ratio_5d)],
+    ["대차 수수료 (연)", bo ? bo.fee_rate.toFixed(2) + "%" : "-", bo && bo.fee_rate >= 20 ? "neg" : null],
+    ["24시간 전 수수료", bo && bo.fee_24h_ago != null ? bo.fee_24h_ago.toFixed(2) + "%" : "-"],
+    ["빌릴 수 있는 수량", bo ? fmtQty(bo.available) + "주" : "-", bo && bo.available < 10000 ? "neg" : null],
+    ["24시간 전 수량", bo && bo.avail_24h_ago != null ? fmtQty(bo.avail_24h_ago) + "주" : "-"],
+  ]));
+  const r = b.runner;
+  grid.appendChild(kvBox("기타", [
+    ["24시간 최고 랭킹", b.rank ? `${b.rank.rank}위 (${{ MARKET_TRADING_AMOUNT: "거래대금", TOSS_SECURITIES_TRADING_AMOUNT: "토스 거래대금", TOP_GAINERS: "급등", TOP_LOSERS: "급락" }[b.rank.type] || b.rank.type})` : "-"],
+    ["최근 급등 기록", r ? `${r.trade_date} ${fmtPct(r.change_pct, 0)}` : "-"],
+    ["희석 위험", r && r.dilution_score != null ? Math.round(r.dilution_score) + "점" : "-"],
+    ["펌프 신호", r && r.pump_flags ? r.pump_flags : "-"],
+    ...b.halts.slice(0, 3).map(h => ["정지 " + h.halt_ts.slice(5, 16).replace("T", " "), h.reason_ko + (h.resume_ts ? ` → ${h.resume_ts.slice(11, 16)} 재개` : "")]),
+  ]));
+  box.appendChild(grid);
+  if (b.events.length) {
+    const h = document.createElement("h2"); h.style.cssText = "font-size:13px;margin-top:12px"; h.textContent = "공시·보도자료"; box.appendChild(h);
+    const ul = document.createElement("ul"); ul.className = "evlist";
+    b.events.forEach(e => {
+      const li = document.createElement("li");
+      const arrow = e.direction > 0 ? "▲ " : e.direction < 0 ? "▼ " : "";
+      const evs = (e.events || "").split(",").filter(Boolean).map(k => EVENT[k] || k).join(", ");
+      li.textContent = `${arrow}${kst(e.ts)} · ${e.form === "NEWS" ? "보도자료" : e.form} · ${e.title || evs || (e.insider_buy_usd ? "내부자 매수 " + fmtUsd(e.insider_buy_usd) : "")}`;
+      if (e.direction) li.className = tone(e.direction);
+      ul.appendChild(li);
+    });
+    box.appendChild(ul);
+  }
+  try { localStorage.setItem("lookup", sym); } catch (e) {}
+}
+$("lookup-form").onsubmit = e => { e.preventDefault(); lookup($("lookup-sym").value).catch(err => alert(err.message)); };
+
 async function control(body) {
   try { await api("/api/control", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); }
   catch (e) { alert("제어 실패: " + e.message); }
@@ -658,14 +814,38 @@ $("theme-btn").onclick = () => {
 };
 try { const t = localStorage.getItem("theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
 
+// 보이는 탭의 데이터만 받는다 (휴대폰 데이터·배터리 절약)
+const TAB_JOBS = {
+  home: () => [loadEquity(), loadStrategies(), loadTables()],
+  symbol: () => [loadShorts()],
+  trade: () => [loadTables(), loadReports()],
+  analysis: () => [loadRunners(), loadCollector(), loadResearch(), loadBacktests()],
+};
+let tab = "home";
 async function refresh() {
   document.querySelector("main").classList.add("loading");
-  const jobs = [loadOverview(), loadEquity(), loadStrategies(), loadTables(), loadRunners(), loadCollector(), loadResearch(), loadBacktests(), loadReports()];
-  const res = await Promise.allSettled(jobs);
+  const res = await Promise.allSettled([loadOverview(), ...TAB_JOBS[tab]()]);
   res.filter(r => r.status === "rejected").forEach(r => console.warn(r.reason));
   document.querySelector("main").classList.remove("loading");
 }
-refresh();
+function showTab(t, keepScroll) {
+  if (!TAB_JOBS[t]) t = "home";
+  tab = t;
+  document.body.dataset.tab = t;
+  document.querySelectorAll(".tab").forEach(x => { x.hidden = x.dataset.tab !== t; });
+  document.querySelectorAll("#tabs button").forEach(b => b.setAttribute("aria-pressed", b.dataset.tab === t));
+  try { localStorage.setItem("tab", t); } catch (e) {}
+  if (location.hash !== "#" + t) history.replaceState(null, "", location.pathname + location.search + "#" + t);
+  if (!keepScroll) window.scrollTo(0, 0);
+  refresh();
+}
+document.querySelectorAll("#tabs button").forEach(b => b.onclick = () => showTab(b.dataset.tab));
+{ let t = location.hash.slice(1); try { t = t || localStorage.getItem("tab"); } catch (e) {}
+  if (new URLSearchParams(location.search).get("s")) t = "symbol";
+  showTab(t || "home", true); }
+// 주소에 ?s=PENX 가 있으면 그 종목 (텔레그램 /종목 링크), 없으면 마지막으로 본 종목
+{ let s = new URLSearchParams(location.search).get("s"); try { s = s || localStorage.getItem("lookup"); } catch (e) {}
+  if (s) lookup(s).then(() => { if (location.search.includes("s=")) $("lookup-card").scrollIntoView(); }).catch(() => {}); }
 setInterval(refresh, 10000);
 let rt, lastW = innerWidth;
 addEventListener("resize", () => {

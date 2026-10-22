@@ -45,7 +45,20 @@ CREATE TABLE IF NOT EXISTS news (
     id TEXT, symbol TEXT, source TEXT, title TEXT, url TEXT, published TEXT,
     trade_date TEXT, session TEXT, events TEXT, direction INTEGER,
     PRIMARY KEY (id, symbol));
+CREATE TABLE IF NOT EXISTS short_volume (
+    trade_date TEXT, symbol TEXT, short_volume REAL, exempt_volume REAL, total_volume REAL,
+    PRIMARY KEY (trade_date, symbol));
+CREATE TABLE IF NOT EXISTS borrow (
+    ts TEXT, symbol TEXT, fee_rate REAL, rebate_rate REAL, available REAL,
+    PRIMARY KEY (ts, symbol));
+CREATE TABLE IF NOT EXISTS ssr (trade_date TEXT, symbol TEXT, trigger_time TEXT, PRIMARY KEY (trade_date, symbol));
+CREATE TABLE IF NOT EXISTS reg_sho (trade_date TEXT, symbol TEXT, PRIMARY KEY (trade_date, symbol));
+CREATE TABLE IF NOT EXISTS halts (
+    symbol TEXT, halt_ts TEXT, reason TEXT, reason_ko TEXT, resume_ts TEXT,
+    PRIMARY KEY (symbol, halt_ts));
 CREATE INDEX IF NOT EXISTS ix_news_sym ON news (symbol, published);
+CREATE INDEX IF NOT EXISTS ix_borrow_sym ON borrow (symbol, ts);
+CREATE INDEX IF NOT EXISTS ix_shortvol_sym ON short_volume (symbol, trade_date);
 CREATE INDEX IF NOT EXISTS ix_bars_day ON bars_1m (trade_date, session);
 CREATE INDEX IF NOT EXISTS ix_quotes_day ON quotes (trade_date, session);
 CREATE INDEX IF NOT EXISTS ix_prices_day ON prices (trade_date, session);
@@ -94,6 +107,11 @@ class Store:
     def put_filings(self, rows): return self._put("filings", rows)
     def put_runners(self, rows): return self._put("runners", rows)
     def put_news(self, rows): return self._put("news", rows)
+    def put_short_volume(self, rows): return self._put("short_volume", rows)
+    def put_borrow(self, rows): return self._put("borrow", rows)
+    def put_ssr(self, rows): return self._put("ssr", rows)
+    def put_reg_sho(self, rows): return self._put("reg_sho", rows)
+    def put_halts(self, rows): return self._put("halts", rows)
 
     def runner_candidates(self, trade_date: str, prev_date: str, min_pct: float) -> list[tuple]:
         """정규장 마지막 현재가 기준으로 전 영업일 대비 min_pct% 이상 오른 종목 → (symbol, prev_close, close)."""

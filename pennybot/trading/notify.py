@@ -110,18 +110,21 @@ def _desc(r) -> str:
 HELP = ("📖 명령\n"
         "/상태 — 세션·보유 종목\n"
         "/리포트 [영업일] — 일일 리포트 (예: /리포트 2026-10-21)\n"
+        "/종목 PENX — 시세·공매도·대차·SSR·거래정지·공시 한눈에\n"
         "/대시보드 — 대시보드 외부 주소\n"
         "/정지 — 신규 매수 중단 · /재개 — 다시 켜기\n"
         "/청산 확인 — 보유 종목 전량 청산\n"
-        "영어도 됩니다: /status /report /dashboard /kill /resume /flatten confirm")
+        "영어도 됩니다: /status /report /symbol /dashboard /kill /resume /flatten confirm")
 
 
 class TelegramCommands:
     """텔레그램 원격 제어. trader 의 status_text()/report_text() 와 control 파일을 쓴다."""
 
-    def __init__(self, token: str, chat: str, control, trader, notifier: Notifier, session=None):
+    def __init__(self, token: str, chat: str, control, trader, notifier: Notifier, session=None,
+                 market_db: str | None = None):
         self.token, self.chat = token, str(chat)
         self.control, self.trader, self.notifier = control, trader, notifier
+        self.market_db = market_db           # /종목 이 읽는 수집기 DB
         self.s = session or requests.Session()
         self.offset = None
 
@@ -175,6 +178,13 @@ class TelegramCommands:
         if cmd.split()[0] in ("/리포트", "/report"):
             arg = cmd.split()[1] if len(cmd.split()) > 1 else None      # /리포트 2026-10-21
             return self.trader.report_text(arg)
+        if cmd.split()[0] in ("/종목", "/symbol", "/s"):
+            if len(cmd.split()) < 2 or not self.market_db:
+                return "사용법: /종목 PENX"
+            from ..brief import brief, render
+            b = brief(self.market_db, cmd.split()[1])
+            url = self.trader.dashboard_url() if hasattr(self.trader, "dashboard_url") else None
+            return render(b) + (f"\n\n📊 {url}/?s={b['symbol']}" if url and b["found"] else "")
         if cmd in ("/대시보드", "/dashboard"):
             url = self.trader.dashboard_url()
             return f"📊 대시보드: {url}" if url else "외부 주소가 꺼져 있습니다. 봇 컴퓨터에서 tunnel.bat 을 실행하세요."

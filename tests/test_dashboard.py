@@ -59,6 +59,11 @@ def test_read_endpoints(server):
     reps = get(base + "/api/reports")
     assert reps and reps[0]["text"].startswith("📊 일일 리포트") and "trades" in reps[0]
     assert [r["trade_date"] for r in reps] == sorted((r["trade_date"] for r in reps), reverse=True)
+    sh = get(base + "/api/shorts")
+    assert sh and sh[0]["held"] and any(r["ssr"] for r in sh) and all("fee_rate" in r for r in sh)
+    b = get(base + "/api/symbol?s=penx")
+    assert b["found"] and b["ssr"] and b["short"]["ratio"] and b["borrow"]["fee_rate"] and b["halts"]
+    assert get(base + "/api/symbol?s=NOPE")["found"] is False
     with urllib.request.urlopen(base + "/") as r:
         assert b"Pennybot" in r.read()
 

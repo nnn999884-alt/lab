@@ -100,9 +100,12 @@ def cmd_collect(cfg: Config, once: bool) -> None:
     client = make_client(cfg, "collector")
     dil, fund = _fundamentals(cfg, client)
     from .news import NewsClient
+    from .shortdata import ShortData
+    ua = cfg.sec_user_agent or "pennybot/1.0"
     col = Collector(client, Store(cfg.collector.db_path), SessionCalendar(client), cfg.collector,
                     dil.edgar if dil else None, dilution=dil, fundamentals=fund,
-                    news=NewsClient(cfg.collector.news_feeds or None, cfg.sec_user_agent or "pennybot/1.0"))
+                    news=NewsClient(cfg.collector.news_feeds or None, ua),
+                    short=ShortData(ua) if cfg.collector.short_data else None)
     if once:
         col.tick()
     else:
@@ -162,7 +165,8 @@ def cmd_trade(cfg: Config, once: bool) -> None:
                     notifier, fund=fund, stream=stream, reports_dir=str(Path(cfg.state_dir) / "reports"),
                     link=lambda: tunnel_url(cfg))
     if t.telegram_token and t.telegram_chat and not once:
-        TelegramCommands(t.telegram_token, t.telegram_chat, control, trader, notifier).start()
+        TelegramCommands(t.telegram_token, t.telegram_chat, control, trader, notifier,
+                         market_db=cfg.collector.db_path).start()
         notifier.send(msg.started(cfg.mode, tunnel_url(cfg)))
     if once:
         trader.tick()
