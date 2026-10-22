@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timedelta
 
 import pytest
@@ -119,3 +120,16 @@ def test_engine_round_trip(tmp_path):
     assert "TEST" not in broker.positions
     assert eng.risk.realized_pnl > 0
     assert broker.cash > 1000
+
+
+def test_engine_uses_screener_watchlist(tmp_path):
+    (tmp_path / "watchlist.json").write_text(json.dumps({"date": "2026-10-21", "picks": [
+        {"symbol": "TEST", "pivot": 2.00, "avg_volume": 4_000_000, "score": 80}]}))
+    feed = FakeFeed()
+    feed.q = quote(last=2.04, prev=2.00)   # 갭 없음: ORB 라면 진입 불가, 피벗 돌파로는 진입
+    broker = PaperBroker(feed, cash=1000)
+    cfg = Config(watchlist=["AUTO"], state_dir=str(tmp_path))
+    eng = Engine(cfg, broker, clock=lambda: at(10, 11))
+    eng.tick()
+    assert "TEST" in broker.positions
+    assert eng.meta["TEST"]["stop_price"] >= 2.00 * 0.97

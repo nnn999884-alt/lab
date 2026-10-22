@@ -22,7 +22,14 @@ class YahooFeed:
         return r.json()["chart"]["result"][0]
 
     def get_bars(self, symbol: str, interval_minutes: int = 1, count: int = 100) -> list[Bar]:
-        res = self._chart(symbol, f"{interval_minutes}m", "1d")
+        return self._parse(self._chart(symbol, f"{interval_minutes}m", "1d"))[-count:]
+
+    def get_daily_bars(self, symbol: str, days: int = 180) -> list[Bar]:
+        rng = "6mo" if days <= 126 else "1y"
+        return self._parse(self._chart(symbol, "1d", rng))[-days:]
+
+    @staticmethod
+    def _parse(res: dict) -> list[Bar]:
         ts = res.get("timestamp") or []
         q = res["indicators"]["quote"][0]
         bars = []
@@ -31,7 +38,7 @@ class YahooFeed:
                 continue
             bars.append(Bar(datetime.fromtimestamp(t, tz=timezone.utc), q["open"][i],
                             q["high"][i], q["low"][i], q["close"][i], q["volume"][i] or 0))
-        return bars[-count:]
+        return bars
 
     def get_quote(self, symbol: str) -> Quote:
         res = self._chart(symbol, "1m", "1d")

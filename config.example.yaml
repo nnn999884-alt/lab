@@ -3,11 +3,10 @@ mode: paper            # paper(모의) | live(실거래: PENNYBOT_LIVE_CONFIRM=Y
 poll_seconds: 20
 paper_cash: 2000
 
-# 감시 종목 (당일 갭업 페니주를 장 전에 채워 넣기)
-watchlist:
-  - SNDL
-  - MULN
-  - BBIG
+# auto: 장 전에 `python -m pennybot screen` 결과(state/watchlist.json)를 사용 (피벗 돌파 전략)
+# 수동 목록을 쓰면 갭업 + 시가범위 돌파(ORB) 전략으로 매매
+watchlist: auto
+# watchlist: [SNDL, BBIG]
 
 strategy:
   min_price: 0.50
@@ -22,6 +21,8 @@ strategy:
   take_profit_pct: 12
   trailing_stop_pct: 4
   max_hold_minutes: 120
+  min_volume_pace: 2.0          # 피벗 돌파 시 당일 거래량이 평소 페이스의 2배 이상
+  pivot_stop_buffer_pct: 3.0    # 피벗 -3% 이탈 = 돌파 실패 손절
   no_new_entries_after: "15:00"   # 미 동부시간
   flatten_at: "15:50"
 
@@ -32,6 +33,30 @@ risk:
   max_trades_per_day: 10
   entry_slippage_pct: 0.5
   exit_slippage_pct: 1.0
+
+# Coil & Catalyst 스크리너
+screener:
+  universe_file: ""             # 비우면 SEC 상장 전종목(OTC 제외). 종목 한 줄씩 적은 파일로 대체 가능
+  min_price: 0.50
+  max_price: 5.00
+  min_dollar_vol_20: 300000
+  max_ret_5: 0.50               # 5일 +50% 넘게 오른 종목 = 이미 군중이 들어옴 → 제외
+  min_ret_120: -0.85            # 6개월 -85% 이하 = 상습 희석 의심 → 제외
+  min_dist_to_pivot: -0.02
+  max_dist_to_pivot: 0.15
+  catalyst_top_k: 60
+  top_n: 15
+  workers: 4
+  weights:                      # 응축 팩터 가중치 (합이 1일 필요 없음)
+    atr_ratio: 0.20             # 변동성 수축
+    tightness: 0.15             # 박스 폭
+    vol_trend: 0.20             # 거래량 증가
+    obv_net: 0.20               # 상승일 거래량 우위
+    clv: 0.15                   # 고가권 마감
+    dist_to_pivot: 0.10         # 박스 상단 근접
+  catalyst:
+    offering_block_days: 30     # 증자공시 30일 이내 → 제외
+    offering_penalty_days: 90   # 90일 이내 → -25점
 
 # 토스증권 Open API — 경로는 공식 명세(developers.tossinvest.com)와 대조 후 수정
 toss:

@@ -85,6 +85,42 @@ class PennyMomentumStrategy:
         stop = max(q.last * (1 - c.stop_loss_pct / 100), min(b.low for b in after[-3:]))
         return Signal(True, f"ORB 돌파 ORH={or_high:.4f} rvol={last.volume / avg_vol:.1f}", stop)
 
+    def check_pivot_entry(self, q: Quote, bars: list[Bar], now: datetime,
+                          pivot: float, avg_volume: float) -> Signal:
+        """스크리너가 찾은 응축 종목: 박스 상단(피벗)을 '평소보다 빠른 거래량'으로 뚫을 때 진입.
+
+        남들이 갭 상승 후 따라붙을 때, 우리는 갭 없이 조용히 눌려 있던 종목이
+        박스를 처음 뚫는 순간을 잡는다. 오늘 상승률 조건은 일부러 두지 않는다.
+        """
+        c = self.cfg
+        now_et = now.astimezone(ET)
+        if now_et.time() >= _hhmm(c.no_new_entries_after):
+            return Signal(False, "신규진입 마감시간")
+        open_dt = datetime.combine(now_et.date(), MARKET_OPEN, tzinfo=ET)
+        minutes = (now_et - open_dt).total_seconds() / 60
+        if minutes < 5:
+            return Signal(False, "개장 직후 대기")
+        if not (c.min_price <= q.last <= c.max_price):
+            return Signal(False, f"가격범위 밖 ${q.last:.4f}")
+        if q.spread_pct > c.max_spread_pct:
+            return Signal(False, f"스프레드 과다 {q.spread_pct:.2f}%")
+        if q.last <= pivot:
+            return Signal(False, f"피벗 아래 ({pivot:.4f})")
+        if q.last > pivot * 1.05:
+            return Signal(False, "피벗 돌파 후 과열 (추격금지)")
+        today = [b for b in bars if b.ts.astimezone(ET).date() == now_et.date()]
+        if not today or today[-1].close <= pivot:
+            return Signal(False, "분봉 종가 확인 전")
+
+        expected = avg_volume * max(minutes / 390, 0.05)
+        pace = q.volume / expected if expected > 0 else 0.0
+        if pace < c.min_volume_pace:
+            return Signal(False, f"거래량 페이스 부족 {pace:.1f}x")
+
+        stop = max(q.last * (1 - c.stop_loss_pct / 100),
+                   pivot * (1 - c.pivot_stop_buffer_pct / 100))
+        return Signal(True, f"피벗 돌파 {pivot:.4f} 거래량 페이스 {pace:.1f}x", stop)
+
     def check_exit(self, pos: Position, q: Quote, now: datetime) -> str | None:
         c = self.cfg
         price = q.bid if q.bid > 0 else q.last

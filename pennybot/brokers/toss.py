@@ -120,8 +120,14 @@ class TossBroker(Broker):
         )
 
     def get_bars(self, symbol: str, interval_minutes: int = 1, count: int = 100) -> list[Bar]:
+        return self._candles(symbol, f"{interval_minutes}m", count)
+
+    def get_daily_bars(self, symbol: str, days: int = 180) -> list[Bar]:
+        return self._candles(symbol, "1d", days)
+
+    def _candles(self, symbol: str, interval: str, count: int) -> list[Bar]:
         d = self._request("GET", self.cfg.candles_path.format(symbol=symbol),
-                          params={"market": self.cfg.market, "interval": f"{interval_minutes}m",
+                          params={"market": self.cfg.market, "interval": interval,
                                   "count": count})
         rows = d if isinstance(d, list) else _pick(d, "candles", "items", "bars", default=[])
         bars = []

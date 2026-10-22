@@ -9,6 +9,7 @@ from .brokers.base import Broker
 from .config import Config
 from .models import Order, OrderStatus, OrderType, Position, Side
 from .risk import RiskManager
+from .screener import load_watchlist
 from .strategy import ET, PennyMomentumStrategy, is_market_hours
 
 log = logging.getLogger(__name__)
@@ -72,9 +73,12 @@ class Engine:
             except Exception:
                 log.exception("청산 처리 실패: %s", sym)
 
-        # 2) 신규 진입
+        # 2) 신규 진입 — auto 면 스크리너 결과(점수 순), 아니면 수동 목록
         positions = self._positions()
-        for sym in self.cfg.watchlist:
+        picks = load_watchlist(self.cfg.state_dir, now.astimezone(ET).date()) \
+            if self.cfg.auto_watchlist else {}
+        symbols = list(picks) if self.cfg.auto_watchlist else self.cfg.watchlist
+        for sym in symbols:
             if sym in positions or self.exited_today.get(sym) == self.risk.day:
                 continue
             ok, why = self.risk.can_open(len(positions))
@@ -84,7 +88,12 @@ class Engine:
             try:
                 q = self.broker.get_quote(sym)
                 bars = self.broker.get_bars(sym, 1, 120)
-                sig = self.strategy.check_entry(q, bars, now)
+                if sym in picks:
+                    pk = picks[sym]
+                    sig = self.strategy.check_pivot_entry(q, bars, now, pk["pivot"],
+                                                          pk.get("avg_volume", 0.0))
+                else:
+                    sig = self.strategy.check_entry(q, bars, now)
                 log.debug("%s: %s", sym, sig.reason)
                 if not sig.ok:
                     continue
@@ -103,7 +112,8 @@ class Engine:
                 log.exception("진입 처리 실패: %s", sym)
 
     def run(self) -> None:
-        log.info("봇 시작 (mode=%s, 종목 %d개)", self.cfg.mode, len(self.cfg.watchlist))
+        src = "스크리너(auto)" if self.cfg.auto_watchlist else f"수동 {len(self.cfg.watchlist)}종목"
+        log.info("봇 시작 (mode=%s, 감시종목=%s)", self.cfg.mode, src)
         while True:
             if is_market_hours(self.clock()):
                 self.tick()
