@@ -87,6 +87,13 @@ def test_watchdog_alerts_when_collector_stale(env):
     assert not sent
 
 
+def test_watchdog_waits_after_startup(env):
+    tr, market, mv, clock, j, ctl, ex = env
+    from datetime import timedelta
+    assert not tr._due("watchdog", tr.clock(), timedelta(minutes=5))      # 켜자마자는 감시 안 함
+    assert tr._due("watchdog", tr.clock() + timedelta(minutes=5), timedelta(minutes=5))
+
+
 def test_journal_migrates_old_db(tmp_path):
     import sqlite3
     db = tmp_path / "old.db"

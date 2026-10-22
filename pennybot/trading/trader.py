@@ -82,6 +82,8 @@ class Trader:
         self.exit_reprices: dict[int, int] = {}
         self.last_session = None
         self._next: dict[str, datetime] = {}
+        # 수집기와 같이 켜면 첫 현재가 기록까지 1~2분 걸린다 → 켜자마자 "수집기 멈춤" 오경보를 내지 않게 5분 뒤부터 감시
+        self._next["watchdog"] = self.clock() + timedelta(minutes=5)
         self.status: dict = {}
         self._stale_alerted: set[int] = set()
         self.mismatch: dict = {}

@@ -2,4 +2,5 @@ requests>=2.31
 PyYAML>=6.0
 python-dotenv>=1.0
 websocket-client>=1.6   # 토스 실시간 웹소켓 (없으면 REST 폴링만)
+tzdata>=2024.1          # Windows 에는 시간대 DB 가 없어 zoneinfo 가 실패함
 pytest>=8.0
