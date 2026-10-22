@@ -6,6 +6,33 @@
 > ⚠️ 페니주는 변동성·스프레드·거래정지·상장폐지 위험이 매우 큽니다.
 > 이 코드는 수익을 보장하지 않으며, 반드시 **모의매매(paper)로 충분히 검증한 뒤** 소액으로 시작하세요.
 
+## 내 컴퓨터에서 실행하기
+
+처음 한 번만 1~7, 그다음부터는 `start.bat` 더블클릭이면 됩니다. (맥은 `.bat` 대신 터미널에서 `bash setup.sh`, `./pennybot.sh`, `./start.sh`)
+
+1. **코드 받기**: [이 브랜치 페이지](https://github.com/nnn999884-alt/lab/tree/claude/elegant-galileo-1nmavv) → 초록색 **Code** → **Download ZIP**
+   → 압축을 `C:\pennybot` 처럼 경로에 한글·공백 없는 곳에 풉니다.
+2. **파이썬 설치**: <https://www.python.org/downloads/> 에서 3.12 설치. 첫 화면의 **Add python.exe to PATH** 체크.
+3. **`setup.bat` 더블클릭**: 패키지를 설치하고 `.env`(비밀값 파일)를 메모장으로 엽니다. 아직 키가 없으면 그냥 닫아도 됩니다.
+4. **미리보기 (키 없이)**: 폴더 주소창에 `cmd` 입력 후 Enter → 검은 창에서 `pennybot.bat dashboard --demo`
+   → 브라우저로 <http://127.0.0.1:8050> (예시 데이터). 끌 때는 검은 창에서 Ctrl+C.
+5. **토스 Open API 키**: 토스증권 **설정 > Open API**에서 발급 ([개발자 문서](https://developers.tossinvest.com/docs)).
+   같은 화면 아래 **허용 IP 관리**에 이 컴퓨터의 공인 IP를 등록합니다 (네이버에서 "내 아이피" 검색).
+   집 인터넷 IP는 가끔 바뀌니, 나중에 `403` 오류가 나면 다시 등록하세요.
+6. **`.env` 채우기** (메모장으로 열기):
+   - `TOSS_CLIENT_ID`, `TOSS_CLIENT_SECRET`: 5에서 받은 값
+   - `SEC_USER_AGENT`: `pennybot 홍길동 me@example.com` 처럼 이름+이메일 (SEC 공시 조회 규칙)
+   - `PENNYBOT_WEBHOOK`: 디스코드 웹훅 주소 (선택, 체결 알림)
+7. **계좌·연결 확인**: `pennybot.bat accounts` → 나온 `accountSeq` 숫자를 `.env`의 `TOSS_ACCOUNT`에 → `pennybot.bat check`
+   (장 캘린더, 시세, 데이마켓 1분봉이 나오면 정상)
+8. **켜기: `start.bat` 더블클릭** → 수집기·매매 봇·대시보드 창 3개가 뜨고 브라우저가 열립니다. 기본은 **모의매매**입니다.
+   창을 닫으면 그 프로그램이 멈춥니다.
+
+- 컴퓨터가 잠들면 멈춥니다: Windows **설정 > 시스템 > 전원**에서 절전을 "안 함"으로. 봇은 한국 오전 9~10시(데이마켓 시작)부터
+  다음 날 새벽(정규장 개장 30~60분 뒤)까지 일하고, 수집기는 24시간 켜 두는 게 좋습니다.
+- 새 버전 받기: ZIP을 새로 받아 풀고, 예전 폴더의 `.env`, `config.yaml`, `state` 폴더를 새 폴더로 복사 → `setup.bat` 한 번 더.
+- 실거래는 모의매매로 충분히 확인한 뒤에만: `config.yaml`의 `mode: live` + `.env`의 `PENNYBOT_LIVE_CONFIRM=YES`.
+
 ## 지금 단계: 세션별 데이터 수집
 
 전략을 검증하려면 데이마켓·프리·정규·애프터 각 세션의 가격과 호가가 필요합니다.
@@ -27,6 +54,7 @@
 세션 시각은 토스 장 운영 캘린더 API를 정본으로 씁니다.
 
 ```bash
+# (직접 설치할 때) setup.bat / setup.sh 가 하는 일
 pip install -r requirements.txt
 cp config.example.yaml config.yaml
 cp .env.example .env            # TOSS_CLIENT_ID / TOSS_CLIENT_SECRET / SEC_USER_AGENT

@@ -20,7 +20,7 @@ from .brokers import PaperBroker, TossBroker
 from .config import Config, load_config
 from .data import YahooFeed
 from .engine import Engine
-from .toss_api import TossClient, us_price_str
+from .toss_api import TossApiError, TossClient, us_price_str
 
 
 def make_client(cfg: Config, role: str = "other") -> TossClient:
@@ -275,6 +275,31 @@ def main() -> None:
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     cfg = load_config(args.config)
+    try:
+        _dispatch(cfg, args)
+    except KeyboardInterrupt:
+        print("\n중지했습니다.")
+    except TossApiError as e:
+        raise SystemExit(f"토스 API 오류: {e}\n" + _HINT.get(e.status, ""))
+    except ValueError as e:
+        if "TOSS_" not in str(e):
+            raise
+        raise SystemExit(f"{e}\n.env 파일에 토스 Open API 키를 넣으세요 (README '내 컴퓨터에서 실행하기').")
+    except Exception as e:
+        import requests
+        if isinstance(e, requests.ConnectionError):
+            raise SystemExit(f"인터넷 연결 오류: {e}")
+        raise
+
+
+_HINT = {
+    401: "키(TOSS_CLIENT_ID/SECRET)가 틀렸거나 만료됐습니다. .env 를 확인하세요.",
+    403: "허용 IP 에 이 컴퓨터의 공인 IP 가 등록돼 있지 않습니다. 토스증권 설정 > Open API > 허용 IP 관리에서 등록하세요."
+         " (집 인터넷 IP 는 가끔 바뀝니다)",
+}
+
+
+def _dispatch(cfg, args) -> None:
     {
         "check": lambda: cmd_check(cfg),
         "accounts": lambda: cmd_accounts(cfg),
