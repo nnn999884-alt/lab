@@ -128,6 +128,9 @@ class TradingConfig:
     risk_per_trade_pct: float = 0.01     # 손절 시 손실 계좌의 1%
     max_open_positions: int = 8
     max_daily_loss_usd: float = 150.0
+    max_weekly_loss_usd: float = 400.0   # 최근 7일 실현 손실이 이만큼이면 신규 매수 중단 (0 = 끔)
+    loss_streak_stop: int = 4            # N연속 손실이면 (0 = 끔)
+    loss_streak_cooldown_hours: int = 24 # 마지막 손실 후 이 시간 동안 신규 매수 쉼
     auto_disable_trades: int = 20        # 최근 N회 평균 손익이 음수면 그 전략 자동 정지
     regime_symbol: str = "IWM"           # 소형주 시장 상태 (데이마켓에서도 거래됨)
     regime_drop_pct: float = 1.5         # 데이마켓 중 IWM 이 전일 종가 대비 이만큼 빠지면 신규 매수 중단

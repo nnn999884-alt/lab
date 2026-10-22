@@ -9,7 +9,7 @@ import sqlite3
 from datetime import date, datetime, timedelta, timezone
 
 from ..collector.store import ro_uri
-from ..sessions import AFTER, DAY, REGULAR, SessionCalendar
+from ..sessions import AFTER, DAY, KST, REGULAR, SessionCalendar
 
 log = logging.getLogger(__name__)
 
@@ -27,6 +27,7 @@ class MarketView:
         self.cal = calendar
         self.ex = exchange
         self._daily: dict[tuple[str, date], list[dict]] = {}
+        self._warn: dict[str, tuple[datetime, list[str]]] = {}
         # 백테스트에서는 재생 시각까지의 데이터만 보이게 한다 (미래 데이터 차단). 실시간이면 현재 시각
         self.clock = clock or (lambda: datetime.now(timezone.utc))
 
@@ -182,6 +183,20 @@ class MarketView:
             return []
         return [s for (s,) in self.q("""SELECT symbol FROM rankings WHERE ts=? AND type='TOSS_SECURITIES_TRADING_AMOUNT'
                                        AND rank <= ? ORDER BY rank""", (r[0][0], top))]
+
+    def warnings(self, symbol: str) -> list[str]:
+        """토스 매수 유의사항 중 지금 유효한 것 (VI 는 실시간이라 5분만 캐시)."""
+        if self.c is None or not hasattr(self.c, "warnings"):
+            return []
+        now = self.clock()
+        hit = self._warn.get(symbol)
+        if hit and (now - hit[0]).total_seconds() < 300:
+            return hit[1]
+        today = now.astimezone(KST).date().isoformat()
+        active = [w.get("warningType") or "?" for w in (self.c.warnings(symbol) or [])
+                  if (w.get("startDate") or "") <= today and (w.get("endDate") or "9999") >= today]
+        self._warn[symbol] = (now, active)
+        return active
 
     def book(self, symbol: str):
         return self.ex.book(symbol)

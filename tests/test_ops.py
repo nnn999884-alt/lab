@@ -97,3 +97,61 @@ def test_journal_migrates_old_db(tmp_path):
     j = Journal(db)
     cols = {r["name"] for r in j.q("PRAGMA table_info(trades)")}
     assert {"fees", "backstop_id", "scaled", "trail_pct"} <= cols
+
+
+def test_loss_streak_cooldown_and_weekly_limit(tmp_path):
+    from datetime import timedelta
+
+    from pennybot.config import TradingConfig
+    from pennybot.trading.risk import Risk
+    t = TradingConfig(max_daily_loss_usd=1e9, max_weekly_loss_usd=0, loss_streak_stop=3)
+    j = Journal(tmp_path / "r.db")
+    risk = Risk(t, j, Control(tmp_path))
+    base = et(5, 0)
+
+    def trade(i, exit_px, when):
+        tid = j.open_trade(strategy="runner_overnight", symbol=f"S{i}", trade_date="2026-10-21", planned_qty=10,
+                           stop=0.5, target=2, sell_from=base, deadline=base, reason="", now=base)
+        j.record_entry_fill(tid, 10, 1.0, "DAY", when)
+        j.record_exit_fill(tid, 10, exit_px, "PRE", when)
+
+    for i in range(3):
+        trade(i, 0.9, base + timedelta(minutes=i))
+    assert "연속 손실" in risk.can_enter("runner_overnight", "NEW", "2026-10-22", [], now=base + timedelta(hours=1))
+    assert risk.can_enter("runner_overnight", "NEW", "2026-10-22", [], now=base + timedelta(hours=25)) is None
+    trade(9, 1.2, base + timedelta(minutes=9))           # 이익 한 번이면 연속 끊김
+    assert risk.can_enter("runner_overnight", "NEW", "2026-10-22", [], now=base + timedelta(hours=1)) is None
+    t.max_weekly_loss_usd = 2                            # 7일 순손실 ≈ −1$ (−3 + 2) → 한도 2$ 안
+    assert risk.cooldown(base + timedelta(hours=1)) is None
+    t.max_weekly_loss_usd = 0.5
+    assert "7일" in risk.cooldown(base + timedelta(hours=1))
+    assert risk.cooldown(base + timedelta(days=8)) is None
+
+
+def test_toss_warning_blocks_entry(env):
+    tr, market, mv, clock, j, ctl, ex = env
+    mv.warnings = lambda sym: ["VI_DYNAMIC"] if sym == "PEN" else []
+    market.set("PEN", 1.03, 1.035)
+    tr.tick()
+    assert not j.q("SELECT * FROM trades")
+    assert any("VI_DYNAMIC" in r["reason"] for r in j.q("SELECT reason FROM signals"))
+
+
+def test_market_view_warnings_active_only(tmp_path):
+    from datetime import datetime, timezone
+
+    from pennybot.sessions import SessionCalendar
+    from pennybot.trading.market import MarketView
+
+    class C:
+        calls = 0
+
+        def warnings(self, sym):
+            C.calls += 1
+            return [{"warningType": "INVESTMENT_WARNING", "startDate": "2026-10-20", "endDate": None},
+                    {"warningType": "VI_STATIC", "startDate": "2026-10-01", "endDate": "2026-10-02"}]
+    now = [datetime(2026, 10, 22, 3, tzinfo=timezone.utc)]
+    mv = MarketView(":memory:", C(), SessionCalendar(), None, clock=lambda: now[0])
+    assert mv.warnings("X") == ["INVESTMENT_WARNING"]
+    mv.warnings("X")
+    assert C.calls == 1                                  # 5분 캐시

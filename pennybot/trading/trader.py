@@ -469,6 +469,18 @@ class Trader:
             return False, f"{sym} 데이마켓 {(b.mid / pc - 1) * 100:+.1f}%"
         return True, ""
 
+    def _warning(self, symbol: str) -> str | None:
+        """토스 매수 유의사항 (VI 발동·투자경고·정리매매 등). 조회 실패면 통과."""
+        fn = getattr(self.mv, "warnings", None)
+        if fn is None:
+            return None
+        try:
+            w = fn(symbol)
+        except Exception as e:
+            log.debug("유의사항 조회 실패 %s: %s", symbol, e)
+            return None
+        return ("토스 매수 유의: " + ", ".join(w)) if w else None
+
     def _unrealized(self, open_trades: list[dict]) -> float:
         total = 0.0
         for t in open_trades:
@@ -513,7 +525,8 @@ class Trader:
         acct = self.account()
         unrealized = self._unrealized(open_trades) if any(p.ok for p in plans) else 0.0
         for p in sorted((p for p in plans if p.ok), key=lambda p: p.score, reverse=True):
-            block = self.risk.can_enter(p.strategy, p.symbol, str(trade_date), open_trades, unrealized)
+            block = self.risk.can_enter(p.strategy, p.symbol, str(trade_date), open_trades, unrealized, now) \
+                or self._warning(p.symbol)
             qty = 0 if block else self.risk.size(p.strategy, p.price, p.stop, acct)
             if not block and qty > 0:
                 # 호가 잔량이 얇으면 수량을 줄인다: 최우선 매도 잔량 ≥ 주문의 min_book_ratio
