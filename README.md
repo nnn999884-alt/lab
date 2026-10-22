@@ -10,8 +10,15 @@
 
 처음 한 번만 1~7, 그다음부터는 `start.bat` 더블클릭이면 됩니다. (맥은 `.bat` 대신 터미널에서 `bash setup.sh`, `./pennybot.sh`, `./start.sh`)
 
-1. **코드 받기**: [이 브랜치 페이지](https://github.com/nnn999884-alt/lab/tree/claude/elegant-galileo-1nmavv) → 초록색 **Code** → **Download ZIP**
-   → 압축을 `C:\pennybot` 처럼 경로에 한글·공백 없는 곳에 풉니다.
+1. **코드 받기 (git 으로, 권장)**: [Git](https://git-scm.com/download/win) 설치 후 명령 프롬프트에서
+   ```
+   cd C:\
+   git clone -b claude/elegant-galileo-1nmavv https://github.com/nnn999884-alt/lab.git pennybot
+   ```
+   비공개 저장소라 처음에 GitHub 로그인 창이 뜹니다. 이후 새 버전은 **`update.bat` 더블클릭**이면 받아집니다
+   (`.env`, `config.yaml`, `state` 폴더는 그대로 유지).
+   - git 없이: [브랜치 페이지](https://github.com/nnn999884-alt/lab/tree/claude/elegant-galileo-1nmavv) → **Code** → **Download ZIP**
+     → `C:\pennybot` 처럼 경로에 한글·공백 없는 곳에 풀기 (업데이트 때마다 다시 받아야 함)
 2. **파이썬 설치**: <https://www.python.org/downloads/> 에서 3.12 설치. 첫 화면의 **Add python.exe to PATH** 체크.
 3. **`setup.bat` 더블클릭**: 패키지를 설치하고 `.env`(비밀값 파일)를 메모장으로 엽니다. 아직 키가 없으면 그냥 닫아도 됩니다.
 4. **미리보기 (키 없이)**: 폴더 주소창에 `cmd` 입력 후 Enter → 검은 창에서 `pennybot.bat dashboard --demo`
@@ -35,7 +42,7 @@
 
 - 컴퓨터가 잠들면 멈춥니다: Windows **설정 > 시스템 > 전원**에서 절전을 "안 함"으로. 봇은 한국 오전 9~10시(데이마켓 시작)부터
   다음 날 새벽(정규장 개장 30~60분 뒤)까지 일하고, 수집기는 24시간 켜 두는 게 좋습니다.
-- 새 버전 받기: ZIP을 새로 받아 풀고, 예전 폴더의 `.env`, `config.yaml`, `state` 폴더를 새 폴더로 복사 → `setup.bat` 한 번 더.
+- 새 버전 받기: git 으로 받았으면 `update.bat`. ZIP 이면 새로 받아 풀고 예전 폴더의 `.env`, `config.yaml`, `state` 를 복사 → `setup.bat`.
 - 실거래는 모의매매로 충분히 확인한 뒤에만: `config.yaml`의 `mode: live` + `.env`의 `PENNYBOT_LIVE_CONFIRM=YES`.
 
 ## 지금 단계: 세션별 데이터 수집
