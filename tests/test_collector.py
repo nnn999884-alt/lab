@@ -177,3 +177,34 @@ def test_calendar_refresh_called_once_per_date():
     for _ in range(50):
         cal.classify(old)
     assert Counting.n == 1
+
+
+def test_record_runners_with_dilution_profile(tmp_path):
+    from pennybot.dilution import Profile
+
+    class Fund:
+        def shares(self, s, d): return 2_000_000
+        def profile(self, s, px, d): return Profile(score=15, bucket="low", recent_positive=["ATM_TERMINATED"])
+        def flags(self, s, d, has_cat): return [] if has_cat else ["공시·촉매 없는 급등"]
+
+    class Toss(FakeToss):
+        def candles(self, symbol, interval, count, before=None):
+            if interval == "1d":
+                return {"candles": [{"timestamp": "2026-10-21T00:00:00-04:00", "openPrice": "0.8",
+                                     "highPrice": "1.30", "lowPrice": "0.75", "closePrice": "1.25",
+                                     "volume": "6000000"}]}
+            return super().candles(symbol, interval, count, before)
+
+    store = Store(tmp_path / "m.db")
+    col = Collector(Toss(), store, SessionCalendar(Toss()), CollectorConfig(), None, fundamentals=Fund())
+    rows = []
+    for d, pen, flat in [("2026-10-20", 0.80, 2.0), ("2026-10-21", 1.25, 2.1)]:
+        rows += [{"symbol": "PEN", "ts": f"{d}T19:59:00+00:00", "trade_date": d, "session": "REGULAR",
+                  "last": pen, "price_ts": None},
+                 {"symbol": "FLAT", "ts": f"{d}T19:59:00+00:00", "trade_date": d, "session": "REGULAR",
+                  "last": flat, "price_ts": None}]
+    store.put_prices(rows)
+    col.record_runners("2026-10-21")
+    r = store.query("SELECT symbol, round(change_pct), round(close_loc, 2), rotation, dilution_bucket, "
+                    "dilution_reasons, pump_flags FROM runners")
+    assert r == [("PEN", 56.0, 0.91, 3.0, "low", "ATM_TERMINATED", "공시·촉매 없는 급등")]

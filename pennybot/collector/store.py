@@ -36,10 +36,23 @@ CREATE TABLE IF NOT EXISTS session_summary (
     first_trade TEXT, last_trade TEXT, bars INTEGER,
     spread_med_pct REAL, quotes INTEGER, quotes_empty INTEGER,
     PRIMARY KEY (symbol, trade_date, session));
+CREATE TABLE IF NOT EXISTS runners (
+    trade_date TEXT, symbol TEXT, prev_close REAL, close REAL, change_pct REAL,
+    high REAL, low REAL, volume REAL, close_loc REAL, shares REAL, rotation REAL,
+    dilution_score REAL, dilution_bucket TEXT, dilution_reasons TEXT, pump_flags TEXT,
+    PRIMARY KEY (trade_date, symbol));
 CREATE INDEX IF NOT EXISTS ix_bars_day ON bars_1m (trade_date, session);
 CREATE INDEX IF NOT EXISTS ix_quotes_day ON quotes (trade_date, session);
 CREATE INDEX IF NOT EXISTS ix_prices_day ON prices (trade_date, session);
 """
+
+
+# 예전 DB 에 나중에 추가된 컬럼
+MIGRATIONS = [
+    ("filings", "events", "TEXT"),        # 희석 이벤트 (쉼표 구분)
+    ("filings", "direction", "INTEGER"),  # +1 호재 / −1 악재 / 0
+    ("filings", "amount", "REAL"),        # 공모 금액(달러)
+]
 
 
 class Store:
@@ -48,6 +61,11 @@ class Store:
         self.db = sqlite3.connect(str(path))
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript(SCHEMA)
+        for table, col, typ in MIGRATIONS:
+            cols = {r[1] for r in self.db.execute(f"PRAGMA table_info({table})")}
+            if col not in cols:
+                self.db.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
+        self.db.commit()
 
     def _put(self, table: str, rows: list[dict]) -> int:
         if not rows:
@@ -64,6 +82,19 @@ class Store:
     def put_bars(self, rows): return self._put("bars_1m", rows)
     def put_rankings(self, rows): return self._put("rankings", rows)
     def put_filings(self, rows): return self._put("filings", rows)
+    def put_runners(self, rows): return self._put("runners", rows)
+
+    def runner_candidates(self, trade_date: str, prev_date: str, min_pct: float) -> list[tuple]:
+        """정규장 마지막 현재가 기준으로 전 영업일 대비 min_pct% 이상 오른 종목 → (symbol, prev_close, close)."""
+        return self.query("""
+            WITH last AS (
+              SELECT p.symbol, p.trade_date, p.last FROM prices p
+              JOIN (SELECT symbol, trade_date, MAX(ts) AS ts FROM prices
+                    WHERE session='REGULAR' AND trade_date IN (?, ?) GROUP BY symbol, trade_date) m
+                ON p.symbol=m.symbol AND p.ts=m.ts)
+            SELECT a.symbol, b.last, a.last FROM last a JOIN last b ON a.symbol=b.symbol
+            WHERE a.trade_date=? AND b.trade_date=? AND b.last > 0 AND a.last / b.last - 1 >= ?""",
+                          (trade_date, prev_date, trade_date, prev_date, min_pct / 100))
 
     def query(self, sql: str, args=()) -> list[tuple]:
         return self.db.execute(sql, args).fetchall()

@@ -85,8 +85,17 @@ class EdgarClient:
         f = j["fields"]
         return [dict(zip(f, row)) for row in j["data"]]
 
+    def submissions(self, cik: int) -> dict:
+        """회사 정보(주소·설립지 등) + 최근 공시 목록 원본."""
+        return self._get(SUBMISSIONS_URL.format(cik=cik)).json()
+
     def filings(self, cik: int) -> list[Filing]:
-        return parse_submissions(self._get(SUBMISSIONS_URL.format(cik=cik)).json())
+        return parse_submissions(self.submissions(cik))
+
+    def document(self, cik: int, f: Filing) -> str:
+        """공시 본문(주 문서) 원문."""
+        return self._get(ARCHIVE_URL.format(cik=cik, acc=f.accession.replace("-", ""),
+                                            doc=f.primary_doc.split("/")[-1])).text
 
     def current(self, form: str) -> list[dict]:
         return parse_current_atom(self._get(CURRENT_URL.format(form=form)).text)

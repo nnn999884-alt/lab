@@ -38,7 +38,8 @@ def test_read_endpoints(server):
     ov = get(base + "/api/overview")
     assert ov["mode"] == "paper" and ov["open_trades"] == 3
     st = {s["strategy"]: s for s in get(base + "/api/strategies")}
-    assert set(st) == {"opening_premium", "filing_reaction", "day_dip"} and st["day_dip"]["trades"] == 12
+    assert set(st) == {"runner_overnight", "dilution_catalyst", "day_ignition", "day_dip"}
+    assert st["day_ignition"]["trades"] == 12 and st["day_dip"]["config_enabled"] is False
     pos = get(base + "/api/positions")
     assert {p["symbol"] for p in pos} == {"PENX", "BIOZ", "NANO"}
     assert any("unrealized" in p for p in pos)
@@ -47,6 +48,11 @@ def test_read_endpoints(server):
     res = get(base + "/api/research")
     assert res and any(r["attention"]["n"] for r in res)
     assert len(get(base + "/api/equity?days=1")) > 100
+    rn = get(base + "/api/runners")
+    assert rn["rows"] and {b["bucket"] for b in rn["by_bucket"]} >= {"low", "high"}
+    assert all("open" in r["ret"] for r in rn["rows"])
+    ev = get(base + "/api/dilution")
+    assert any(e["events"] == "ATM_TERMINATED" and e["direction"] == 1 for e in ev)
     with urllib.request.urlopen(base + "/") as r:
         assert b"Pennybot" in r.read()
 

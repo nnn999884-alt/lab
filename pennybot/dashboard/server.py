@@ -156,6 +156,41 @@ class Data:
         return {"trade_date": d, "sessions": list(per.values()), "last": last,
                 "filings": f[0] if f else None, "universe": u[0] if u else None}
 
+    # ---------- 급등주 추적 ----------
+    def runners(self, days: int = 10) -> dict:
+        """급등주 기록 + 다음 영업일 결과(급등일 종가 대비 데이마켓 마지막·프리마켓 마지막·정규장 첫 가격)."""
+        dates = [r["trade_date"] for r in self.m(
+            "SELECT DISTINCT trade_date FROM runners ORDER BY trade_date DESC LIMIT ?", (days,))]
+        rows = []
+        for d in dates:
+            nxt = self.m("SELECT MIN(trade_date) AS d FROM prices WHERE trade_date > ?", (d,))
+            nd = nxt[0]["d"] if nxt else None
+            for r in self.m("SELECT * FROM runners WHERE trade_date=? ORDER BY change_pct DESC", (d,)):
+                out = {}
+                if nd:
+                    for key, sess, order in (("day", "DAY", "DESC"), ("pre", "PRE", "DESC"), ("open", "REGULAR", "ASC")):
+                        q = self.m(f"SELECT last FROM prices WHERE symbol=? AND trade_date=? AND session=? "
+                                   f"ORDER BY ts {order} LIMIT 1", (r["symbol"], nd, sess))
+                        out[key] = (q[0]["last"] / r["close"] - 1) if q and r["close"] else None
+                rows.append({**r, "next_date": nd, "ret": out})
+        buckets: dict[str, list] = {}
+        for r in rows:
+            v = r["ret"].get("open")
+            if v is not None:
+                buckets.setdefault(r.get("dilution_bucket") or "unknown", []).append(v)
+        summary = []
+        for b in ("low", "mid", "high", "unknown"):
+            xs = sorted(buckets.get(b, []))
+            summary.append({"bucket": b, "n": len(xs), "mean": sum(xs) / len(xs) if xs else None,
+                            "median": xs[len(xs) // 2] if xs else None,
+                            "hit": sum(1 for x in xs if x > 0) / len(xs) if xs else None})
+        return {"rows": rows, "by_bucket": summary}
+
+    def dilution_events(self, limit: int) -> list[dict]:
+        return self.m("""SELECT symbol, form, items, events, direction, amount, accepted, session, trade_date,
+                         insider_buy_usd FROM filings WHERE (events IS NOT NULL AND events != '')
+                            OR insider_buy_usd > 0 ORDER BY accepted DESC LIMIT ?""", (limit,))
+
     # ---------- 핵심 가설 점검 ----------
     def research(self, days: int = 20) -> list[dict]:
         """영업일별: 직전 영업일 주목 종목(랭킹)의 '데이마켓 종가 → 정규장 시가' 수익률 vs 나머지 종목."""
@@ -215,6 +250,8 @@ class Handler(BaseHTTPRequestHandler):
             "/api/signals": lambda: d.signals(n("limit", 200)),
             "/api/collector": lambda: d.collector(),
             "/api/research": lambda: d.research(n("days", 20)),
+            "/api/runners": lambda: d.runners(n("days", 10)),
+            "/api/dilution": lambda: d.dilution_events(n("limit", 60)),
         }
         if u.path in routes:
             try:

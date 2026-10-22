@@ -12,7 +12,7 @@ from pathlib import Path
 from ..collector.store import Store
 from ..trading.journal import Journal, now_iso
 
-STRATS = ["opening_premium", "filing_reaction", "day_dip"]
+STRATS = ["runner_overnight", "dilution_catalyst", "day_ignition"]
 
 
 def build(state_dir: str | Path = "state_demo", seed: int = 7) -> tuple[str, str]:
@@ -35,12 +35,12 @@ def build(state_dir: str | Path = "state_demo", seed: int = 7) -> tuple[str, str
 
     # 청산된 매매
     syms = ["ABCD", "PENX", "LOWQ", "MICR", "TINY", "BIOZ", "NANO", "QBIT", "ZAPP", "GLDN"]
-    sessions = {"opening_premium": "PRE", "filing_reaction": "PRE", "day_dip": "PRE"}
+    sessions = {s: "PRE" for s in STRATS}
     for i in range(36):
         s = STRATS[i % 3]
         sym = rnd.choice(syms)
         entry = round(rnd.uniform(0.6, 4.5), 4)
-        drift = {"opening_premium": 0.012, "filing_reaction": 0.02, "day_dip": -0.004}[s]
+        drift = {"runner_overnight": 0.015, "dilution_catalyst": 0.02, "day_ignition": -0.004}[s]
         exit_ = round(entry * (1 + rnd.gauss(drift, 0.05)), 4)
         qty = int(250 / entry)
         day = now - timedelta(days=7 - i // 6)
@@ -52,7 +52,7 @@ def build(state_dir: str | Path = "state_demo", seed: int = 7) -> tuple[str, str
         j.record_exit_fill(tid, qty, exit_, sessions[s], day + timedelta(hours=7))
 
     # 보유 중 2건 + 대기 주문 1건
-    for sym, s, px in [("PENX", "opening_premium", 1.12), ("BIOZ", "filing_reaction", 2.31)]:
+    for sym, s, px in [("PENX", "runner_overnight", 1.12), ("BIOZ", "dilution_catalyst", 2.31)]:
         tid = j.open_trade(strategy=s, symbol=sym, trade_date=now.date().isoformat(), planned_qty=200,
                            stop=px * 0.94, target=px * 1.08, sell_from=now + timedelta(hours=6),
                            deadline=now + timedelta(hours=8), reason="예시 데이터", now=now)
@@ -62,7 +62,7 @@ def build(state_dir: str | Path = "state_demo", seed: int = 7) -> tuple[str, str
                     trade_id=tid, purpose="entry", session="DAY", now=now, note="예시 데이터")
         st.put_prices([{"symbol": sym, "ts": now_iso(now), "trade_date": now.date().isoformat(), "session": "DAY",
                         "last": px * (1 + rnd.gauss(0.01, 0.02)), "price_ts": None}])
-    tid = j.open_trade(strategy="day_dip", symbol="NANO", trade_date=now.date().isoformat(), planned_qty=300,
+    tid = j.open_trade(strategy="day_ignition", symbol="NANO", trade_date=now.date().isoformat(), planned_qty=300,
                        stop=0.7, target=0.9, sell_from=now + timedelta(hours=3), deadline=now + timedelta(hours=8),
                        reason="예시 데이터", now=now)
     j.log_order({"order_id": "demo-open", "symbol": "NANO", "side": "BUY", "type": "LIMIT", "qty": 300,
@@ -70,9 +70,11 @@ def build(state_dir: str | Path = "state_demo", seed: int = 7) -> tuple[str, str
                 trade_id=tid, purpose="entry", session="DAY", now=now, note="예시 데이터")
 
     # 전략 후보
-    reasons_ok = ["전일 랭킹 3위, 데이마켓 +2.1%", "내부자 장내매수 $42,000, 반영 +1.2%", "공시 없이 -14.2% 급락 후 하락 멈춤"]
-    reasons_no = ["데이마켓 호가 없음", "스프레드 4.2%", "희석/상폐 공시: 차단:424B5 증자공시 12일 전", "전일 종가 대비 +22.4% (범위 밖)",
-                  "5일 +78% (군중 쏠림)", "리스크: 전략 동시 보유 한도"]
+    reasons_ok = ["전날 +62%, 회전 3.1회, 데이마켓 +2.1%, 희석 18점", "ATM 종료 (데이마켓 공개), 반영 +4.2%, 희석 12점 [ATM_TERMINATED]",
+                  "내부자 장내매수, 데이마켓 +7.5%, 희석 25점"]
+    reasons_no = ["데이마켓 호가 없음", "스프레드 4.2%", "희석 위험 75점 (ATM 진행 중, 최근 6일 내 증자)", "급등 후 증자 공시 나옴",
+                  "펌프 위험 신호: 상장 1년 이내, 해외 발행사(K3), 발행주식 1,500만 주 미만", "전날 +41%였지만 고가 대비 밀려 마감",
+                  "리스크: 전략 동시 보유 한도"]
     j.log_signals([{"ts": now_iso(now), "trade_date": now.date().isoformat(), "session": "DAY", "strategy": STRATS[i % 3],
                     "symbol": rnd.choice(syms), "ok": int(i < 3), "reason": reasons_ok[i] if i < 3 else rnd.choice(reasons_no),
                     "score": rnd.uniform(0, 50), "price": rnd.uniform(0.5, 4)} for i in range(18)])
@@ -108,5 +110,38 @@ def build(state_dir: str | Path = "state_demo", seed: int = 7) -> tuple[str, str
                 st.db.execute("INSERT OR REPLACE INTO session_summary (symbol, trade_date, session, open, high, low, close, "
                               "volume, bars) VALUES (?,?,?,?,?,?,?,?,?)", (s, ds, sess, o, max(o, c), min(o, c), c, 1000, 10))
         st.db.commit()
+    # 급등주와 다음 날 흐름: 희석 위험 낮은 급등주가 더 잘 버티는 것처럼 보이게 만든 예시
+    events = [("ATM_TERMINATED", 1), ("REGISTERED_DIRECT,SECURITIES_PURCHASE_AGREEMENT", -1), ("ATM_NEW", -1),
+              ("REGISTRATION_WITHDRAWN", 1), ("WARRANT_INDUCEMENT,WARRANT_REPRICE", -1), ("MATERIAL_CONTRACT", 1)]
+    for k in range(10):
+        day = (now - timedelta(days=12 - k)).date()
+        if day.weekday() >= 4:
+            continue
+        ds, nd = day.isoformat(), (day + timedelta(days=1)).isoformat()
+        runners, prices = [], []
+        for n in range(rnd.randint(2, 5)):
+            sym = f"R{k}{n}"
+            score = rnd.choice([10, 20, 30, 50, 70, 85])
+            bucket = "low" if score < 35 else "high" if score >= 60 else "mid"
+            close = rnd.uniform(0.8, 4)
+            runners.append({"trade_date": ds, "symbol": sym, "prev_close": close / 1.6, "close": close,
+                            "change_pct": rnd.uniform(30, 180), "high": close * 1.05, "low": close / 1.7,
+                            "volume": 8e6, "close_loc": rnd.uniform(0.4, 1), "shares": 4e6, "rotation": rnd.uniform(0.5, 6),
+                            "dilution_score": score, "dilution_bucket": bucket,
+                            "dilution_reasons": {"low": "ATM_TERMINATED", "mid": "증자 등록(S-3) 유효",
+                                                 "high": "ATM 진행 중, 최근 5일 내 증자"}[bucket],
+                            "pump_flags": rnd.choice(["", "", "상장 1년 이내", "해외 발행사(K3), 발행주식 1,500만 주 미만"])})
+            drift = {"low": 0.04, "mid": 0.0, "high": -0.06}[bucket]
+            for sess, hh, m in [("DAY", "07", 0.5), ("PRE", "13", 0.8), ("REGULAR", "13", 1.0)]:
+                prices.append({"symbol": sym, "ts": f"{nd}T{hh}:{'29' if sess != 'REGULAR' else '31'}:00+00:00",
+                               "trade_date": nd, "session": sess, "last": close * (1 + rnd.gauss(drift * m, 0.05)),
+                               "price_ts": None})
+        st.put_runners(runners)
+        st.put_prices(prices)
+    st.put_filings([{"accession": f"demo-{i}", "cik": i, "symbol": rnd.choice(syms), "form": "8-K", "items": "",
+                     "accepted": now_iso(now - timedelta(hours=3 * i)), "trade_date": now.date().isoformat(),
+                     "session": rnd.choice(["DAY", "AFTER", "PRE"]), "insider_buy_usd": None,
+                     "events": ev, "direction": dr, "amount": 4.5e6 if dr < 0 else None}
+                    for i, (ev, dr) in enumerate(events)])
     (d / "control.json").write_text(json.dumps({"kill": False, "flatten": False, "strategies": {}}))
     return str(d / "trading.db"), str(d / "market.db")

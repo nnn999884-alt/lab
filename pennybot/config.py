@@ -83,6 +83,7 @@ class CollectorConfig:
     candle_sync_minutes: int = 30    # 감시 종목 1분봉 동기화 주기 (세션 종료 시에도 실행)
     ranking_poll_minutes: int = 10
     edgar_poll_minutes: int = 5
+    runner_min_pct: float = 30.0     # 정규장 종가 기준 이만큼 오른 종목을 급등주로 기록
     universe_refresh_hours: int = 24
 
 
@@ -112,17 +113,25 @@ class TradingConfig:
     regime_drop_pct: float = 1.5         # 데이마켓 중 IWM 이 전일 종가 대비 이만큼 빠지면 신규 매수 중단
     notify_webhook: str = ""             # 디스코드/슬랙 웹훅 (환경변수 PENNYBOT_WEBHOOK 우선)
     strategies: dict = field(default_factory=lambda: {
-        "opening_premium": {"enabled": True, "budget_pct": 0.40, "max_positions": 4,
-                            "take_profit_pct": 8.0, "stop_loss_pct": 6.0,
-                            "min_change_pct": -5.0, "max_change_pct": 15.0,
-                            "sell_before_open_minutes": 30},
-        "filing_reaction": {"enabled": True, "budget_pct": 0.30, "max_positions": 3,
-                            "take_profit_pct": 10.0, "stop_loss_pct": 7.0,
-                            "min_insider_usd": 10000, "max_runup_pct": 10.0,
-                            "sell_before_open_minutes": 120},
-        "day_dip": {"enabled": True, "budget_pct": 0.30, "max_positions": 3,
-                    "dip_pct": 12.0, "stop_loss_pct": 8.0, "retrace": 0.5,
-                    "no_news_days": 3, "stall_minutes": 10},
+        # gap_risk_pct: 밤사이 최악의 갭(%) — 수량은 손절폭이 아니라 이 갭을 기준으로 정한다
+        "runner_overnight": {"enabled": True, "budget_pct": 0.40, "max_positions": 4,
+                             "min_runner_pct": 30.0, "min_close_loc": 0.6, "min_rotation": 0.3,
+                             "min_day_change_pct": -8.0, "max_day_change_pct": 15.0,
+                             "max_dilution_score": 45, "take_profit_pct": 12.0, "stop_loss_pct": 10.0,
+                             "gap_risk_pct": 35.0, "sell_before_open_minutes": 30,
+                             "exit_after_open_minutes": 30},
+        "dilution_catalyst": {"enabled": True, "budget_pct": 0.30, "max_positions": 3,
+                              "max_runup_pct": 15.0, "max_dilution_score": 50,
+                              "take_profit_pct": 10.0, "stop_loss_pct": 8.0, "gap_risk_pct": 25.0,
+                              "sell_before_open_minutes": 90},
+        "day_ignition": {"enabled": True, "budget_pct": 0.30, "max_positions": 3,
+                         "min_insider_usd": 10000, "min_move_pct": 5.0, "max_move_pct": 25.0,
+                         "max_pullback_pct": 4.0, "max_dilution_score": 50,
+                         "take_profit_pct": 10.0, "stop_loss_pct": 7.0, "gap_risk_pct": 25.0,
+                         "sell_before_open_minutes": 150},
+        "day_dip": {"enabled": False, "budget_pct": 0.10, "max_positions": 2,
+                    "dip_pct": 12.0, "stop_loss_pct": 8.0, "retrace": 0.5, "take_profit_pct": 10.0,
+                    "no_news_days": 3, "stall_minutes": 10, "gap_risk_pct": 25.0},
     })
 
 

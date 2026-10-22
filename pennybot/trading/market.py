@@ -102,17 +102,52 @@ class MarketView:
         return [(s, r) for s, r in rows]
 
     def filings_since(self, since: datetime) -> list[dict]:
-        rows = self.q("""SELECT symbol, form, items, accepted, session, trade_date, insider_buy_usd
+        rows = self.q("""SELECT symbol, form, items, accepted, session, trade_date, insider_buy_usd, events, direction
                          FROM filings WHERE accepted >= ? ORDER BY accepted""",
                       (_utc(since),))
-        keys = ("symbol", "form", "items", "accepted", "session", "trade_date", "insider_buy_usd")
+        keys = ("symbol", "form", "items", "accepted", "session", "trade_date", "insider_buy_usd", "events",
+                "direction")
         return [dict(zip(keys, r)) for r in rows]
 
     def filings_for(self, symbol: str, days: int, now: datetime) -> list[dict]:
         since = _utc(now - timedelta(days=days))
-        rows = self.q("""SELECT form, items, accepted FROM filings WHERE symbol=? AND accepted >= ?""",
+        rows = self.q("""SELECT form, items, accepted, events FROM filings WHERE symbol=? AND accepted >= ?""",
                       (symbol, since))
-        return [{"form": f, "items": i or "", "accepted": a} for f, i, a in rows]
+        return [{"form": f, "items": i or "", "accepted": a, "events": e or ""} for f, i, a, e in rows]
+
+    # ---------- 급등주 ----------
+    def runners(self, trade_date: date) -> list[dict]:
+        """수집기가 기록한 급등주 (정규장 종가 기준). 기록이 없으면 현재가 기록으로 바로 계산."""
+        keys = ("symbol", "prev_close", "close", "change_pct", "high", "low", "volume", "close_loc",
+                "dilution_score", "pump_flags")
+        rows = self.q(f"SELECT {', '.join(keys)} FROM runners WHERE trade_date=? ORDER BY change_pct DESC",
+                      (trade_date.isoformat(),))
+        if rows:
+            return [dict(zip(keys, r)) for r in rows]
+        prev = self.prev_trade_date(trade_date)
+        if not prev:
+            return []
+        rows = self.q("""
+            WITH last AS (
+              SELECT p.symbol, p.trade_date, p.last FROM prices p
+              JOIN (SELECT symbol, trade_date, MAX(ts) AS ts FROM prices
+                    WHERE session='REGULAR' AND trade_date IN (?, ?) GROUP BY symbol, trade_date) m
+                ON p.symbol=m.symbol AND p.ts=m.ts)
+            SELECT a.symbol, b.last, a.last FROM last a JOIN last b ON a.symbol=b.symbol
+            WHERE a.trade_date=? AND b.trade_date=? AND b.last > 0 AND a.last / b.last - 1 >= 0.2
+            ORDER BY a.last / b.last DESC""",
+                      (trade_date.isoformat(), prev.isoformat(), trade_date.isoformat(), prev.isoformat()))
+        return [{"symbol": s, "prev_close": pc, "close": c, "change_pct": (c / pc - 1) * 100, "volume": None,
+                 "close_loc": None} for s, pc, c in rows]
+
+    def toss_hot(self, trade_date: date, top: int = 30) -> list[str]:
+        """이번 데이마켓의 최신 '토스증권 거래대금' 실시간 랭킹 (한국 개인 매수가 몰리는 종목)."""
+        r = self.q("""SELECT MAX(ts) FROM rankings WHERE trade_date=? AND session='DAY'
+                      AND type='TOSS_SECURITIES_TRADING_AMOUNT'""", (trade_date.isoformat(),))
+        if not r or not r[0][0]:
+            return []
+        return [s for (s,) in self.q("""SELECT symbol FROM rankings WHERE ts=? AND type='TOSS_SECURITIES_TRADING_AMOUNT'
+                                       AND rank <= ? ORDER BY rank""", (r[0][0], top))]
 
     def book(self, symbol: str):
         return self.ex.book(symbol)

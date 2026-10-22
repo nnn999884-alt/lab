@@ -10,7 +10,7 @@
   --surface-0: #f4f3f0; --surface-1: #fcfcfb; --border: #e3e2dd;
   --text-primary: #0b0b0b; --text-secondary: #52514e; --text-muted: #7a7974;
   --grid: #ecebe7; --axis: #b9b8b2;
-  --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a;
+  --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a; --series-4: #eda100;
   --good: #0ca30c; --warning: #fab219; --serious: #ec835a; --critical: #d03b3b;
   --good-text: #006300; --critical-text: #b22a2a;
   --btn: #ffffff; --btn-hover: #f0efec;
@@ -21,7 +21,7 @@
     --surface-0: #121211; --surface-1: #1a1a19; --border: #2e2e2c;
     --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #8f8e86;
     --grid: #2a2a28; --axis: #55544f;
-    --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70;
+    --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500;
     --good-text: #4cc94c; --critical-text: #ef7a7a;
     --btn: #232321; --btn-hover: #2c2c2a;
   }
@@ -31,7 +31,7 @@
   --surface-0: #121211; --surface-1: #1a1a19; --border: #2e2e2c;
   --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #8f8e86;
   --grid: #2a2a28; --axis: #55544f;
-  --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70;
+  --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500;
   --good-text: #4cc94c; --critical-text: #ef7a7a;
   --btn: #232321; --btn-hover: #2c2c2a;
 }
@@ -163,6 +163,25 @@ details summary { cursor: pointer; color: var(--text-secondary); font-size: 12.5
     <div class="tablewrap" style="max-height:360px"><table id="signals"></table></div>
   </section>
 
+  <section class="card">
+    <h2>급등주 추적</h2>
+    <p class="sub">정규장 종가 기준 +30% 이상 오른 종목과 다음 영업일 흐름 (급등일 종가 대비)</p>
+    <div class="grid two">
+      <div>
+        <h2 style="font-size:13px">희석 위험별 다음 날 정규장 첫 가격 평균 수익률</h2>
+        <div class="chart" id="runner-chart"></div>
+      </div>
+      <div class="tablewrap"><table id="runner-buckets"></table></div>
+    </div>
+    <div class="tablewrap" style="max-height:420px;margin-top:12px"><table id="runners"></table></div>
+  </section>
+
+  <section class="card">
+    <h2>희석 이벤트</h2>
+    <p class="sub">공시 본문으로 판정한 증자 관련 사건. ▲ 호재(희석 해소), ▼ 악재(희석)</p>
+    <div class="tablewrap" style="max-height:360px"><table id="dilution"></table></div>
+  </section>
+
   <section class="grid two">
     <div class="card">
       <h2>세션별 호가 확보율</h2>
@@ -172,7 +191,7 @@ details summary { cursor: pointer; color: var(--text-secondary); font-size: 12.5
         <p class="sub" id="coll-last"></p></details>
     </div>
     <div class="card">
-      <h2>핵심 가설 점검: 개장 프리미엄</h2>
+      <h2>가설 점검: 주목 종목의 개장 프리미엄</h2>
       <p class="sub">전날 주목 종목의 데이마켓 종가 → 정규장 시가 평균 수익률 (영업일별)</p>
       <div class="chart" id="research-chart"></div>
       <details><summary>표로 보기 · 주목 종목 vs 나머지</summary><div class="tablewrap"><table id="research"></table></div></details>
@@ -184,12 +203,18 @@ details summary { cursor: pointer; color: var(--text-secondary); font-size: 12.5
 <script>
 "use strict";
 const SESS = { DAY: "데이마켓", PRE: "프리마켓", REGULAR: "정규장", AFTER: "애프터마켓", CLOSED: "휴장" };
-const STRAT = { opening_premium: "개장 프리미엄", filing_reaction: "공시 반응", day_dip: "데이마켓 급락 반등" };
-const STRAT_COLOR = { opening_premium: "--series-1", filing_reaction: "--series-2", day_dip: "--series-3" };
+const STRAT = { runner_overnight: "러너 오버나이트", dilution_catalyst: "희석 해소 촉매", day_ignition: "데이마켓 점화", day_dip: "데이마켓 급락 반등" };
+const STRAT_COLOR = { runner_overnight: "--series-1", dilution_catalyst: "--series-2", day_ignition: "--series-3", day_dip: "--series-4" };
+const EVENT = { ATM_TERMINATED: "ATM 종료", OFFERING_TERMINATED: "공모 철회", REGISTRATION_WITHDRAWN: "증자 등록 철회", BUYBACK: "자사주 매입",
+  COMPLIANCE_REGAINED: "상장 요건 회복", MATERIAL_CONTRACT: "중요 계약", ATM_NEW: "ATM 신규", REGISTERED_DIRECT: "등록 직접 공모",
+  PUBLIC_OFFERING: "공모", PRIVATE_PLACEMENT: "사모", SECURITIES_PURCHASE_AGREEMENT: "증권매매계약", EQUITY_LINE: "주식 매수 약정",
+  WARRANT_INDUCEMENT: "워런트 행사 유도", WARRANT_REPRICE: "워런트 행사가 인하", CONVERTIBLE: "전환사채", REVERSE_SPLIT: "액면병합",
+  TAKEDOWN: "증자 실행", SHELF_FILED: "증자 등록(S-3)", OFFERING_FILED: "공모 신고(S-1)", REGISTRATION_EFFECTIVE: "등록 효력 발생", DELISTING_NOTICE: "상폐 통지" };
+const BUCKET = { low: "희석 위험 낮음", mid: "중간", high: "높음", unknown: "프로필 없음" };
 const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 const $ = id => document.getElementById(id);
-const fmtUsd = (v, sign) => v == null ? "-" : (sign && v > 0 ? "+" : v < 0 ? "−" : "") + "$" + Math.abs(v).toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 2 });
-const fmtPct = (v, d = 1) => v == null ? "-" : (v > 0 ? "+" : v < 0 ? "−" : "") + Math.abs(v).toFixed(d) + "%";
+const fmtUsd = (v, sign) => { if (v == null) return "-"; const r = Math.round(v * 100) / 100; return (sign && r > 0 ? "+" : r < 0 ? "−" : "") + "$" + Math.abs(r).toLocaleString(undefined, { maximumFractionDigits: 2, minimumFractionDigits: 2 }); };
+const fmtPct = (v, d = 1) => { if (v == null) return "-"; const r = +v.toFixed(d); return (r > 0 ? "+" : r < 0 ? "−" : "") + Math.abs(r).toFixed(d) + "%"; };
 const fmtPx = v => v == null ? "-" : (v < 1 ? v.toFixed(4) : v.toFixed(2));
 const kst = s => s ? new Date(s).toLocaleString("ko-KR", { timeZone: "Asia/Seoul", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }) : "-";
 const ago = s => { if (!s) return null; return Math.round((Date.now() - new Date(s)) / 1000); };
@@ -465,6 +490,41 @@ async function loadResearch() {
   ], rows.slice().reverse());
 }
 
+async function loadRunners() {
+  const [r, ev] = await Promise.all([api("/api/runners?days=10"), api("/api/dilution?limit=60")]);
+  const order = ["low", "mid", "high", "unknown"];
+  const bs = r.by_bucket.filter(b => b.n || b.bucket !== "unknown");
+  barChart($("runner-chart"), bs.map(b => ({ label: BUCKET[b.bucket], v: b.mean == null ? null : b.mean * 100,
+    tip: [["", b.mean == null ? "-" : fmtPct(b.mean * 100, 2), css("--series-1")], ["", BUCKET[b.bucket]], ["급등주", b.n + "개"],
+      ["중앙값", b.median == null ? "-" : fmtPct(b.median * 100, 2)], ["오른 비율", b.hit == null ? "-" : Math.round(b.hit * 100) + "%"]] })),
+    { valueFmt: v => fmtPct(v, 1), empty: "급등주 기록이 쌓이면 표시됩니다 (애프터마켓 종료 후 기록)." });
+  table($("runner-buckets"), [
+    { h: "희석 위험", f: b => BUCKET[b.bucket] }, { h: "급등주", num: 1, f: b => b.n },
+    { h: "평균", num: 1, f: b => b.mean == null ? null : fmtPct(b.mean * 100, 2), tone: b => tone(b.mean) },
+    { h: "중앙값", num: 1, f: b => b.median == null ? null : fmtPct(b.median * 100, 2), tone: b => tone(b.median) },
+    { h: "오른 비율", num: 1, f: b => b.hit == null ? null : Math.round(b.hit * 100) + "%" },
+  ], r.by_bucket.slice().sort((a, b) => order.indexOf(a.bucket) - order.indexOf(b.bucket)));
+  const rp = (row, k) => row.ret[k] == null ? null : row.ret[k] * 100;
+  table($("runners"), [
+    { h: "급등일", f: x => x.trade_date }, { h: "종목", f: x => x.symbol }, { h: "상승률", num: 1, f: x => fmtPct(x.change_pct, 0) },
+    { h: "마감 위치", num: 1, f: x => x.close_loc == null ? null : Math.round(x.close_loc * 100) + "%" },
+    { h: "회전", num: 1, f: x => x.rotation == null ? null : x.rotation.toFixed(1) + "회" },
+    { h: "희석 점수", num: 1, f: x => x.dilution_score == null ? null : Math.round(x.dilution_score) },
+    { h: "희석 사유", f: x => (x.dilution_reasons || "").split(", ").map(k => EVENT[k] || k).join(", ") || null },
+    { h: "펌프 신호", f: x => x.pump_flags || null },
+    { h: "다음날 데이", num: 1, f: x => fmtPct(rp(x, "day")), tone: x => tone(rp(x, "day")) },
+    { h: "프리 마지막", num: 1, f: x => fmtPct(rp(x, "pre")), tone: x => tone(rp(x, "pre")) },
+    { h: "정규장 첫", num: 1, f: x => fmtPct(rp(x, "open")), tone: x => tone(rp(x, "open")) },
+  ], r.rows, "급등주 기록 없음");
+  table($("dilution"), [
+    { h: "접수", f: x => kst(x.accepted) }, { h: "종목", f: x => x.symbol }, { h: "양식", f: x => x.form },
+    { h: "방향", f: x => x.direction > 0 ? "▲ 호재" : x.direction < 0 ? "▼ 악재" : "–", tone: x => tone(x.direction) },
+    { h: "이벤트", f: x => (x.events || "").split(",").filter(Boolean).map(k => EVENT[k] || k).join(", ") || (x.insider_buy_usd ? `내부자 매수 ${fmtUsd(x.insider_buy_usd)}` : null) },
+    { h: "금액", num: 1, f: x => x.amount ? "$" + (x.amount / 1e6).toFixed(1) + "M" : null },
+    { h: "공개 세션", f: x => SESS[x.session] || x.session },
+  ], ev, "희석 이벤트 없음 (SEC_USER_AGENT 를 설정하면 공시 본문까지 판정합니다)");
+}
+
 async function control(body) {
   try { await api("/api/control", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); }
   catch (e) { alert("제어 실패: " + e.message); }
@@ -488,7 +548,7 @@ try { const t = localStorage.getItem("theme"); if (t) document.documentElement.d
 
 async function refresh() {
   document.querySelector("main").classList.add("loading");
-  const jobs = [loadOverview(), loadEquity(), loadStrategies(), loadTables(), loadCollector(), loadResearch()];
+  const jobs = [loadOverview(), loadEquity(), loadStrategies(), loadTables(), loadRunners(), loadCollector(), loadResearch()];
   const res = await Promise.allSettled(jobs);
   res.filter(r => r.status === "rejected").forEach(r => console.warn(r.reason));
   document.querySelector("main").classList.remove("loading");

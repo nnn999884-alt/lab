@@ -48,6 +48,7 @@ class Trader:
     control: Control
     notifier: Notifier = field(default_factory=Notifier)
     clock: object = field(default=lambda: datetime.now(timezone.utc))
+    fund: object = None          # Fundamentals: 희석 프로필·펌프 신호 (없으면 수집기 공시만으로 판단)
 
     def __post_init__(self):
         self.risk = Risk(self.tcfg, self.journal, self.control)
@@ -224,7 +225,7 @@ class Trader:
 
     def scan_and_enter(self, now: datetime, trade_date, session: str) -> None:
         open_trades = self.journal.open_trades()
-        ctx = Ctx(now, trade_date, session, self.cal, self.mv, self.tcfg,
+        ctx = Ctx(now, trade_date, session, self.cal, self.mv, self.tcfg, fund=self.fund,
                   held={t["symbol"] for t in open_trades})
         ok, why = self._regime_ok(ctx)
         self.status["regime"] = why or "정상"

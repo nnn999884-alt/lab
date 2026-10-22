@@ -30,15 +30,19 @@ class FakeMarket:
 class FakeMV:
     def __init__(self, market):
         self.m = market
-        self.attn = [("PEN", 3)]
-        self.closes = {"PEN": 1.00, "IWM": 200.0, "DIP": 2.00}
+        # 전날 +45% 급등, 고가권 마감, 거래량 400만 주
+        self.run = [{"symbol": "PEN", "prev_close": 0.70, "close": 1.02, "change_pct": 45.7,
+                     "volume": 4_000_000, "close_loc": 0.85}]
+        self.closes = {"PEN": 1.02, "IWM": 200.0, "DIP": 2.00}
         self.filings = []
         self.recent = {}
         self.latest = {}
         self.path = []
+        self.hot = []
 
     def prev_trade_date(self, d): return PREV
-    def attention(self, prev, limit=60): return self.attn
+    def runners(self, d): return self.run
+    def toss_hot(self, d): return self.hot
     def prev_close(self, sym, d, allow_api=True): return self.closes.get(sym)
     def ret_5d(self, sym, d): return 0.1
     def filings_for(self, sym, days, now): return self.recent.get(sym, [])
@@ -48,19 +52,37 @@ class FakeMV:
     def book(self, sym): return self.m.book(sym)
 
 
+class FakeProfile:
+    def __init__(self, score, reasons=(), positive=()):
+        self.score, self.reasons, self.recent_positive = score, list(reasons), list(positive)
+
+
+class FakeFund:
+    def __init__(self):
+        self.scores = {}
+        self.flag_map = {}
+        self.share_map = {"PEN": 5_000_000}
+
+    def profile(self, sym, price, d): return FakeProfile(self.scores.get(sym, 20))
+    def flags(self, sym, d, has_catalyst): return self.flag_map.get(sym, [])
+    def shares(self, sym, d): return self.share_map.get(sym)
+
+
 @pytest.fixture
 def env(tmp_path):
     market = FakeMarket()
     market.set("IWM", 199.9, 200.1)
     clock = [et(1, 0)]                       # 데이마켓 (한국 14:00)
     tcfg = TradingConfig(paper_cash=10_000)
-    tcfg.strategies["filing_reaction"]["enabled"] = False
-    tcfg.strategies["day_dip"]["enabled"] = False
+    tcfg.strategies["dilution_catalyst"]["enabled"] = False
+    tcfg.strategies["day_ignition"]["enabled"] = False
     ex = PaperExchange(market, 10_000, tmp_path / "paper.json")
     j = Journal(tmp_path / "t.db")
     ctl = Control(tmp_path)
     mv = FakeMV(market)
-    tr = Trader(ex, j, SessionCalendar(), mv, tcfg, ctl, clock=lambda: clock[0])
+    fund = FakeFund()
+    tr = Trader(ex, j, SessionCalendar(), mv, tcfg, ctl, clock=lambda: clock[0], fund=fund)
+    tr.fake_fund = fund
     return tr, market, mv, clock, j, ctl, ex
 
 
@@ -70,10 +92,11 @@ def test_full_cycle_day_buy_premarket_sell(env):
     tr.tick()
     t = j.q("SELECT * FROM trades")[0]
     assert t["status"] == "OPEN" and t["entry_session"] == "DAY" and t["qty"] > 0
-    assert t["qty"] * 1.035 <= 300                     # 종목당 상한 $300
+    # 수량: 최악의 갭 35% 기준 손실 ≤ 계좌 1%($100) → 100 / (1.035×0.35) ≈ 276주
+    assert t["qty"] == int(100 // (1.035 * 0.35))
     # 프리마켓 초반: 아직 매도 구간 전, 손절·익절도 아님 → 유지
     clock[0] = et(6, 0)
-    market.set("PEN", 1.05, 1.07)
+    market.set("PEN", 1.05, 1.06)
     tr.tick()
     assert j.q("SELECT status FROM trades")[0]["status"] == "OPEN"
     # 개장 30분 전(09:00 ET)부터 매도 구간 → bid 에 매도
@@ -104,9 +127,9 @@ def test_stop_loss_and_forced_market_exit(env):
     tr, market, mv, clock, j, ctl, ex = env
     market.set("PEN", 1.03, 1.035)
     tr.tick()
-    # 손절가 아래로 → 공격적 지정가 (bid × 0.99) 로 즉시 매도
+    # 손절가(−10%) 아래로 → 공격적 지정가 (bid × 0.99) 로 즉시 매도
     clock[0] = et(5, 0)
-    market.set("PEN", 0.90, 0.92)
+    market.set("PEN", 0.88, 0.90)
     tr.tick()
     t = j.q("SELECT * FROM trades")[0]
     assert t["status"] == "CLOSED" and t["exit_reason"] == "손절" and t["pnl"] < 0
@@ -151,37 +174,61 @@ def test_regime_gate(env):
     assert "IWM" in tr.status["regime"]
 
 
-def test_filters_reject_dilution_and_chase(env):
+def test_runner_filters(env):
     tr, market, mv, clock, j, ctl, ex = env
-    mv.attn = [("PEN", 1), ("HOT", 2)]
-    mv.closes["HOT"] = 1.0
+    mv.run = [
+        {"symbol": "PEN", "prev_close": 0.7, "close": 1.02, "change_pct": 45, "volume": 4e6, "close_loc": 0.9},
+        {"symbol": "FADE", "prev_close": 1.0, "close": 1.4, "change_pct": 40, "volume": 4e6, "close_loc": 0.2},
+        {"symbol": "THIN", "prev_close": 1.0, "close": 1.5, "change_pct": 50, "volume": 1e5, "close_loc": 0.9},
+        {"symbol": "DILU", "prev_close": 1.0, "close": 1.5, "change_pct": 50, "volume": 9e6, "close_loc": 0.9},
+        {"symbol": "PUMP", "prev_close": 1.0, "close": 2.0, "change_pct": 100, "volume": 9e6, "close_loc": 0.9},
+        {"symbol": "OFFR", "prev_close": 1.0, "close": 1.5, "change_pct": 50, "volume": 9e6, "close_loc": 0.9},
+    ]
+    f = tr.fake_fund
+    f.share_map.update({"THIN": 5e6, "DILU": 5e6, "PUMP": 5e6, "OFFR": 5e6, "FADE": 5e6})
+    f.scores["DILU"] = 75
+    f.flag_map["PUMP"] = ["상장 1년 이내", "해외 발행사(K3)", "발행주식 1,500만 주 미만"]
+    mv.recent["OFFR"] = [{"form": "8-K", "items": "1.01", "accepted": et(0, 0).isoformat(),
+                          "events": "REGISTERED_DIRECT,SECURITIES_PURCHASE_AGREEMENT"}]
     market.set("PEN", 1.03, 1.035)
-    market.set("HOT", 1.30, 1.32)             # +31% → 추격 금지
-    mv.recent["PEN"] = [{"form": "424B5", "items": "", "accepted": et(0, 0).isoformat()}]
+    for s in ("FADE", "THIN", "DILU", "OFFR"):
+        market.set(s, 1.50, 1.51)
+    market.set("PUMP", 2.0, 2.01)
     tr.tick()
     sig = {r["symbol"]: r["reason"] for r in j.q("SELECT symbol, reason FROM signals")}
-    assert "희석" in sig["PEN"] and "범위 밖" in sig["HOT"]
-    assert j.q("SELECT COUNT(*) AS n FROM trades")[0]["n"] == 0
+    assert "밀려 마감" in sig["FADE"]
+    assert "회전" in sig["THIN"]
+    assert "희석 위험 75점" in sig["DILU"]
+    assert "펌프 위험" in sig["PUMP"]
+    assert "증자 공시" in sig["OFFR"]
+    assert [t["symbol"] for t in j.q("SELECT symbol FROM trades")] == ["PEN"]
 
 
-def test_filing_reaction_and_day_dip(env):
+def test_dilution_catalyst_and_ignition(env):
     tr, market, mv, clock, j, ctl, ex = env
-    tr.tcfg.strategies["opening_premium"]["enabled"] = False
-    tr.tcfg.strategies["filing_reaction"]["enabled"] = True
-    tr.tcfg.strategies["day_dip"]["enabled"] = True
-    mv.closes["INS"] = 2.0
-    market.set("INS", 2.05, 2.08)
-    mv.filings = [{"symbol": "INS", "form": "4", "items": "", "accepted": "", "session": "AFTER",
-                   "trade_date": str(PREV), "insider_buy_usd": 50_000}]
-    market.set("DIP", 1.70, 1.71)
-    mv.latest = {"DIP": 1.70}
-    mv.path = [1.9, 1.8, 1.6, 1.55, 1.6, 1.62, 1.65, 1.66, 1.68, 1.70] * 2   # 저점 후 반등 중
-    tr.tcfg.strategies["day_dip"]["stall_minutes"] = 5
+    tr.tcfg.strategies["runner_overnight"]["enabled"] = False
+    tr.tcfg.strategies["dilution_catalyst"]["enabled"] = True
+    tr.tcfg.strategies["day_ignition"]["enabled"] = True
+    mv.closes.update({"ATMX": 1.50, "IGN": 2.0})
+    market.set("ATMX", 1.58, 1.59)                     # +6%: 아직 덜 반영
+    market.set("IGN", 2.20, 2.21)
+    mv.filings = [
+        {"symbol": "ATMX", "form": "8-K", "items": "1.02", "accepted": "", "session": "DAY",
+         "trade_date": str(D), "insider_buy_usd": None, "events": "ATM_TERMINATED", "direction": 1},
+        {"symbol": "IGN", "form": "4", "items": "", "accepted": "", "session": "DAY",
+         "trade_date": str(D), "insider_buy_usd": 60_000, "events": "", "direction": 1},
+    ]
+    mv.path = [2.0, 2.02, 2.05, 2.1, 2.15, 2.18, 2.2]   # 데이마켓에서 +10% 움직이는 중
     tr.tick()
     rows = {r["symbol"]: r for r in j.q("SELECT * FROM trades")}
-    assert rows["INS"]["strategy"] == "filing_reaction"
-    assert rows["DIP"]["strategy"] == "day_dip"
-    assert rows["DIP"]["target"] > 1.70 and datetime.fromisoformat(rows["DIP"]["deadline"]) <= et(9, 30)
+    assert rows["ATMX"]["strategy"] == "dilution_catalyst" and "ATM 종료" in rows["ATMX"]["reason"]
+    assert rows["IGN"]["strategy"] == "day_ignition" and "내부자" in rows["IGN"]["reason"]
+
+
+def test_day_dip_off_by_default(env):
+    tr, *_ = env
+    assert tr.tcfg.strategies["day_dip"]["enabled"] is False
+    assert not tr.risk.strategy_enabled("day_dip")[0]
 
 
 def test_restart_recovers_working_orders(env, tmp_path):
@@ -202,18 +249,18 @@ def test_risk_sizing_daily_loss_and_auto_disable(tmp_path):
     tcfg = TradingConfig()
     j = Journal(tmp_path / "r.db")
     risk = Risk(tcfg, j, Control(tmp_path))
-    # 계좌 1만$: 전략 예산 4000/4=1000, 계좌 5%=500, 종목 상한 300 → $300, 손절 위험 1%=100$
-    assert risk.size("opening_premium", 1.0, 0.94, Account(10_000, 10_000)) == 300
-    assert risk.size("opening_premium", 1.0, 0.50, Account(10_000, 10_000)) == 200   # 100$ / 0.5
+    # 계좌 1만$: 금액 상한 $300, 갭 35% 기준 손실 ≤ $100 → 100 / 0.35 = 285주
+    assert risk.size("runner_overnight", 1.0, 0.90, Account(10_000, 10_000)) == 285
+    assert risk.size("runner_overnight", 1.0, 0.50, Account(10_000, 10_000)) == 200   # 손절폭 0.5 > 갭 0.35
     for i in range(20):
-        tid = j.open_trade(strategy="day_dip", symbol=f"S{i}", trade_date=str(D), planned_qty=10,
+        tid = j.open_trade(strategy="day_ignition", symbol=f"S{i}", trade_date=str(D), planned_qty=10,
                            stop=0.9, target=1.2, sell_from=et(4, 0), deadline=et(9, 30), reason="", now=et(1, 0))
         j.record_entry_fill(tid, 10, 1.0, "DAY", et(1, 0))
         j.record_exit_fill(tid, 10, 0.98, "PRE", et(5, 0))
-    ok, why = risk.strategy_enabled("day_dip")
+    ok, why = risk.strategy_enabled("day_ignition")
     assert not ok and "자동 정지" in why
     tcfg.max_daily_loss_usd = 3
-    assert risk.can_enter("opening_premium", "X", str(D), []) == "영업일 손실 한도 도달"
+    assert risk.can_enter("runner_overnight", "X", str(D), []) == "영업일 손실 한도 도달"
 
 
 def test_paper_partial_fill_and_reject():

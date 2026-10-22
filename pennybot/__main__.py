@@ -32,6 +32,15 @@ def _feed(cfg: Config):
     return TossBroker(make_client(cfg)) if cfg.toss.client_id else YahooFeed()
 
 
+def _fundamentals(cfg: Config, client):
+    """SEC_USER_AGENT 가 있으면 공시 본문 판정(희석 분석)까지, 없으면 None."""
+    from .dilution import DilutionService
+    from .trading.fundamentals import Fundamentals
+    edgar = _edgar(cfg)
+    dil = DilutionService(edgar, f"{cfg.state_dir}/edgar_cache") if edgar else None
+    return dil, Fundamentals(client, dil)
+
+
 def _edgar(cfg: Config):
     from .screener.edgar import EdgarClient
     if not cfg.sec_user_agent:
@@ -73,7 +82,9 @@ def cmd_collect(cfg: Config, once: bool) -> None:
     from .collector import Collector, Store
     from .sessions import SessionCalendar
     client = make_client(cfg)
-    col = Collector(client, Store(cfg.collector.db_path), SessionCalendar(client), cfg.collector, _edgar(cfg))
+    dil, fund = _fundamentals(cfg, client)
+    col = Collector(client, Store(cfg.collector.db_path), SessionCalendar(client), cfg.collector,
+                    dil.edgar if dil else None, dilution=dil, fundamentals=fund)
     if once:
         col.tick()
     else:
@@ -106,9 +117,10 @@ def cmd_trade(cfg: Config, once: bool) -> None:
                         cfg.collector.db_path)
         from .collector import Store
         Store(cfg.collector.db_path)
+    _, fund = _fundamentals(cfg, client)
     trader = Trader(ex, Journal(t.db_path, mode=cfg.mode), cal,
                     MarketView(cfg.collector.db_path, client, cal, ex), t, Control(cfg.state_dir),
-                    Notifier(t.notify_webhook))
+                    Notifier(t.notify_webhook), fund=fund)
     if once:
         trader.tick()
     else:

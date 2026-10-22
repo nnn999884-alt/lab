@@ -58,8 +58,9 @@ class Risk:
         budget = acct.equity * p["budget_pct"] / p["max_positions"]
         dollars = min(budget, acct.equity * self.t.max_position_pct, self.t.max_position_usd, acct.cash * 0.98)
         qty = int(dollars // price) if price > 0 else 0
-        risk = price - stop
+        # 1주당 위험 = 손절폭과 '밤사이 최악의 갭' 중 큰 쪽. 급등주는 손절가를 건너뛰어 열리기 때문
+        risk = max(price - stop, price * p.get("gap_risk_pct", 0) / 100)
         if risk > 0:
-            remaining_loss = self.t.max_daily_loss_usd  # 손절 1번이 계좌의 risk_per_trade 를 넘지 않게
-            qty = min(qty, int(min(acct.equity * self.t.risk_per_trade_pct, remaining_loss) // risk))
+            max_loss = min(acct.equity * self.t.risk_per_trade_pct, self.t.max_daily_loss_usd)
+            qty = min(qty, int(max_loss // risk))
         return max(qty, 0)

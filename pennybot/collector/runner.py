@@ -18,6 +18,7 @@ import time
 from datetime import datetime, timedelta, timezone
 
 from ..config import CollectorConfig
+from ..dilution import classify
 from ..screener import edgar as ed
 from ..sessions import AFTER, CLOSED, SessionCalendar
 from ..toss_api import TossApiError
@@ -31,7 +32,7 @@ RANKINGS = [  # (type, duration)
     ("TOP_GAINERS", "1d"),
     ("TOP_LOSERS", "1d"),
 ]
-EDGAR_FORMS = ["4", "8-K", "424B4", "424B5", "424B3", "S-1", "S-3"]
+EDGAR_FORMS = ["4", "8-K", "6-K", "424B4", "424B5", "424B3", "S-1", "F-1", "S-3", "F-3", "RW", "EFFECT"]
 MAX_CANDLE_PAGES = 8   # 200봉 × 8 = 약 26시간 (하루 4 세션 전체)
 
 
@@ -42,9 +43,11 @@ def iso(ts: datetime) -> str:
 class Collector:
     def __init__(self, client, store: Store, calendar: SessionCalendar, cfg: CollectorConfig,
                  edgar_client: ed.EdgarClient | None = None,
-                 clock=lambda: datetime.now(timezone.utc)):
+                 clock=lambda: datetime.now(timezone.utc), dilution=None, fundamentals=None):
         self.c, self.store, self.cal, self.cfg = client, store, calendar, cfg
         self.edgar = edgar_client
+        self.dilution = dilution          # DilutionService: 공시 본문으로 희석 이벤트 판정
+        self.fund = fundamentals          # Fundamentals: 급등주 희석 프로필·펌프 신호
         self.clock = clock
         self.universe: dict[str, dict] = {}       # symbol -> {market, name, last}
         self.cik_to_symbol: dict[int, str] = {}
@@ -243,15 +246,25 @@ class Collector:
                     continue
                 self._seen_accessions.add(f["accession"])
                 d, sess = self.cal.classify(f["accepted"])
-                # 피드에는 8-K 항목·Form 4 금액이 없어서 submissions 에서 보충한다
+                # 피드에는 8-K 항목·Form 4 금액·본문이 없어서 submissions 와 원문에서 보충한다
                 detail = self._lookup(f["cik"], f["accession"])
                 buy = None
                 if f["form"] == "4" and detail:
                     buy = self._safe(lambda: ed.insider_buy_usd(self.edgar.form4_xml(f["cik"], detail)))
+                evs = []
+                if detail and f["form"] != "4":
+                    if self.dilution:
+                        evs = self._safe(lambda: self.dilution._events_for(f["cik"], detail)) or []
+                    else:
+                        evs = classify(detail.form, detail.items, "", detail.filed, detail.accession)
+                direction = (1 if sum(e.direction for e in evs) > 0 else -1 if sum(e.direction for e in evs) < 0
+                             else 0) if evs else (1 if buy and buy > 0 else 0)
                 rows.append({"accession": f["accession"], "cik": f["cik"], "symbol": sym, "form": f["form"],
                              "items": detail.items if detail else "", "accepted": iso(f["accepted"]),
                              "trade_date": d.isoformat() if d else None, "session": sess,
-                             "insider_buy_usd": buy})
+                             "insider_buy_usd": buy, "events": ",".join(sorted({e.kind for e in evs})),
+                             "direction": direction,
+                             "amount": max((e.amount or 0 for e in evs), default=0) or None})
                 self.recent_filers[sym] = now
         if rows:
             self.store.put_filings(rows)
@@ -272,3 +285,42 @@ class Collector:
     def summarize(self, trade_date: str) -> None:
         n = self.store.summarize(trade_date)
         log.info("세션 요약 %s: %d행", trade_date, n)
+        self._run("runners", self.record_runners, trade_date)
+
+    def record_runners(self, trade_date: str) -> None:
+        """정규장 종가 기준 급등주를 기록하고, 희석 프로필·펌프 신호를 함께 남긴다 (다음 날 결과와 비교용)."""
+        r = self.store.query("SELECT MAX(trade_date) FROM prices WHERE trade_date < ? AND session='REGULAR'",
+                             (trade_date,))
+        prev = r[0][0] if r else None
+        if not prev:
+            return
+        day = datetime.fromisoformat(trade_date).date()
+        rows = []
+        for sym, pc, close in self.store.runner_candidates(trade_date, prev, self.cfg.runner_min_pct):
+            row = {"trade_date": trade_date, "symbol": sym, "prev_close": pc, "close": close,
+                   "change_pct": (close / pc - 1) * 100, "high": None, "low": None, "volume": None,
+                   "close_loc": None, "shares": None, "rotation": None, "dilution_score": None,
+                   "dilution_bucket": None, "dilution_reasons": None, "pump_flags": None}
+            try:
+                for cd in (self.c.candles(sym, "1d", 3) or {}).get("candles", []):
+                    if cd["timestamp"][:10] == trade_date:
+                        h, lo, v = float(cd["highPrice"]), float(cd["lowPrice"]), float(cd["volume"])
+                        row.update(high=h, low=lo, volume=v,
+                                   close_loc=(close - lo) / (h - lo) if h > lo else None)
+            except TossApiError as e:
+                log.debug("급등주 일봉 실패 %s: %s", sym, e)
+            if self.fund:
+                sh = self.fund.shares(sym, day)
+                row["shares"] = sh
+                if sh and row["volume"]:
+                    row["rotation"] = row["volume"] / sh
+                prof = self.fund.profile(sym, close, day)
+                if prof:
+                    row.update(dilution_score=prof.score, dilution_bucket=prof.bucket,
+                               dilution_reasons=", ".join(prof.reasons + prof.recent_positive))
+                has_cat = bool(self.store.query("SELECT 1 FROM filings WHERE symbol=? AND trade_date=?",
+                                                (sym, trade_date)))
+                row["pump_flags"] = ", ".join(self.fund.flags(sym, day, has_cat))
+            rows.append(row)
+        self.store.put_runners(rows)
+        log.info("급등주 %s: %d종목 (+%.0f%% 이상)", trade_date, len(rows), self.cfg.runner_min_pct)
