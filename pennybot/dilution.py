@@ -131,6 +131,53 @@ def classify(form: str, items: str, text: str, filed: date, accession: str = "")
     return out
 
 
+# ---------- 재무 (XBRL companyfacts): 현금 소진 시점 · 워런트 ----------
+CASH_TAGS = [("us-gaap", "CashAndCashEquivalentsAtCarryingValue"),
+             ("us-gaap", "CashCashEquivalentsRestrictedCashAndRestrictedCashEquivalents"),
+             ("us-gaap", "Cash"), ("ifrs-full", "CashAndCashEquivalents")]
+OPCF_TAGS = [("us-gaap", "NetCashProvidedByUsedInOperatingActivities"),
+             ("ifrs-full", "CashFlowsFromUsedInOperatingActivities")]
+WARRANT_TAGS = [("us-gaap", "ClassOfWarrantOrRightOutstanding")]
+WARRANT_PRICE_TAGS = [("us-gaap", "ClassOfWarrantOrRightExercisePriceOfWarrantsOrRights")]
+
+
+def _entries(facts: dict, tags, today: date) -> list[dict]:
+    """as-of today 기준으로 이미 제출된 값만 (백테스트에서 미래 재무제표를 보지 않게)."""
+    out = []
+    for ns, tag in tags:
+        units = ((facts.get("facts") or {}).get(ns) or {}).get(tag, {}).get("units", {})
+        for vals in units.values():
+            for v in vals:
+                filed = v.get("filed")
+                if filed and date.fromisoformat(filed) <= today and v.get("val") is not None:
+                    out.append(v)
+        if out:
+            break
+    return out
+
+
+def financials(facts: dict, today: date) -> dict:
+    cash = max(_entries(facts, CASH_TAGS, today), key=lambda v: v["end"], default=None)
+    burn = None
+    flows = [v for v in _entries(facts, OPCF_TAGS, today) if v.get("start")]
+    if flows:
+        v = max(flows, key=lambda v: (v["end"], v["start"]))
+        months = (date.fromisoformat(v["end"]) - date.fromisoformat(v["start"])).days / 30.44
+        if months >= 2.5:
+            burn = max(-float(v["val"]) / months, 0.0)     # 월 현금 소진 (양수 = 쓰는 중)
+    out = {"cash": float(cash["val"]) if cash else None, "cash_date": cash["end"] if cash else None,
+           "burn_month": burn, "runway_months": None,
+           "warrants": None, "warrant_price": None}
+    if cash and burn:
+        elapsed = (today - date.fromisoformat(cash["end"])).days / 30.44
+        out["runway_months"] = max(float(cash["val"]) - burn * elapsed, 0.0) / burn
+    w = max(_entries(facts, WARRANT_TAGS, today), key=lambda v: v["end"], default=None)
+    wp = max(_entries(facts, WARRANT_PRICE_TAGS, today), key=lambda v: v["end"], default=None)
+    out["warrants"] = float(w["val"]) if w else None
+    out["warrant_price"] = float(wp["val"]) if wp else None
+    return out
+
+
 @dataclass
 class Profile:
     """회사의 증자 여력·이력 요약. score 0~100: 높을수록 지금 주식을 팔 가능성이 크다."""
@@ -144,12 +191,16 @@ class Profile:
     days_since_financing: int | None = None
     recent_positive: list[str] = field(default_factory=list)
     reasons: list[str] = field(default_factory=list)
+    runway_months: float | None = None
+    warrants: float | None = None
+    warrant_price: float | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)
 
 
-def build_profile(events: list[Event], today: date, market_cap: float | None) -> Profile:
+def build_profile(events: list[Event], today: date, market_cap: float | None, fin: dict | None = None,
+                  price: float | None = None, shares: float | None = None) -> Profile:
     p = Profile()
     evs = sorted(events, key=lambda e: e.filed)
     shelf_at = atm_at = None
@@ -164,10 +215,10 @@ def build_profile(events: list[Event], today: date, market_cap: float | None) ->
             atm_at = None
     p.shelf_active = bool(shelf_at and (today - shelf_at).days <= 3 * 365)
     p.atm_active = bool(atm_at)
-    fin = [e for e in evs if e.direction < 0 and (e.kind in FINANCING or e.kind in ("TAKEDOWN", "PUBLIC_OFFERING"))]
-    if fin:
-        p.days_since_financing = (today - fin[-1].filed).days
-    p.raised_12m = sum(e.amount or 0 for e in fin if (today - e.filed).days <= 365)
+    raises = [e for e in evs if e.direction < 0 and (e.kind in FINANCING or e.kind in ("TAKEDOWN", "PUBLIC_OFFERING"))]
+    if raises:
+        p.days_since_financing = (today - raises[-1].filed).days
+    p.raised_12m = sum(e.amount or 0 for e in raises if (today - e.filed).days <= 365)
     if market_cap is not None:
         # 유통 시가총액 7,500만 달러 미만이면 S-3 로 12개월에 유통주식 가치의 1/3 까지만 팔 수 있다 (baby shelf)
         p.baby_shelf = market_cap < 75e6
@@ -194,6 +245,22 @@ def build_profile(events: list[Event], today: date, market_cap: float | None) ->
         s += 10; p.reasons.append("최근 액면병합")
     if "OFFERING_FILED" in {e.kind for e in cutoff(120)}:
         s += 15; p.reasons.append("공모 신고서(S-1/F-1) 제출")
+    if fin:
+        p.runway_months, p.warrants, p.warrant_price = fin.get("runway_months"), fin.get("warrants"), \
+            fin.get("warrant_price")
+        r = p.runway_months
+        if r is not None:
+            # 현금이 곧 바닥나는 회사는 주가가 오르면 바로 판다
+            if r < 3:
+                s += 20; p.reasons.append(f"현금 {r:.1f}개월치 (증자 임박)")
+            elif r < 6:
+                s += 15; p.reasons.append(f"현금 {r:.1f}개월치")
+            elif r < 12:
+                s += 7; p.reasons.append(f"현금 {r:.0f}개월치")
+        if p.warrants and shares and p.warrants / shares >= 0.2 and \
+                (p.warrant_price is None or not price or p.warrant_price <= price * 1.3):
+            itm = " (내가격)" if p.warrant_price and price and p.warrant_price <= price else ""
+            s += 10; p.reasons.append(f"행사 가능 워런트 발행주식의 {p.warrants / shares * 100:.0f}%{itm}")
     pos = [e for e in cutoff(30) if e.direction > 0]
     if any(e.kind == "ATM_TERMINATED" for e in pos):
         s -= 30
@@ -218,6 +285,7 @@ class DilutionService:
         self.lookback = lookback_days
         self.max_texts = max_texts
         self._subs: dict[int, tuple[date, dict]] = {}
+        self._fin: dict[tuple[int, date], dict | None] = {}
 
     def submissions(self, cik: int, today: date) -> dict:
         hit = self._subs.get(cik)
@@ -292,8 +360,20 @@ class DilutionService:
                     out += classify(f.form, f.items, "", f.filed, f.accession)
         return out
 
-    def profile(self, cik: int, today: date, market_cap: float | None) -> Profile:
-        return build_profile(self.events(cik, today), today, market_cap)
+    def financials(self, cik: int, today: date) -> dict | None:
+        key = (cik, today)
+        if key not in self._fin:
+            try:
+                self._fin[key] = financials(self.edgar.companyfacts(cik), today)
+            except Exception as e:      # 재무 XBRL 이 없는 회사도 많다 (신규 상장, 일부 해외 발행사)
+                log.debug("재무 데이터 없음 %s: %s", cik, e)
+                self._fin[key] = None
+        return self._fin[key]
+
+    def profile(self, cik: int, today: date, market_cap: float | None, price: float | None = None,
+                shares: float | None = None) -> Profile:
+        return build_profile(self.events(cik, today), today, market_cap, self.financials(cik, today),
+                             price, shares)
 
     def company(self, cik: int, today: date) -> dict:
         j = self.submissions(cik, today)

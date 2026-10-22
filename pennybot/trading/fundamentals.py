@@ -53,7 +53,8 @@ class Fundamentals:
             cik = self.cik(symbol)
             sh = self.shares(symbol, today)
             try:
-                self._profile[key] = self.dil.profile(cik, today, sh * price if sh else None) if cik else None
+                self._profile[key] = self.dil.profile(cik, today, sh * price if sh else None, price, sh) \
+                    if cik else None
             except Exception as e:
                 log.warning("희석 프로필 실패 %s: %s", symbol, e)
                 self._profile[key] = None

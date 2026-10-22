@@ -157,3 +157,29 @@ def test_future_filings_ignored(tmp_path):
     e = FakeEdgar()
     svc = DilutionService(e, tmp_path)
     assert all(ev.filed <= date(2026, 6, 1) for ev in svc.events(1, date(2026, 6, 1)))
+
+
+FACTS = {"facts": {"us-gaap": {
+    "CashAndCashEquivalentsAtCarryingValue": {"units": {"USD": [
+        {"end": "2026-03-31", "val": 6_000_000, "filed": "2026-05-10"},
+        {"end": "2026-06-30", "val": 3_000_000, "filed": "2026-08-12"},
+        {"end": "2026-09-30", "val": 900_000, "filed": "2026-11-12"}]}},          # 미래 제출분 (무시해야 함)
+    "NetCashProvidedByUsedInOperatingActivities": {"units": {"USD": [
+        {"start": "2026-01-01", "end": "2026-06-30", "val": -6_000_000, "filed": "2026-08-12"},
+        {"start": "2026-04-01", "end": "2026-06-30", "val": -3_000_000, "filed": "2026-08-12"}]}},
+    "ClassOfWarrantOrRightOutstanding": {"units": {"shares": [{"end": "2026-06-30", "val": 3_000_000, "filed": "2026-08-12"}]}},
+    "ClassOfWarrantOrRightExercisePriceOfWarrantsOrRights": {"units": {"USD/shares": [
+        {"end": "2026-06-30", "val": 1.10, "filed": "2026-08-12"}]}},
+}}}
+
+
+def test_financials_runway_and_warrants():
+    from pennybot.dilution import financials
+    f = financials(FACTS, D)
+    assert f["cash"] == 3_000_000 and f["cash_date"] == "2026-06-30"        # 미래 제출분 제외
+    assert abs(f["burn_month"] - 1_000_000) < 20_000                        # 6개월 −600만$ → 월 ~100만$
+    assert 0 <= f["runway_months"] < 0.5                                     # 6/30 이후 ~3.7개월 경과 → 거의 소진
+    p = build_profile([], D, 20e6, f, price=1.20, shares=10e6)
+    assert any("증자 임박" in r for r in p.reasons)
+    assert any("워런트 발행주식의 30% (내가격)" in r for r in p.reasons)
+    assert p.score >= 50

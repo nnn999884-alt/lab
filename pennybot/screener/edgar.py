@@ -25,6 +25,7 @@ log = logging.getLogger(__name__)
 
 TICKERS_URL = "https://www.sec.gov/files/company_tickers_exchange.json"
 SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik:010d}.json"
+FACTS_URL = "https://data.sec.gov/api/xbrl/companyfacts/CIK{cik:010d}.json"   # 재무제표 XBRL 값
 ARCHIVE_URL = "https://www.sec.gov/Archives/edgar/data/{cik}/{acc}/{doc}"
 # 최신 접수 공시 Atom 피드. <updated> 에 접수 시각이 시간대와 함께 들어 있다 (세션 판정용)
 CURRENT_URL = ("https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type={form}"
@@ -88,6 +89,9 @@ class EdgarClient:
     def submissions(self, cik: int) -> dict:
         """회사 정보(주소·설립지 등) + 최근 공시 목록 원본."""
         return self._get(SUBMISSIONS_URL.format(cik=cik)).json()
+
+    def companyfacts(self, cik: int) -> dict:
+        return self._get(FACTS_URL.format(cik=cik)).json()
 
     def filings(self, cik: int) -> list[Filing]:
         return parse_submissions(self.submissions(cik))
