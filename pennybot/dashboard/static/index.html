@@ -448,7 +448,7 @@ async function loadTables() {
   table($("orders"), [
     { h: "시각", f: r => kst(r.ts) }, { h: "종목", f: r => r.symbol }, { h: "구분", f: r => (r.side === "BUY" ? "매수" : "매도") + (r.type === "MARKET" ? "(시장가)" : "") },
     { h: "수량", num: 1, f: r => r.qty }, { h: "가격", num: 1, f: r => fmtPx(r.price) }, { h: "체결", num: 1, f: r => `${r.filled || 0}/${r.qty}` },
-    { h: "상태", f: r => ({ OPEN: "대기", FILLED: "체결", CANCELED: "취소", REJECTED: "거부" })[r.status] || r.status }, { h: "세션", f: r => SESS[r.session] || r.session }, { h: "메모", f: r => r.note },
+    { h: "상태", f: r => ({ OPEN: "대기", FILLED: "체결", CANCELED: "취소", REJECTED: "거부", REPLACED: "정정됨" })[r.status] || r.status }, { h: "세션", f: r => SESS[r.session] || r.session }, { h: "메모", f: r => r.note },
   ], orders);
   table($("trades"), [
     { h: "종목", f: r => r.symbol }, { h: "전략", f: r => STRAT[r.strategy] || r.strategy }, { h: "청산", f: r => r.status === "CANCELED" ? "매수 미체결" : r.exit_reason },

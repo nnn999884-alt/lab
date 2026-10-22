@@ -323,3 +323,48 @@ def test_paper_partial_fill_and_reject():
     assert ex.order(o["order_id"])["status"] == "FILLED"
     assert ex.place("A", "SELL", 1000, 1.0)["status"] == "REJECTED"   # 보유보다 많이 매도
     assert ex.positions()["A"][0] == 250
+
+
+def test_modify_lineage_sums_fills_across_ids(env):
+    """원주문 일부 체결 → 가격 정정(새 id) → 나머지 체결. 체결 합계와 평균가가 맞아야 한다."""
+    tr, market, mv, clock, j, ctl, ex = env
+    market.set("PEN", 1.03, 1.035)
+    tr.tick()
+    qty = j.q("SELECT qty FROM trades")[0]["qty"]
+    clock[0] = et(9, 5)                              # 매도 구간
+    market.set("PEN", 1.10, 1.12, size=100)          # 첫 주문은 100주만 체결
+    tr.tick()
+    t = j.q("SELECT * FROM trades")[0]
+    assert t["remaining"] == qty - 100
+    w = next(iter(tr.working.values()))
+    market.set("PEN", 1.05, 1.06, size=10_000)       # 가격이 내려가 기존 매도가(1.10)에는 안 팔림
+    clock[0] = et(9, 6, ) + timedelta(seconds=30)    # 재호가 주기(60초) 경과 → 정정
+    tr.tick()
+    assert len(w.ids) == 2 and ex.order(w.ids[0])["status"] == "REPLACED"
+    tr.tick()
+    t = j.q("SELECT * FROM trades")[0]
+    assert t["status"] == "CLOSED" and t["exited_qty"] == qty
+    expected = (100 * 1.10 + (qty - 100) * 1.05) / qty
+    assert abs(t["exit_price"] - expected) < 1e-9
+    statuses = {r["status"] for r in j.q("SELECT status FROM orders WHERE purpose='exit'")}
+    assert statuses == {"REPLACED", "FILLED"}
+
+
+def test_cancel_rejected_is_retried(env):
+    tr, market, mv, clock, j, ctl, ex = env
+    tr.tcfg.entry_ttl_seconds = 60
+    market.set("PEN", 1.00, 1.025)                    # 미체결로 남는 매수
+    clock[0] = et(1, 0)
+    tr.tick()
+    calls = []
+    ex.cancel = lambda oid: calls.append(oid) or "cancel-1"
+    real_order = ex.order
+    ex.order = lambda oid: {"order_id": oid, "status": "REJECTED", "filled": 0, "avg_price": None} \
+        if oid == "cancel-1" else real_order(oid)
+    clock[0] = et(1, 2)
+    tr.tick()                                         # TTL 경과 → 취소 요청
+    assert len(calls) == 1
+    clock[0] = et(1, 4)
+    tr.tick()                                         # 1분 넘게 처리 중 → 취소 주문 확인 → 거부 → 재시도 가능
+    tr.tick()
+    assert len(calls) == 2

@@ -17,6 +17,7 @@ from ..toss_api import TossClient, us_price_str
 log = logging.getLogger(__name__)
 
 TERMINAL = ("FILLED", "CANCELED", "REJECTED")
+# REPLACED: 정정되어 새 주문으로 넘어간 원주문 (체결은 원주문에 남고, 나머지는 새 주문이 이어받는다)
 
 
 @dataclass
@@ -45,7 +46,10 @@ class Exchange:
     def book(self, symbol: str) -> Book: ...
     def place(self, symbol: str, side: str, qty: int, price: float | None) -> dict: ...
     def order(self, order_id: str) -> dict: ...
-    def cancel(self, order_id: str) -> None: ...
+    def cancel(self, order_id: str) -> str | None:
+        """취소 요청. 실거래는 새로 발급된 (취소) 주문 id 를 돌려준다."""
+    def modify(self, order_id: str, price: float | None) -> str:
+        """가격 정정 (None = 시장가). 정정 후 이어지는 주문의 id 를 돌려준다."""
     def open_orders(self) -> list[dict]: ...
     def positions(self) -> dict[str, tuple[int, float]]: ...
     def cash(self) -> float: ...
@@ -71,7 +75,7 @@ class TossMarket:
 
 _LIVE_STATUS = {"PENDING": "OPEN", "PENDING_CANCEL": "OPEN", "PENDING_REPLACE": "OPEN",
                 "CANCEL_REJECTED": "OPEN", "REPLACE_REJECTED": "OPEN", "PARTIAL_FILLED": "OPEN",
-                "FILLED": "FILLED", "CANCELED": "CANCELED", "REPLACED": "CANCELED", "REJECTED": "REJECTED"}
+                "FILLED": "FILLED", "CANCELED": "CANCELED", "REPLACED": "REPLACED", "REJECTED": "REJECTED"}
 
 
 class LiveExchange(Exchange):
@@ -105,7 +109,10 @@ class LiveExchange(Exchange):
         return self._norm(self.c.get_order(order_id))
 
     def cancel(self, order_id):
-        self.c.cancel_order(order_id)
+        return (self.c.cancel_order(order_id) or {}).get("orderId")
+
+    def modify(self, order_id, price):
+        return self.c.modify_order(order_id, price)["orderId"]
 
     def open_orders(self):
         return [self._norm(o) for o in (self.c.list_orders("OPEN") or {}).get("orders", [])]
@@ -142,11 +149,11 @@ class PaperExchange(Exchange):
     def book(self, symbol):
         return self.market.book(symbol)
 
-    def place(self, symbol, side, qty, price):
+    def place(self, symbol, side, qty, price, _modify=False):
         oid = f"paper-{next(self._ids)}"
         o = {"order_id": oid, "symbol": symbol, "side": side, "type": "LIMIT" if price else "MARKET",
              "qty": int(qty), "price": price, "status": "OPEN", "filled": 0, "avg_price": None}
-        if side == "SELL":
+        if side == "SELL" and not _modify:
             held = self.state["positions"].get(symbol, [0, 0])[0]
             reserved = sum(x["qty"] - x["filled"] for x in self.state["orders"].values()
                            if x["symbol"] == symbol and x["side"] == "SELL" and x["status"] == "OPEN")
@@ -210,6 +217,16 @@ class PaperExchange(Exchange):
         if o and o["status"] == "OPEN":
             o["status"] = "CANCELED"
             self._save()
+        return None
+
+    def modify(self, order_id, price):
+        """토스와 같게: 원주문은 REPLACED, 미체결 수량으로 새 주문을 만든다."""
+        o = self.state["orders"][order_id]
+        if o["status"] != "OPEN":
+            raise RuntimeError(f"정정 불가 상태: {o['status']}")
+        o["status"] = "REPLACED"
+        new = self.place(o["symbol"], o["side"], o["qty"] - o["filled"], price, _modify=True)
+        return new["order_id"]
 
     def open_orders(self):
         return [dict(o) for o in self.state["orders"].values() if o["status"] == "OPEN"]

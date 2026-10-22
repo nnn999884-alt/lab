@@ -5,6 +5,7 @@
   python -m pennybot summarize --date D    # 영업일 D(미국 날짜)의 세션 요약 다시 만들기
   python -m pennybot trade [--once]        # 세션 매매 엔진 (mode: paper 기본, live 는 이중 확인)
   python -m pennybot dashboard [--demo]    # 로컬 대시보드 http://127.0.0.1:8050 (--demo: 예시 데이터)
+  python -m pennybot probe-orders --symbol SYM --yes-real-order   # 토스 정정·취소 동작 실계좌 확인 (1주)
   python -m pennybot screen                # (구) Coil & Catalyst 스크리닝
   python -m pennybot run [--once]          # (구) 매매 루프
 """
@@ -19,7 +20,7 @@ from .brokers import PaperBroker, TossBroker
 from .config import Config, load_config
 from .data import YahooFeed
 from .engine import Engine
-from .toss_api import TossClient
+from .toss_api import TossClient, us_price_str
 
 
 def make_client(cfg: Config, role: str = "other") -> TossClient:
@@ -128,6 +129,49 @@ def cmd_trade(cfg: Config, once: bool) -> None:
         trader.run()
 
 
+def cmd_probe_orders(cfg: Config, symbol: str, confirmed: bool) -> None:
+    """토스의 정정·취소 동작을 실계좌로 한 번 확인한다.
+    시장가의 절반 가격에 1주 지정가 매수(체결되지 않을 가격) → 가격 정정 → 취소, 각 id 의 상태를 기록."""
+    import json
+    import time as _t
+    from pathlib import Path
+    if not confirmed:
+        raise SystemExit("실제 주문이 나갑니다 (1주, 체결되지 않을 가격, 곧바로 취소). "
+                         "확인했다면 --yes-real-order 를 붙여 다시 실행하세요.")
+    c = make_client(cfg)
+    ob = c.orderbook(symbol)
+    bids = ob.get("bids") or []
+    if not bids:
+        raise SystemExit(f"{symbol} 호가가 없습니다. 장이 열린 시간(데이·프리·정규)에 유동성 있는 종목으로 하세요.")
+    bid = float(bids[0]["price"])
+    log = []
+
+    def snap(label, ids):
+        for i in ids:
+            try:
+                d = c.get_order(i)
+                log.append({"step": label, "id": i, "status": d["status"],
+                            "filled": d["execution"]["filledQuantity"], "price": d.get("price")})
+            except Exception as e:
+                log.append({"step": label, "id": i, "error": str(e)})
+        print(json.dumps(log[-len(ids):], ensure_ascii=False))
+
+    o1 = c.create_order({"symbol": symbol, "side": "BUY", "orderType": "LIMIT", "quantity": "1",
+                         "price": us_price_str(max(bid * 0.5, 0.01)), "timeInForce": "DAY"})["orderId"]
+    _t.sleep(2); snap("주문", [o1])
+    o2 = c.modify_order(o1, max(bid * 0.55, 0.01))["orderId"]
+    _t.sleep(3); snap("정정 후", [o1, o2])
+    o3 = (c.cancel_order(o2) or {}).get("orderId")
+    for k in range(5):
+        _t.sleep(2); snap(f"취소 후 {2 * (k + 1)}초", [x for x in (o1, o2, o3) if x])
+    open_ids = {o["orderId"] for o in (c.list_orders("OPEN") or {}).get("orders", [])}
+    log.append({"step": "미체결 목록", "open": sorted(open_ids & {o1, o2, o3} - {None})})
+    out = Path(cfg.state_dir) / "probe_orders.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(log, ensure_ascii=False, indent=2))
+    print(f"\n결과 저장: {out} — 정정 후 원주문이 REPLACED 인지, 취소 후 어느 id 가 CANCELED 가 되는지 확인하세요.")
+
+
 def cmd_dashboard(cfg: Config, port: int, demo: bool) -> None:
     from .dashboard import serve
     if demo:
@@ -163,12 +207,15 @@ def cmd_run(cfg: Config, once: bool) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description="미국 페니주 자동매매 (토스증권)")
     ap.add_argument("command", nargs="?", default="collect",
-                    choices=["check", "accounts", "collect", "summarize", "trade", "dashboard", "screen", "run"])
+                    choices=["check", "accounts", "collect", "summarize", "trade", "dashboard", "probe-orders",
+                             "backtest", "screen", "run"])
     ap.add_argument("--config", default="config.yaml")
     ap.add_argument("--once", action="store_true", help="collect/run: 한 번만 실행")
     ap.add_argument("--date", help="summarize: 미국 영업일 YYYY-MM-DD")
     ap.add_argument("--port", type=int, default=8050, help="dashboard 포트")
     ap.add_argument("--demo", action="store_true", help="dashboard: 예시 데이터로 미리보기")
+    ap.add_argument("--symbol", help="probe-orders: 확인에 쓸 종목 (유동성 있는 종목)")
+    ap.add_argument("--yes-real-order", action="store_true", help="probe-orders: 실제 주문 확인")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
 
@@ -183,6 +230,7 @@ def main() -> None:
         "summarize": lambda: cmd_summarize(cfg, args.date),
         "trade": lambda: cmd_trade(cfg, args.once),
         "dashboard": lambda: cmd_dashboard(cfg, args.port, args.demo),
+        "probe-orders": lambda: cmd_probe_orders(cfg, args.symbol, args.yes_real_order),
         "screen": lambda: cmd_screen(cfg),
         "run": lambda: cmd_run(cfg, args.once),
     }[args.command]()

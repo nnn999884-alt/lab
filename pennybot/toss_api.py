@@ -181,7 +181,7 @@ class TossClient:
                 log.warning("한도 초과 [%s] %.1fs 대기", group, wait)
                 self._sleep(wait)
                 continue
-            # 주문 생성(POST /orders)은 재시도하면 중복 주문 위험 → 5xx 여도 재시도하지 않는다
+            # 주문 생성·정정·취소(POST /orders…)는 재시도하면 중복 위험 → 5xx 여도 재시도하지 않는다
             retry_5xx = not (method == "POST" and path.startswith("/api/v1/orders"))
             if r.status_code >= 500 and retry_5xx and attempt < retries:
                 self._sleep(min(2 ** attempt, 30))
@@ -257,7 +257,13 @@ class TossClient:
         return self.request("GET", "/api/v1/orders", params={"status": status, **params}, account=True)
 
     def cancel_order(self, order_id: str) -> dict:
+        """→ {'orderId': 새로 발급된 id} (원주문 id 와 다름)"""
         return self.request("POST", f"/api/v1/orders/{order_id}/cancel", json_body={}, account=True)
+
+    def modify_order(self, order_id: str, price: float | None) -> dict:
+        """미국 주식은 가격만 정정 가능 (수량 전달 시 400). price=None 이면 시장가로 정정. → {'orderId': 새 id}"""
+        body = {"orderType": "MARKET"} if price is None else {"orderType": "LIMIT", "price": us_price_str(price)}
+        return self.request("POST", f"/api/v1/orders/{order_id}/modify", json_body=body, account=True)
 
 
 def us_price_str(price: float) -> str:

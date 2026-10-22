@@ -31,16 +31,27 @@ log = logging.getLogger(__name__)
 
 @dataclass
 class Working:
-    order_id: str
+    """하나의 주문 '줄기'. 토스는 정정할 때마다 새 orderId 를 주므로 ids 에 순서대로 쌓는다.
+    체결은 각 id 에 남는다 (원주문 체결분 + 정정 후 새 주문 체결분)."""
+    order_id: str               # 줄기의 첫 id (working 딕셔너리 키)
     trade_id: int
-    purpose: str          # entry / exit
+    purpose: str                # entry / exit
     symbol: str
     side: str
-    placed_at: datetime
-    filled: int = 0
+    placed_at: datetime         # 마지막 주문/정정 시각
+    filled: int = 0             # 줄기 전체 누적 체결
     avg: float = 0.0
     note: str = ""
     cancel_sent: bool = False   # 취소 요청을 이미 보냄 (처리 중에는 다시 보내지 않는다)
+    cancel_id: str | None = None
+    cancel_at: datetime | None = None
+    aggressive: bool = False
+    ids: list = field(default_factory=list)
+    fills: dict = field(default_factory=dict)   # id → (filled, avg)
+
+    @property
+    def current(self) -> str:
+        return self.ids[-1] if self.ids else self.order_id
 
 
 @dataclass
@@ -71,9 +82,10 @@ class Trader:
         """재시작 시 아직 열려 있는 주문을 다시 추적한다 (같은 모드의 주문만: 모의 주문을 실계좌에 조회하지 않게)."""
         for o in self.journal.q("""SELECT o.* FROM orders o JOIN trades t ON o.trade_id = t.id
                                    WHERE o.status='OPEN' AND t.mode=?""", (self.journal.mode,)):
-            self.working[o["order_id"]] = Working(o["order_id"], o["trade_id"], o["purpose"], o["symbol"],
-                                                  o["side"], datetime.fromisoformat(o["ts"]),
-                                                  o["filled"] or 0, o["avg_price"] or 0.0)
+            w = Working(o["order_id"], o["trade_id"], o["purpose"], o["symbol"], o["side"],
+                        datetime.fromisoformat(o["updated"] or o["ts"]), o["filled"] or 0, o["avg_price"] or 0.0,
+                        ids=[o["order_id"]], fills={o["order_id"]: (o["filled"] or 0, o["avg_price"] or 0.0)})
+            self.working[o["order_id"]] = w
 
     def _due(self, name: str, now: datetime, every: timedelta) -> bool:
         if now >= self._next.get(name, datetime.min.replace(tzinfo=timezone.utc)):
@@ -126,57 +138,120 @@ class Trader:
 
     # ---------- 주문 추적 ----------
     def poll_orders(self, now: datetime, session: str) -> None:
-        for oid, w in list(self.working.items()):
+        for key, w in list(self.working.items()):
             try:
-                o = self.ex.order(oid)
+                cur = self.ex.order(w.current)
             except Exception as e:
-                log.warning("주문 조회 실패 %s: %s", oid, e)
+                log.warning("주문 조회 실패 %s: %s", w.current, e)
                 continue
-            delta = o["filled"] - w.filled
+            w.fills[w.current] = (cur["filled"], cur["avg_price"] or 0.0)
+            total = sum(f for f, _ in w.fills.values())
+            delta = total - w.filled
             if delta > 0:
-                px = ((o["avg_price"] or 0) * o["filled"] - w.avg * w.filled) / delta
-                w.filled, w.avg = o["filled"], o["avg_price"] or 0.0
-                if w.purpose == "entry":
-                    self.journal.record_entry_fill(w.trade_id, delta, px, session, now)
-                    self.notifier.send(f"🟢 매수 체결 {w.symbol} {delta}주 @ ${px:.4f}")
-                else:
-                    t = self.journal.record_exit_fill(w.trade_id, delta, px, session, now)
-                    if t["status"] == "CLOSED":
-                        self.exit_reprices.pop(w.trade_id, None)
-                        self.notifier.send(f"🔵 청산 {t['symbol']} ({t['exit_reason']}) "
-                                           f"{t['pnl']:+.2f}$ ({t['pnl_pct']:+.1f}%)")
-            self.journal.update_order(o, now)
-            if o["status"] in TERMINAL:
-                self.working.pop(oid)
+                value = sum(f * a for f, a in w.fills.values())
+                px = (value - w.avg * w.filled) / delta
+                w.filled, w.avg = total, value / total
+                self._on_fill(w, delta, px, session, now)
+            self.journal.update_order(cur, now)
+
+            done = cur["status"] in TERMINAL
+            if not done and w.cancel_sent and w.cancel_id and w.cancel_at and \
+                    (now - w.cancel_at).total_seconds() > 60:
+                # 취소가 1분 넘게 처리 중이면 취소 주문 자체의 상태를 본다
+                try:
+                    c = self.ex.order(w.cancel_id)
+                    if c["status"] == "CANCELED":
+                        done = True
+                    elif c["status"] == "REJECTED":
+                        log.warning("취소 거부 %s → 다시 시도", w.current)
+                        w.cancel_sent, w.cancel_id = False, None
+                except Exception as e:
+                    log.debug("취소 주문 조회 실패 %s: %s", w.cancel_id, e)
+            if done:
+                self.working.pop(key)
                 if w.purpose == "entry":
                     self.journal.entry_finished(w.trade_id)
                 else:
                     self.journal.exit_unfilled(w.trade_id)
                 continue
-            if w.cancel_sent:
-                continue          # 취소 처리 중 (실거래는 PENDING_CANCEL 동안 OPEN 으로 보인다)
+            if cur["status"] == "REPLACED" or w.cancel_sent:
+                continue          # 정정·취소 처리 중
             age = (now - w.placed_at).total_seconds()
             if w.purpose == "entry" and age > self.tcfg.entry_ttl_seconds:
-                self._cancel(oid, "매수 미체결 TTL")
+                self._cancel(key, "매수 미체결 TTL", now)
             elif w.purpose == "exit" and age > self.tcfg.exit_reprice_seconds:
-                self.exit_reprices[w.trade_id] = self.exit_reprices.get(w.trade_id, 0) + 1
-                self._cancel(oid, "매도 재호가")
+                self._reprice(key, w, now, session)
 
-    def _cancel(self, oid: str, why: str) -> None:
-        w = self.working.get(oid)
+    def _on_fill(self, w: Working, delta: int, px: float, session: str, now: datetime) -> None:
+        if w.purpose == "entry":
+            self.journal.record_entry_fill(w.trade_id, delta, px, session, now)
+            self.notifier.send(f"🟢 매수 체결 {w.symbol} {delta}주 @ ${px:.4f}")
+            return
+        t = self.journal.record_exit_fill(w.trade_id, delta, px, session, now)
+        if t["status"] == "CLOSED":
+            self.exit_reprices.pop(w.trade_id, None)
+            self.notifier.send(f"🔵 청산 {t['symbol']} ({t['exit_reason']}) "
+                               f"{t['pnl']:+.2f}$ ({t['pnl_pct']:+.1f}%)")
+
+    def _exit_price(self, b, aggressive: bool, exhausted: bool, session: str) -> tuple[bool, float | None]:
+        """(낼 수 있는지, 가격). 가격 None = 시장가. 호가가 없으면 정규장의 공격적 청산만 시장가."""
+        if b.has_quote:
+            slip = self.tcfg.final_exit_slippage_pct if aggressive and exhausted else self.tcfg.exit_slippage_pct
+            return True, (b.bid * (1 - slip / 100) if aggressive else b.bid)
+        if session == REGULAR and aggressive:
+            return True, None
+        return False, None
+
+    def _reprice(self, key: str, w: Working, now: datetime, session: str) -> None:
+        """매도 재호가: 취소 후 재주문 대신 가격 정정 (미국 주식은 가격만 정정 가능). 실패하면 취소."""
+        count = self.exit_reprices.get(w.trade_id, 0) + 1
+        try:
+            b = self.ex.book(w.symbol)
+        except Exception as e:
+            log.warning("재호가용 호가 실패 %s: %s", w.symbol, e)
+            return
+        ok, price = self._exit_price(b, w.aggressive, count >= self.tcfg.max_exit_reprices, session)
+        if not ok:
+            w.placed_at = now          # 호가가 없으면 기다렸다가 다시
+            return
+        self.exit_reprices[w.trade_id] = count
+        try:
+            new_id = self.ex.modify(w.current, price)
+        except Exception as e:
+            log.info("정정 실패 %s (%s) → 취소 후 재주문", w.current, e)
+            self._cancel(key, "매도 재호가", now)
+            return
+        old = w.current
+        w.ids.append(new_id)
+        w.placed_at = now
+        try:
+            self.journal.update_order(self.ex.order(old), now)   # 원주문은 REPLACED 로 기록
+        except Exception:
+            pass
+        left = max(self.journal.trade(w.trade_id)["remaining"], 0)
+        self.journal.log_order({"order_id": new_id, "symbol": w.symbol, "side": w.side,
+                                "type": "MARKET" if price is None else "LIMIT", "qty": left, "price": price,
+                                "status": "OPEN", "filled": 0, "avg_price": None},
+                               trade_id=w.trade_id, purpose=w.purpose, session=session, now=now,
+                               note=f"정정 {count}회 ({w.current if len(w.ids) < 2 else w.ids[-2]} → {new_id})")
+        log.info("매도 정정 %s %s → %s", w.symbol, "시장가" if price is None else f"${price:.4f}", new_id)
+
+    def _cancel(self, key: str, why: str, now: datetime | None = None) -> None:
+        w = self.working.get(key)
         if w and w.cancel_sent:
             return
+        oid = w.current if w else key
         try:
-            self.ex.cancel(oid)
+            cid = self.ex.cancel(oid)
             if w:
-                w.cancel_sent = True
+                w.cancel_sent, w.cancel_id, w.cancel_at = True, cid, now or self.clock()
             log.info("주문 취소 %s (%s)", oid, why)
         except Exception as e:
             log.warning("취소 실패 %s: %s", oid, e)
 
     def cancel_all(self, now: datetime, why: str) -> None:
-        for oid in list(self.working):
-            self._cancel(oid, why)
+        for key in list(self.working):
+            self._cancel(key, why, now)
 
     # ---------- 청산 ----------
     def _bad_news(self, t: dict) -> str | None:
@@ -228,22 +303,18 @@ class Trader:
             if not r:
                 continue
             reason, aggressive = r
-            price: float | None
             exhausted = self.exit_reprices.get(t["id"], 0) >= self.tcfg.max_exit_reprices
-            if b.has_quote:
-                slip = self.tcfg.final_exit_slippage_pct if aggressive and exhausted else self.tcfg.exit_slippage_pct
-                price = b.bid * (1 - slip / 100) if aggressive else b.bid
-            elif session == REGULAR and aggressive:
-                price = None      # 정규장인데 호가가 아예 없을 때만 시장가
-            else:
+            ok, price = self._exit_price(b, aggressive, exhausted, session)
+            if not ok:
                 log.info("%s 호가 없음 → 청산 보류 (%s)", t["symbol"], session)
                 continue
             # 같은 매매의 매수 미체결분은 먼저 취소 (팔면서 사지 않게)
-            for oid, w in list(self.working.items()):
+            for key, w in list(self.working.items()):
                 if w.trade_id == t["id"] and w.purpose == "entry":
-                    self._cancel(oid, "청산 시작")
+                    self._cancel(key, "청산 시작", now)
             self.journal.set_exiting(t["id"], reason)
-            self._submit(t["id"], t["symbol"], "SELL", t["remaining"], price, "exit", session, now, reason)
+            self._submit(t["id"], t["symbol"], "SELL", t["remaining"], price, "exit", session, now, reason,
+                         aggressive=aggressive)
 
     def flatten(self, now: datetime, session: str) -> None:
         self.manage_exits(now, session, force_reason="수동 전량 청산")
@@ -329,7 +400,7 @@ class Trader:
         self.status["last_scan"] = now.isoformat(timespec="seconds")
         self.status["candidates"] = sum(1 for p in plans if p.ok)
 
-    def _submit(self, trade_id, symbol, side, qty, price, purpose, session, now, note) -> None:
+    def _submit(self, trade_id, symbol, side, qty, price, purpose, session, now, note, aggressive=False) -> None:
         try:
             o = self.ex.place(symbol, side, qty, price)
         except Exception as e:
@@ -346,7 +417,8 @@ class Trader:
             else:
                 self.journal.exit_unfilled(trade_id)
             return
-        self.working[o["order_id"]] = Working(o["order_id"], trade_id, purpose, symbol, side, now, note=note)
+        self.working[o["order_id"]] = Working(o["order_id"], trade_id, purpose, symbol, side, now, note=note,
+                                              aggressive=aggressive, ids=[o["order_id"]])
         self.poll_orders(now, session)   # 즉시 체결분 반영
 
     # ---------- 계좌 ----------
