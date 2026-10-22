@@ -82,17 +82,18 @@ class MarketView:
         return closes[0] / closes[5] - 1
 
     def universe(self) -> dict[str, float]:
-        r = self.q("SELECT MAX(snapshot_date) FROM universe")
+        r = self.q("SELECT MAX(snapshot_date) FROM universe WHERE snapshot_date <= ?", (self._asof()[:10],))
         if not r or not r[0][0]:
             return {}
         return {s: last for s, last in self.q("SELECT symbol, last FROM universe WHERE snapshot_date=?", (r[0][0],))}
 
     def session_path(self, symbol: str, trade_date: date, session: str = DAY) -> list[tuple[str, float]]:
-        return self.q("""SELECT ts, last FROM prices WHERE symbol=? AND trade_date=? AND session=?
-                         ORDER BY ts""", (symbol, trade_date.isoformat(), session))
+        return self.q("""SELECT ts, last FROM prices WHERE symbol=? AND trade_date=? AND session=? AND ts <= ?
+                         ORDER BY ts""", (symbol, trade_date.isoformat(), session, self._asof()))
 
     def latest_prices(self, trade_date: date, session: str = DAY) -> dict[str, float]:
-        r = self.q("SELECT MAX(ts) FROM prices WHERE trade_date=? AND session=?", (trade_date.isoformat(), session))
+        r = self.q("SELECT MAX(ts) FROM prices WHERE trade_date=? AND session=? AND ts <= ?",
+                   (trade_date.isoformat(), session, self._asof()))
         if not r or not r[0][0]:
             return {}
         return dict(self.q("SELECT symbol, last FROM prices WHERE ts=?", (r[0][0],)))
@@ -170,7 +171,7 @@ class MarketView:
     def toss_hot(self, trade_date: date, top: int = 30) -> list[str]:
         """이번 데이마켓의 최신 '토스증권 거래대금' 실시간 랭킹 (한국 개인 매수가 몰리는 종목)."""
         r = self.q("""SELECT MAX(ts) FROM rankings WHERE trade_date=? AND session='DAY'
-                      AND type='TOSS_SECURITIES_TRADING_AMOUNT'""", (trade_date.isoformat(),))
+                      AND type='TOSS_SECURITIES_TRADING_AMOUNT' AND ts <= ?""", (trade_date.isoformat(), self._asof()))
         if not r or not r[0][0]:
             return []
         return [s for (s,) in self.q("""SELECT symbol FROM rankings WHERE ts=? AND type='TOSS_SECURITIES_TRADING_AMOUNT'

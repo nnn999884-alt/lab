@@ -133,8 +133,9 @@ class PaperExchange(Exchange):
     """실제 호가에 대해 보수적으로 체결: 매수는 ask ≤ 지정가일 때 ask 에, 매도는 bid ≥ 지정가일 때 bid 에.
     한 번에 최우선 잔량까지만 체결(부분 체결). 상태는 파일에 저장해 재시작해도 이어진다."""
 
-    def __init__(self, market, cash: float, state_path: str | Path):
+    def __init__(self, market, cash: float, state_path: str | Path, fee_pct: float = 0.0):
         self.market = market
+        self.fee = fee_pct / 100          # 수수료 (토스 미국 주식 약 0.1%) — 백테스트용, 모의 거래는 0
         self.path = Path(state_path)
         self._ids = itertools.count(1)
         self.state = {"cash": cash, "positions": {}, "orders": {}}
@@ -181,11 +182,11 @@ class PaperExchange(Exchange):
             left = o["qty"] - o["filled"]
             if o["side"] == "BUY" and (o["price"] is None or b.ask <= o["price"]):
                 px, n = b.ask, min(left, int(b.ask_size) or left)
-                if px * n > self.state["cash"]:
-                    n = int(self.state["cash"] // px)
+                if px * n * (1 + self.fee) > self.state["cash"]:
+                    n = int(self.state["cash"] // (px * (1 + self.fee)))
                 if n <= 0:
                     continue
-                self.state["cash"] -= px * n
+                self.state["cash"] -= px * n * (1 + self.fee)
                 q, avg = self.state["positions"].get(o["symbol"], [0, 0.0])
                 self.state["positions"][o["symbol"]] = [q + n, (q * avg + n * px) / (q + n)]
             elif o["side"] == "SELL" and (o["price"] is None or b.bid >= o["price"]):
@@ -194,7 +195,7 @@ class PaperExchange(Exchange):
                 n = min(n, q)
                 if n <= 0:
                     continue
-                self.state["cash"] += px * n
+                self.state["cash"] += px * n * (1 - self.fee)
                 if q - n:
                     self.state["positions"][o["symbol"]] = [q - n, avg]
                 else:

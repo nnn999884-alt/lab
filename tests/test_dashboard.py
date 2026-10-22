@@ -53,6 +53,9 @@ def test_read_endpoints(server):
     assert all("open" in r["ret"] for r in rn["rows"])
     ev = get(base + "/api/dilution")
     assert any(e["events"] == "ATM_TERMINATED" and e["direction"] == 1 for e in ev)
+    bt = get(base + "/api/backtests")
+    assert [b["run"] for b in bt] == ["demo-2", "demo-1"] and "trades" in bt[0] and "trades" not in bt[1]
+    assert bt[0]["params"] == {"runner_overnight.trail_pct": 6}
     with urllib.request.urlopen(base + "/") as r:
         assert b"Pennybot" in r.read()
 

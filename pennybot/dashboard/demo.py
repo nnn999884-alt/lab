@@ -144,4 +144,33 @@ def build(state_dir: str | Path = "state_demo", seed: int = 7) -> tuple[str, str
                      "events": ev, "direction": dr, "amount": 4.5e6 if dr < 0 else None}
                     for i, (ev, dr) in enumerate(events)])
     (d / "control.json").write_text(json.dumps({"kill": False, "flatten": False, "strategies": {}}))
+    _demo_backtests(d, rnd, now)
     return str(d / "trading.db"), str(d / "market.db")
+
+
+def _demo_backtests(d: Path, rnd, now) -> None:
+    """백테스트 결과 예시 (report.json 과 같은 모양)."""
+    from ..backtest import _stats
+    for k, params in enumerate([{}, {"runner_overnight.trail_pct": 6}]):
+        trades = []
+        for i in range(40):
+            strat = rnd.choice(["runner_overnight", "runner_overnight", "dilution_catalyst", "day_ignition"])
+            pct = rnd.gauss(1.5 if strat != "day_ignition" else -0.5, 9)
+            entry, qty = rnd.uniform(0.6, 4), rnd.randint(50, 280)
+            trades.append({"strategy": strat, "symbol": f"B{i:02d}", "qty": qty, "entry_price": entry,
+                           "trade_date": (now.date() - timedelta(days=40 - i)).isoformat(),
+                           "net": entry * qty * pct / 100, "pnl_pct": pct, "exit_session": rnd.choice(["PRE", "REGULAR"]),
+                           "exit_reason": rnd.choice(["매도 구간", "손절", "익절(분할) + 트레일링 스톱", "강제 청산 시각"])})
+        cut = trades[28]["trade_date"]
+        tr, te = [t for t in trades if t["trade_date"] < cut], [t for t in trades if t["trade_date"] >= cut]
+        rep = {"start": trades[0]["trade_date"], "end": trades[-1]["trade_date"], "days": 40, "split_date": cut,
+               "all": _stats(trades), "train": _stats(tr), "test": _stats(te), "params": params, "fee_pct": 0.1,
+               "open_left": [], "exit_reasons": {},
+               "by_strategy": {s: {"all": _stats([t for t in trades if t["strategy"] == s]),
+                                   "train": _stats([t for t in tr if t["strategy"] == s]),
+                                   "test": _stats([t for t in te if t["strategy"] == s])}
+                               for s in sorted({t["strategy"] for t in trades})},
+               "trades": trades}
+        out = d / "backtests" / f"demo-{k + 1}"
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "report.json").write_text(json.dumps(rep, ensure_ascii=False))

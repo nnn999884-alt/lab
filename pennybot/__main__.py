@@ -184,6 +184,38 @@ def cmd_dashboard(cfg: Config, port: int, demo: bool) -> None:
     serve(cfg, port)
 
 
+def cmd_backtest(cfg: Config, args) -> None:
+    """수집기 DB 를 재생해 매매 엔진을 그대로 돌린다 (토스 API 접속 없음)."""
+    from datetime import date, datetime
+    from pathlib import Path
+
+    from .backtest import Backtest, ReplayClient, apply_params, format_report, replay_calendar, _DB
+
+    db = cfg.collector.db_path
+    if not Path(db).exists():
+        raise SystemExit(f"수집기 DB({db})가 없습니다. 먼저 'python -m pennybot collect' 로 데이터를 모으세요.")
+    rng = _DB(db).q("SELECT MIN(trade_date), MAX(trade_date) FROM prices")
+    if not rng or not rng[0][0]:
+        raise SystemExit("수집기 DB 에 가격 기록이 없습니다.")
+    start = date.fromisoformat(args.start or rng[0][0])
+    end = date.fromisoformat(args.end or rng[0][1])
+    params = apply_params(cfg.trading, args.param)
+    fund = None
+    if args.with_edgar:
+        # 희석 프로필은 날짜 기준으로 잘리므로(제출일 ≤ 재생일) 그대로 써도 미래 데이터가 섞이지 않는다
+        from .dilution import DilutionService
+        from .trading.fundamentals import Fundamentals
+        edgar = _edgar(cfg)
+        if edgar:   # 발행주식 수는 재생 시점 값이 없어 쓰지 않는다 (ReplayClient.stocks → 빈 값)
+            fund = Fundamentals(ReplayClient(db, replay_calendar(_DB(db), start, end), datetime.now),
+                                DilutionService(edgar, f"{cfg.state_dir}/edgar_cache"))
+    out = Path(args.out or f"{cfg.state_dir}/backtests/{datetime.now():%Y%m%d-%H%M%S}")
+    rep = Backtest(db, cfg.trading, start, end, out, step_seconds=args.step, fee_pct=args.fee,
+                   half_spread_pct=args.half_spread, train_frac=args.train_frac, fund=fund, params=params).run()
+    print(format_report(rep))
+    print(f"\n결과: {out}/report.json, 매매 기록: {out}/backtest.db (대시보드 '백테스트' 탭)")
+
+
 def cmd_screen(cfg: Config) -> None:
     from .screener import run_screen
     picks = run_screen(cfg.screener, _feed(cfg), _edgar(cfg), cfg.state_dir)
@@ -218,6 +250,15 @@ def main() -> None:
     ap.add_argument("--demo", action="store_true", help="dashboard: 예시 데이터로 미리보기")
     ap.add_argument("--symbol", help="probe-orders: 확인에 쓸 종목 (유동성 있는 종목)")
     ap.add_argument("--yes-real-order", action="store_true", help="probe-orders: 실제 주문 확인")
+    ap.add_argument("--start", help="backtest: 시작 영업일 (기본: DB 첫날)")
+    ap.add_argument("--end", help="backtest: 끝 영업일 (기본: DB 마지막 날)")
+    ap.add_argument("--step", type=int, default=60, help="backtest: 재생 간격(초)")
+    ap.add_argument("--fee", type=float, default=0.1, help="backtest: 수수료 %%")
+    ap.add_argument("--half-spread", type=float, default=0.75, help="backtest: 호가 기록 없을 때 가정 반스프레드 %%")
+    ap.add_argument("--train-frac", type=float, default=0.7, help="backtest: 학습 구간 비율")
+    ap.add_argument("--param", action="append", help="backtest: 설정 덮어쓰기 (예: runner_overnight.trail_pct=6)")
+    ap.add_argument("--with-edgar", action="store_true", help="backtest: SEC 희석 프로필 사용 (네트워크 필요)")
+    ap.add_argument("--out", help="backtest: 결과 폴더")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
 
@@ -233,6 +274,7 @@ def main() -> None:
         "trade": lambda: cmd_trade(cfg, args.once),
         "dashboard": lambda: cmd_dashboard(cfg, args.port, args.demo),
         "probe-orders": lambda: cmd_probe_orders(cfg, args.symbol, args.yes_real_order),
+        "backtest": lambda: cmd_backtest(cfg, args),
         "screen": lambda: cmd_screen(cfg),
         "run": lambda: cmd_run(cfg, args.once),
     }[args.command]()

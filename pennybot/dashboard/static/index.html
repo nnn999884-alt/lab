@@ -182,6 +182,15 @@ details summary { cursor: pointer; color: var(--text-secondary); font-size: 12.5
     <div class="tablewrap" style="max-height:360px"><table id="dilution"></table></div>
   </section>
 
+  <section class="card">
+    <h2>백테스트</h2>
+    <p class="sub" id="bt-sub">python -m pennybot backtest 결과. 수수료 반영 순손익, 학습(앞 70%)·검증(뒤 30%) 구간을 나눠 봅니다</p>
+    <div class="tablewrap"><table id="backtests"></table></div>
+    <details><summary>최신 실행 · 전략별 / 개별 매매</summary>
+      <div class="tablewrap"><table id="bt-strategies"></table></div>
+      <div class="tablewrap" style="max-height:360px;margin-top:12px"><table id="bt-trades"></table></div></details>
+  </section>
+
   <section class="grid two">
     <div class="card">
       <h2>세션별 호가 확보율</h2>
@@ -525,6 +534,35 @@ async function loadRunners() {
   ], ev, "희석 이벤트 없음 (SEC_USER_AGENT 를 설정하면 공시 본문까지 판정합니다)");
 }
 
+async function loadBacktests() {
+  const runs = await api("/api/backtests?limit=10");
+  const wr = s => s && s.trades ? Math.round(s.win_rate * 100) + "%" : "-";
+  table($("backtests"), [
+    { h: "실행", f: r => r.run }, { h: "기간", f: r => `${r.start} ~ ${r.end}` }, { h: "일수", num: 1, f: r => r.days },
+    { h: "거래", num: 1, f: r => r.all.trades }, { h: "승률", num: 1, f: r => wr(r.all) },
+    { h: "순손익", num: 1, f: r => fmtUsd(r.all.net_pnl, true), tone: r => tone(r.all.net_pnl) },
+    { h: "최대낙폭", num: 1, f: r => fmtUsd(r.all.max_drawdown) },
+    { h: "검증 거래", num: 1, f: r => r.test.trades }, { h: "검증 승률", num: 1, f: r => wr(r.test) },
+    { h: "검증 순손익", num: 1, f: r => fmtUsd(r.test.net_pnl, true), tone: r => tone(r.test.net_pnl) },
+    { h: "설정 변경", f: r => Object.entries(r.params || {}).map(([k, v]) => `${k}=${v}`).join(", ") || null },
+    { h: "미청산", num: 1, f: r => (r.open_left || []).length || null },
+  ], runs, "백테스트 기록 없음 (수집 데이터가 쌓인 뒤 python -m pennybot backtest)");
+  const last = runs[0];
+  table($("bt-strategies"), [
+    { h: "전략", f: r => STRAT[r[0]] || r[0] }, { h: "거래", num: 1, f: r => r[1].all.trades }, { h: "승률", num: 1, f: r => wr(r[1].all) },
+    { h: "순손익", num: 1, f: r => fmtUsd(r[1].all.net_pnl, true), tone: r => tone(r[1].all.net_pnl) },
+    { h: "평균 수익률", num: 1, f: r => fmtPct(r[1].all.avg_pct), tone: r => tone(r[1].all.avg_pct) },
+    { h: "학습 순손익", num: 1, f: r => fmtUsd(r[1].train.net_pnl, true), tone: r => tone(r[1].train.net_pnl) },
+    { h: "검증 순손익", num: 1, f: r => fmtUsd(r[1].test.net_pnl, true), tone: r => tone(r[1].test.net_pnl) },
+  ], last ? Object.entries(last.by_strategy) : [], "최신 실행에 매매 없음");
+  table($("bt-trades"), [
+    { h: "영업일", f: t => t.trade_date }, { h: "종목", f: t => t.symbol }, { h: "전략", f: t => STRAT[t.strategy] || t.strategy },
+    { h: "수량", num: 1, f: t => t.qty }, { h: "매수가", num: 1, f: t => fmtPx(t.entry_price) },
+    { h: "순손익", num: 1, f: t => fmtUsd(t.net, true), tone: t => tone(t.net) }, { h: "수익률", num: 1, f: t => fmtPct(t.pnl_pct), tone: t => tone(t.pnl_pct) },
+    { h: "청산", f: t => t.exit_reason }, { h: "청산 세션", f: t => SESS[t.exit_session] || t.exit_session },
+  ], last && last.trades ? last.trades.slice().reverse() : [], "없음");
+}
+
 async function control(body) {
   try { await api("/api/control", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); }
   catch (e) { alert("제어 실패: " + e.message); }
@@ -548,7 +586,7 @@ try { const t = localStorage.getItem("theme"); if (t) document.documentElement.d
 
 async function refresh() {
   document.querySelector("main").classList.add("loading");
-  const jobs = [loadOverview(), loadEquity(), loadStrategies(), loadTables(), loadRunners(), loadCollector(), loadResearch()];
+  const jobs = [loadOverview(), loadEquity(), loadStrategies(), loadTables(), loadRunners(), loadCollector(), loadResearch(), loadBacktests()];
   const res = await Promise.allSettled(jobs);
   res.filter(r => r.status === "rejected").forEach(r => console.warn(r.reason));
   document.querySelector("main").classList.remove("loading");

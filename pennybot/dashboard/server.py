@@ -224,6 +224,21 @@ class Data:
         return list(reversed(out))
 
 
+def _backtests(state_dir: str, limit: int = 10) -> list[dict]:
+    """python -m pennybot backtest 결과 (state/backtests/*/report.json), 최신순."""
+    out = []
+    for f in sorted(Path(state_dir, "backtests").glob("*/report.json"), reverse=True)[:limit]:
+        try:
+            r = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        r["run"] = f.parent.name
+        if out:
+            r.pop("trades", None)      # 최신 실행만 개별 매매까지
+        out.append(r)
+    return out
+
+
 class Handler(BaseHTTPRequestHandler):
     data: Data = None  # 서버 생성 시 주입
 
@@ -256,6 +271,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/research": lambda: d.research(n("days", 20)),
             "/api/runners": lambda: d.runners(n("days", 10)),
             "/api/dilution": lambda: d.dilution_events(n("limit", 60)),
+            "/api/backtests": lambda: _backtests(d.cfg.state_dir, n("limit", 10)),
         }
         if u.path in routes:
             try:
