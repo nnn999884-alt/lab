@@ -18,6 +18,7 @@ log = logging.getLogger(__name__)
 
 TERMINAL = ("FILLED", "CANCELED", "REJECTED")
 # REPLACED: 정정되어 새 주문으로 넘어간 원주문 (체결은 원주문에 남고, 나머지는 새 주문이 이어받는다)
+# OP_REJECTED: 토스 CANCEL_REJECTED / REPLACE_REJECTED — 취소·정정 '요청'이 거부된 별도 기록. 원주문은 이전 상태로 돌아간다
 
 
 @dataclass
@@ -56,6 +57,8 @@ class Exchange:
         """{'status': WATCHING/ORDERING/ORDERED/COMPLETED/EXPIRED/CANCELED, 'order_id': 발동으로 생긴 주문 id 또는 None}"""
     def cancel_stop(self, stop_id: str) -> None: ...
     def open_orders(self) -> list[dict]: ...
+    def recent_orders(self, symbol: str) -> list[dict]:
+        """그 종목의 최근 주문 (열린 것 + 끝난 것), 오래된 순."""
     def positions(self) -> dict[str, tuple[int, float]]: ...
     def cash(self) -> float: ...
     def sync(self) -> None:
@@ -79,7 +82,7 @@ class TossMarket:
 
 
 _LIVE_STATUS = {"PENDING": "OPEN", "PENDING_CANCEL": "OPEN", "PENDING_REPLACE": "OPEN",
-                "CANCEL_REJECTED": "OPEN", "REPLACE_REJECTED": "OPEN", "PARTIAL_FILLED": "OPEN",
+                "CANCEL_REJECTED": "OP_REJECTED", "REPLACE_REJECTED": "OP_REJECTED", "PARTIAL_FILLED": "OPEN",
                 "FILLED": "FILLED", "CANCELED": "CANCELED", "REPLACED": "REPLACED", "REJECTED": "REJECTED"}
 
 
@@ -98,7 +101,8 @@ class LiveExchange(Exchange):
                 "qty": int(float(d["quantity"])), "price": float(d["price"]) if d.get("price") else None,
                 "status": _LIVE_STATUS.get(d["status"], "OPEN"),
                 "filled": int(float(ex.get("filledQuantity") or 0)),
-                "avg_price": float(ex["averageFilledPrice"]) if ex.get("averageFilledPrice") else None}
+                "avg_price": float(ex["averageFilledPrice"]) if ex.get("averageFilledPrice") else None,
+                "ts": d.get("orderedAt")}
 
     def place(self, symbol, side, qty, price):
         body = {"clientOrderId": uuid.uuid4().hex[:32], "symbol": symbol, "side": side,
@@ -121,6 +125,11 @@ class LiveExchange(Exchange):
 
     def open_orders(self):
         return [self._norm(o) for o in (self.c.list_orders("OPEN") or {}).get("orders", [])]
+
+    def recent_orders(self, symbol):
+        rows = (self.c.list_orders("OPEN", symbol=symbol) or {}).get("orders", []) + \
+            (self.c.list_orders("CLOSED", symbol=symbol, limit=30) or {}).get("orders", [])
+        return sorted((self._norm(o) for o in rows), key=lambda o: o.get("ts") or "")
 
     def place_stop(self, symbol, qty, trigger, limit, expire):
         return self.c.create_stop_order(symbol, qty, trigger, limit, expire, client_id=uuid.uuid4().hex[:32])
@@ -178,7 +187,7 @@ class PaperExchange(Exchange):
                            if x["symbol"] == symbol and x["side"] == "SELL" and x["status"] == "OPEN")
             if qty > held - reserved:
                 o["status"] = "REJECTED"
-        elif (price or 0) * qty > self.state["cash"] and price:
+        elif side == "BUY" and price and price * qty > self.state["cash"]:
             o["status"] = "REJECTED"
         self.state["orders"][oid] = o
         self._save()
@@ -264,6 +273,9 @@ class PaperExchange(Exchange):
 
     def open_orders(self):
         return [dict(o) for o in self.state["orders"].values() if o["status"] == "OPEN"]
+
+    def recent_orders(self, symbol):
+        return [dict(o) for o in self.state["orders"].values() if o["symbol"] == symbol]
 
     def place_stop(self, symbol, qty, trigger, limit, expire):
         sid = f"paper-stop-{next(self._ids)}"

@@ -244,7 +244,7 @@ def cmd_backtest(cfg: Config, args) -> None:
         edgar = _edgar(cfg)
         if edgar:   # 발행주식 수는 재생 시점 값이 없어 쓰지 않는다 (ReplayClient.stocks → 빈 값)
             fund = Fundamentals(ReplayClient(db, replay_calendar(_DB(db), start, end), datetime.now),
-                                DilutionService(edgar, f"{cfg.state_dir}/edgar_cache"))
+                                DilutionService(edgar, f"{cfg.state_dir}/edgar_cache"), lag_days=1)
     out = Path(args.out or f"{cfg.state_dir}/backtests/{datetime.now():%Y%m%d-%H%M%S}")
     rep = Backtest(db, cfg.trading, start, end, out, step_seconds=args.step, fee_pct=args.fee,
                    half_spread_pct=args.half_spread, train_frac=args.train_frac, fund=fund, params=params).run()

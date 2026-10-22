@@ -113,7 +113,10 @@ class Collector:
     def run(self, sleep=time.sleep) -> None:
         log.info("수집기 시작 (DB=%s)", self.cfg.db_path)
         while True:
-            self.tick()
+            try:
+                self.tick()
+            except Exception:
+                log.exception("수집 틱 실패 (계속 진행)")
             sleep(max(1.0, 5 - (time.time() % 5)))
 
     # ---------- 작업 ----------

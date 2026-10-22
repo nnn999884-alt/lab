@@ -163,8 +163,9 @@ class TossClient:
                 raise ValueError("TOSS_ACCOUNT(accountSeq)가 필요합니다. python -m pennybot accounts 로 확인하세요.")
             headers["X-Tossinvest-Account"] = self.account_seq
         force_token = False
-        # 주문 생성·정정·취소(POST /orders…, 조건주문)는 재시도하면 중복 위험 → 5xx·응답 대기 시간초과는 재시도하지 않는다
-        order_post = method == "POST" and path.startswith(("/api/v1/orders", "/api/v1/conditional-orders"))
+        # 정정·취소는 멱등키가 없어 재시도하면 두 번 처리될 수 있다 → 5xx·응답 대기 시간초과는 재시도하지 않는다.
+        # 새 주문(POST /orders, /conditional-orders)은 clientOrderId 가 같으면 서버가 중복을 막으므로 같은 본문으로 재시도한다
+        order_post = method == "POST" and path.startswith(("/api/v1/orders/", "/api/v1/conditional-orders/"))
         for attempt in range(retries + 1):
             self._throttle(group)
             headers["Authorization"] = f"Bearer {self._get_token(force_token)}"

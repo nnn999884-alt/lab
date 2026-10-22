@@ -5,7 +5,7 @@ SEC_USER_AGENT 가 없으면 EDGAR 를 못 쓰므로 희석 프로필은 None �
 from __future__ import annotations
 
 import logging
-from datetime import date
+from datetime import date, timedelta
 
 from ..dilution import DilutionService, Profile, pump_flags
 
@@ -13,9 +13,10 @@ log = logging.getLogger(__name__)
 
 
 class Fundamentals:
-    def __init__(self, client, dilution: DilutionService | None = None):
+    def __init__(self, client, dilution: DilutionService | None = None, lag_days: int = 0):
         self.c = client
         self.dil = dilution
+        self.lag = timedelta(days=lag_days)   # 백테스트: 영업일 T 의 데이마켓(T−1 밤)에는 T 날짜 공시가 아직 없다
         self._cik: dict[str, int] | None = None
         self._stock: dict[tuple[str, date], dict] = {}
         self._profile: dict[tuple[str, date], Profile | None] = {}
@@ -53,7 +54,7 @@ class Fundamentals:
             cik = self.cik(symbol)
             sh = self.shares(symbol, today)
             try:
-                self._profile[key] = self.dil.profile(cik, today, sh * price if sh else None, price, sh) \
+                self._profile[key] = self.dil.profile(cik, today - self.lag, sh * price if sh else None, price, sh) \
                     if cik else None
             except Exception as e:
                 log.warning("희석 프로필 실패 %s: %s", symbol, e)

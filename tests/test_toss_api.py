@@ -93,12 +93,16 @@ def test_token_shared_across_clients_and_401_reuses_newer(tmp_path):
     assert sc.calls[-1][4]["Authorization"] == "Bearer tok1"
 
 
-def test_order_post_not_retried_on_5xx(tmp_path):
-    c, s, _ = client(tmp_path, {("POST", "/api/v1/orders"): [Resp(503, {"error": {"code": "x"}})]})
-    with pytest.raises(TossApiError):
-        c.create_order({"symbol": "AAPL"})
-    assert len(s.calls) == 1
+def test_create_retried_with_same_body_but_cancel_not(tmp_path):
+    ok = Resp(200, {"result": {"orderId": "o1"}})
+    c, s, _ = client(tmp_path, {("POST", "/api/v1/orders"): [Resp(503, {"error": {"code": "x"}}), ok],
+                                ("POST", "/api/v1/orders/o1/cancel"): [Resp(503, {"error": {"code": "x"}})]})
+    assert c.create_order({"symbol": "AAPL", "clientOrderId": "k1"})["orderId"] == "o1"
+    assert len(s.calls) == 2 and s.calls[0][3] == s.calls[1][3]      # 같은 clientOrderId → 서버가 중복 방지
     assert s.calls[0][4]["X-Tossinvest-Account"] == "123"
+    with pytest.raises(TossApiError):
+        c.cancel_order("o1")                                          # 멱등키 없음 → 재시도 안 함
+    assert len(s.calls) == 3
 
 
 def test_account_required(tmp_path):

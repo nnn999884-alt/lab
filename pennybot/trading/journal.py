@@ -144,7 +144,10 @@ class Journal:
                 (trade_id,))
 
     def realized_pnl(self, trade_date: str) -> float:
-        r = self.q("SELECT COALESCE(SUM(pnl),0) AS p FROM trades WHERE status='CLOSED' AND trade_date=? AND mode=?",
+        """끝난 매매 손익 + 아직 열린 매매에서 이미 판 부분 (분할 익절 등)."""
+        r = self.q("""SELECT COALESCE(SUM(CASE WHEN status='CLOSED' THEN pnl
+                                          ELSE exit_value - entry_price * exited_qty END), 0) AS p
+                      FROM trades WHERE trade_date=? AND mode=? AND (status='CLOSED' OR exited_qty > 0)""",
                    (trade_date, self.mode))
         return r[0]["p"]
 

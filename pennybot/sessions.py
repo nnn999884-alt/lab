@@ -10,10 +10,13 @@ API 없이 쓸 때(테스트, 과거 데이터 백필)는 static_day() 가 미�
 """
 from __future__ import annotations
 
+import logging
+import time as _time
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
 
+log = logging.getLogger(__name__)
 ET = ZoneInfo("America/New_York")
 KST = ZoneInfo("Asia/Seoul")
 
@@ -67,6 +70,8 @@ class SessionCalendar:
         self.client = client
         self.days: dict[date, TradingDay] = {}
         self._refreshed: set[date] = set()   # 같은 날짜로 API 를 반복 호출하지 않도록
+        self._retry_at: float = 0.0          # 실패하면 잠시 뒤 다시 (그동안은 평일 근사 캘린더)
+        self._approx: set[date] = set()
 
     def add(self, day: TradingDay) -> None:
         self.days[day.date] = day
@@ -76,18 +81,36 @@ class SessionCalendar:
         key = now.astimezone(ET).date()
         if key in self._refreshed:
             return
-        self._refreshed.add(key)
         if self.client is None:
-            d0 = now.astimezone(ET).date()
-            for i in range(-3, 4):
-                self.add(static_day(d0 + timedelta(days=i)))
+            self._refreshed.add(key)
+            self._add_static(key)
             return
-        res = self.client.market_calendar_us(now.astimezone(ET).date().isoformat())
-        for key in ("previousBusinessDay", "today", "nextBusinessDay"):
-            if res.get(key):
-                self.add(parse_api_day(res[key]))
+        if _time.monotonic() < self._retry_at:
+            return
+        try:
+            res = self.client.market_calendar_us(key.isoformat())
+        except Exception as e:
+            # 한 번 실패로 하루 종일 '휴장'이 되면 보유 종목을 못 판다 → 평일 근사로 버티고 1분 뒤 재시도
+            log.warning("장 캘린더 조회 실패 (%s) → 평일 근사 캘린더로 진행, 1분 뒤 재시도", e)
+            self._retry_at = _time.monotonic() + 60
+            self._add_static(key, keep=True)
+            self._approx.add(key)
+            return
+        self._refreshed.add(key)
+        self._approx.discard(key)
+        for k in ("previousBusinessDay", "today", "nextBusinessDay"):
+            if res.get(k):
+                self.add(parse_api_day(res[k]))
+
+    def _add_static(self, d0: date, keep: bool = False) -> None:
+        for i in range(-3, 4):
+            d = d0 + timedelta(days=i)
+            if not (keep and d in self.days):      # API 로 받은 날은 덮어쓰지 않는다
+                self.add(static_day(d))
 
     def _covered(self, ts: datetime) -> bool:
+        if ts.astimezone(ET).date() in self._approx and _time.monotonic() >= self._retry_at:
+            return False                  # API 실패로 근사로 채운 날 → 다시 받아 본다
         ends = [d.end for d in self.days.values() if d.end]
         return bool(ends) and max(ends) > ts and min(d.start for d in self.days.values() if d.start) <= ts
 

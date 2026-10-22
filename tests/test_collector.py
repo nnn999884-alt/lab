@@ -219,3 +219,24 @@ def test_catch_up_summaries_on_start(tmp_path):
                        "levels": 1, "book_ts": None}])
     col.tick()
     assert store.query("SELECT COUNT(*) FROM session_summary WHERE trade_date='2026-10-21'")[0][0] >= 1
+
+
+def test_calendar_failure_falls_back_to_static_then_retries():
+    from datetime import datetime
+
+    from pennybot.sessions import ET, SessionCalendar
+
+    class Flaky:
+        calls = 0
+
+        def market_calendar_us(self, date=None):
+            Flaky.calls += 1
+            raise RuntimeError("503")
+    cal = SessionCalendar(Flaky())
+    ts = datetime(2026, 10, 21, 8, 0, tzinfo=ET)          # 수요일 프리마켓
+    assert cal.classify(ts)[1] == "PRE"                    # 실패해도 평일 근사로 세션 판단 (청산 가능)
+    cal.classify(ts)
+    assert Flaky.calls == 1                                # 1분 안에는 다시 안 부름
+    cal._retry_at = 0
+    cal.classify(ts)
+    assert Flaky.calls == 2                                # 근사로 채운 날은 다시 받아 본다

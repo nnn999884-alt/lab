@@ -16,6 +16,7 @@ from datetime import datetime, timedelta, timezone
 
 from ..sessions import AFTER, CLOSED, DAY, KST, REGULAR, SessionCalendar
 from .control import Control
+from ..toss_api import TossApiError
 from .exchange import TERMINAL, Exchange
 from .journal import Journal
 from .notify import Notifier
@@ -51,6 +52,7 @@ class Working:
     qty: int = 0                # 줄기 전체 주문 수량
     scale: bool = False         # 분할 익절 주문
     checked_at: datetime | None = None   # 마지막 REST 주문 조회
+    final: set = field(default_factory=set)     # 더 바뀌지 않는 id (체결 완료·취소·정정됨)
     ids: list = field(default_factory=list)
     fills: dict = field(default_factory=dict)   # id → (filled, avg)
 
@@ -81,19 +83,51 @@ class Trader:
         self._next: dict[str, datetime] = {}
         self.status: dict = {}
         self._stale_alerted: set[int] = set()
+        self.mismatch: dict = {}
+        self._exit_fail: dict[int, tuple[int, datetime]] = {}   # 매도 주문 실패 횟수·다음 시도 시각
         self._recover()
 
     # ---------- 공통 ----------
     def _recover(self) -> None:
-        """재시작 시 아직 열려 있는 주문을 다시 추적한다 (같은 모드의 주문만: 모의 주문을 실계좌에 조회하지 않게)."""
+        """재시작 시 아직 열려 있는 주문을 다시 추적한다 (같은 모드의 주문만: 모의 주문을 실계좌에 조회하지 않게).
+        같은 매매·용도의 열린 주문은 한 줄기로 묶고(정정 이력), 주문 없이 멈춘 매매 상태는 되돌린다."""
+        groups: dict[tuple[int, str], list[dict]] = {}
         for o in self.journal.q("""SELECT o.* FROM orders o JOIN trades t ON o.trade_id = t.id
-                                   WHERE o.status='OPEN' AND t.mode=?""", (self.journal.mode,)):
-            w = Working(o["order_id"], o["trade_id"], o["purpose"], o["symbol"], o["side"],
-                        datetime.fromisoformat(o["updated"] or o["ts"]), o["filled"] or 0, o["avg_price"] or 0.0,
-                        note=o["note"] or "", qty=o["qty"] or 0,
-                        scale=o["purpose"] == "exit" and SCALE_REASON in (o["note"] or ""),
-                        ids=[o["order_id"]], fills={o["order_id"]: (o["filled"] or 0, o["avg_price"] or 0.0)})
-            self.working[o["order_id"]] = w
+                                   WHERE o.status='OPEN' AND t.mode=? ORDER BY o.ts, o.rowid""",
+                                (self.journal.mode,)):
+            groups.setdefault((o["trade_id"], o["purpose"]), []).append(o)
+        for (tid, purpose), rows in groups.items():
+            first, last = rows[0], rows[-1]
+            t = self.journal.trade(tid)
+            reason = t["exit_reason"] or ""
+            w = Working(first["order_id"], tid, purpose, first["symbol"], first["side"],
+                        datetime.fromisoformat(last["ts"]), note=first["note"] or "", qty=first["qty"] or 0,
+                        scale=purpose == "exit" and SCALE_REASON in (first["note"] or ""),
+                        aggressive=purpose == "exit" and not reason.startswith(("매도 구간", "익절", SCALE_REASON)),
+                        ids=[r["order_id"] for r in rows])
+            # 이미 매매 기록에 반영된 체결 = 이 줄기의 시작값 (다시 세지 않게)
+            w.fills = {r["order_id"]: (r["filled"] or 0, r["avg_price"] or 0.0) for r in rows}
+            w.filled = sum(f for f, _ in w.fills.values())
+            w.avg = sum(f * a for f, a in w.fills.values()) / w.filled if w.filled else 0.0
+            self.working[w.order_id] = w
+            if purpose == "exit":
+                n = self.journal.q("SELECT COUNT(*) AS n FROM orders WHERE trade_id=? AND purpose='exit'", (tid,))[0]["n"]
+                self.exit_reprices[tid] = max(n - 1, 0)
+        busy = {(w.trade_id, w.purpose) for w in self.working.values()}
+        for t in self.journal.open_trades():
+            if t["status"] == "EXITING" and (t["id"], "exit") not in busy:
+                self.journal.exit_unfilled(t["id"])          # 매도 주문 없이 멈춤 → 다시 청산 판단
+            elif t["status"] == "PENDING" and (t["id"], "entry") not in busy:
+                self.journal.entry_finished(t["id"])         # 매수 주문 없이 멈춤 → 취소 처리
+        try:
+            tracked = {i for w in self.working.values() for i in w.ids}
+            unknown = [o for o in self.ex.open_orders() if o["order_id"] not in tracked]
+        except Exception as e:
+            log.debug("열린 주문 조회 실패: %s", e)
+            unknown = []
+        if unknown:
+            self.notifier.send("⚠️ 봇이 모르는 열린 주문: " + ", ".join(f"{o['symbol']} {o['side']} {o['qty']}주"
+                                                                  for o in unknown[:10]) + " — 직접 확인하세요")
 
     def _due(self, name: str, now: datetime, every: timedelta) -> bool:
         if now >= self._next.get(name, datetime.min.replace(tzinfo=timezone.utc)):
@@ -123,22 +157,32 @@ class Trader:
         if self.stream is not None:
             self.status["stream"] = "연결" if self.stream.healthy else f"끊김 → REST ({self.stream.last_error})"[:120]
 
-        self.sync_backstops(now, session)
+        # 단계마다 따로 예외 처리: 한 단계(안전망·스캔 등)가 계속 실패해도 청산은 돈다
+        ctl = self._stage("control", self.control.load) or {"kill": True, "flatten": False}
         if session != CLOSED:
-            ctl = self.control.load()
             if ctl["flatten"]:
-                self.flatten(now, session)
-            self.manage_exits(now, session)
-            if session == DAY and not ctl["kill"] and self._entry_window(now, trade_date):
-                if self._due("scan", now, timedelta(minutes=self.tcfg.scan_minutes)):
-                    self.scan_and_enter(now, trade_date, session)
+                self._stage("flatten", self.flatten, now, session)
+            self._stage("exits", self.manage_exits, now, session)
+        self._stage("backstop", self.sync_backstops, now, session)
+        if session == DAY and not ctl["kill"] and self._entry_window(now, trade_date):
+            if self._due("scan", now, timedelta(minutes=self.tcfg.scan_minutes)):
+                self._stage("scan", self.scan_and_enter, now, trade_date, session)
         if self._due("equity", now, timedelta(minutes=5)):
-            self.snapshot(now, trade_date)
+            self._stage("snapshot", self.snapshot, now, trade_date)
         if self._due("reconcile", now, timedelta(minutes=15)):
-            self.reconcile()
+            self._stage("reconcile", self.reconcile)
         if session != CLOSED and self._due("watchdog", now, timedelta(minutes=5)):
-            self.watchdog(now, trade_date, session)
+            self._stage("watchdog", self.watchdog, now, trade_date, session)
+        self.status["mismatch"] = self.mismatch
         self.journal.beat("trader", self.status, now)
+
+    def _stage(self, name: str, fn, *args):
+        try:
+            return fn(*args)
+        except Exception as e:
+            log.exception("%s 실패", name)
+            self.notifier.send(f"⚠️ {name} 실패: {type(e).__name__}: {e}"[:300], key=f"stage-{name}", every=1800)
+            return None
 
     def run(self, sleep=time.sleep) -> None:
         log.info("매매 엔진 시작 (mode=%s)", self.journal.mode)
@@ -160,7 +204,8 @@ class Trader:
     # ---------- 주문 추적 ----------
     def _changed_orders(self) -> set[str] | None:
         """웹소켓으로 이벤트가 온 주문 id. None = 전부 REST 로 확인 (스트림 없음·끊김·재연결 직후)."""
-        if self.stream is None or not self.stream.healthy or self.stream.take_resync():
+        if self.stream is None or not getattr(self.stream, "orders_healthy", self.stream.healthy) \
+                or self.stream.take_resync():
             return None
         return {str(o.get("orderId")) for _, o in self.stream.order_events()}
 
@@ -181,11 +226,10 @@ class Trader:
                 continue
             w.checked_at = now
             try:
-                cur = self.ex.order(w.current)
+                cur, got = self._refresh(w, now)
             except Exception as e:
                 log.warning("주문 조회 실패 %s: %s", w.current, e)
                 continue
-            w.fills[w.current] = (cur["filled"], cur["avg_price"] or 0.0)
             total = sum(f for f, _ in w.fills.values())
             delta = total - w.filled
             if delta > 0:
@@ -193,19 +237,32 @@ class Trader:
                 px = (value - w.avg * w.filled) / delta
                 w.filled, w.avg = total, value / total
                 self._on_fill(w, delta, px, session, now)
-            self.journal.update_order(cur, now)
+            for o in got.values():
+                self.journal.update_order(o, now)
+            if w.purpose == "exit" and cur["status"] not in TERMINAL and \
+                    self.journal.trade(w.trade_id)["remaining"] <= 0:
+                self._cancel(key, "이미 다 팔림", now)      # 남은 주문 정리, 더 따라가지 않는다
+                self.working.pop(key, None)
+                continue
 
             done = cur["status"] in TERMINAL
-            if not done and w.cancel_sent and w.cancel_id and w.cancel_at and \
-                    (now - w.cancel_at).total_seconds() > 60:
-                # 취소가 1분 넘게 처리 중이면 취소 주문 자체의 상태를 본다
+            if cur["status"] == "REPLACED" and w.current in w.final:
+                # 정정은 됐는데 이어받은 주문 id 를 모름 (정정 응답 유실 등) → 열린 주문에서 찾는다
+                succ = self._find_orphan(w.symbol, w.side)
+                if succ:
+                    log.warning("정정 후속 주문 찾음 %s → %s", w.current, succ)
+                    w.ids.append(succ)
+                    w.placed_at = now
+                    continue
+                done = True
+            if not done and w.cancel_sent and w.cancel_id:
                 try:
                     c = self.ex.order(w.cancel_id)
-                    if c["status"] == "CANCELED":
-                        done = True
-                    elif c["status"] == "REJECTED":
+                    if c["status"] in ("OP_REJECTED", "REJECTED"):
                         log.warning("취소 거부 %s → 다시 시도", w.current)
                         w.cancel_sent, w.cancel_id = False, None
+                    elif c["status"] == "CANCELED" and w.cancel_at and (now - w.cancel_at).total_seconds() > 60:
+                        done = True
                 except Exception as e:
                     log.debug("취소 주문 조회 실패 %s: %s", w.cancel_id, e)
             if done:
@@ -224,6 +281,44 @@ class Trader:
                 self._cancel(key, "매수 미체결 TTL", now)
             elif w.purpose == "exit" and age > self.tcfg.exit_reprice_seconds:
                 self._reprice(key, w, now, session)
+
+    def _refresh(self, w: Working, now: datetime) -> tuple[dict, dict]:
+        """줄기의 끝나지 않은 id 를 모두 조회해 체결을 갱신한다 (정정 직전 원주문 체결도 놓치지 않게).
+        → (현재 주문, 조회한 주문들)"""
+        got = {}
+        for oid in list(w.ids):
+            if oid in w.final and oid != w.current:
+                continue
+            o = self.ex.order(oid)
+            if o["status"] == "OP_REJECTED":
+                # 정정 '요청' 거부 기록: 줄기에서 빼고 원주문을 계속 따라간다
+                log.warning("정정 거부 %s → 원주문 유지", oid)
+                w.ids.remove(oid)
+                w.fills.pop(oid, None)
+                self.journal.update_order(o, now)
+                continue
+            got[oid] = o
+            w.fills[oid] = (o["filled"], o["avg_price"] or 0.0)
+            if o["status"] in TERMINAL or o["status"] == "REPLACED":
+                w.final.add(oid)
+        return got.get(w.current) or self.ex.order(w.current), got
+
+    def _find_orphan(self, symbol: str, side: str) -> str | None:
+        """거래소에 있는데 봇 기록에 없는 같은 종목·방향의 최근 주문 (이미 체결된 것도 포함).
+        응답을 못 받은 주문·정정의 실제 주문을 찾는 데 쓴다."""
+        try:
+            orders = self.ex.recent_orders(symbol)
+        except Exception as e:
+            log.debug("최근 주문 조회 실패 %s: %s", symbol, e)
+            return None
+        known = {i for w in self.working.values() for i in w.ids} | \
+            {r["order_id"] for r in self.journal.q("SELECT order_id FROM orders WHERE symbol=?", (symbol,))}
+        cutoff = self.clock() - timedelta(minutes=10)
+        cands = [o for o in orders if o["side"] == side and o["order_id"] not in known
+                 and o["status"] not in ("REPLACED", "OP_REJECTED")
+                 and not (o["status"] == "REJECTED" and not o["filled"])
+                 and (not o.get("ts") or datetime.fromisoformat(o["ts"]) >= cutoff)]
+        return cands[-1]["order_id"] if cands else None
 
     def _on_fill(self, w: Working, delta: int, px: float, session: str, now: datetime) -> None:
         if w.purpose == "entry":
@@ -259,6 +354,16 @@ class Trader:
         except Exception as e:
             log.warning("재호가용 호가 실패 %s: %s", w.symbol, e)
             return
+        if not w.aggressive:
+            # 느긋한 매도(매도 구간·익절) 중에 손절·강제 청산·악재가 오면 공격적으로 바꾼다
+            t = self.journal.trade(w.trade_id)
+            r = self._exit_reason(t, b.bid if b.has_quote else 0, now)
+            if r and r[1]:
+                w.aggressive = True
+                self.journal.set_exiting(w.trade_id, r[0])
+                if w.scale:      # 절반만 팔던 주문 → 취소하고 다음 틱에 전량 매도
+                    self._cancel(key, f"분할 익절 중 {r[0]} → 전량 매도로 전환", now)
+                    return
         ok, price = self._exit_price(b, w.aggressive, count >= self.tcfg.max_exit_reprices, session)
         if not ok:
             w.placed_at = now          # 호가가 없으면 기다렸다가 다시
@@ -266,17 +371,20 @@ class Trader:
         self.exit_reprices[w.trade_id] = count
         try:
             new_id = self.ex.modify(w.current, price)
-        except Exception as e:
-            log.info("정정 실패 %s (%s) → 취소 후 재주문", w.current, e)
-            self._cancel(key, "매도 재호가", now)
+        except TossApiError as e:
+            if e.status and 400 <= e.status < 500:
+                log.info("정정 거부 %s (%s) → 취소 후 재주문", w.current, e)
+                self._cancel(key, "매도 재호가", now)
+            else:        # 응답을 못 받음: 정정이 됐을 수도 있다 → 다음 조회에서 REPLACED 면 후속 주문을 찾는다
+                log.warning("정정 응답 없음 %s (%s)", w.current, e)
+                w.placed_at = now
             return
-        old = w.current
+        except Exception as e:
+            log.warning("정정 응답 없음 %s (%s)", w.current, e)
+            w.placed_at = now
+            return
         w.ids.append(new_id)
         w.placed_at = now
-        try:
-            self.journal.update_order(self.ex.order(old), now)   # 원주문은 REPLACED 로 기록
-        except Exception:
-            pass
         left = max(min(w.qty - w.filled, self.journal.trade(w.trade_id)["remaining"]), 0)
         self.journal.log_order({"order_id": new_id, "symbol": w.symbol, "side": w.side,
                                 "type": "MARKET" if price is None else "LIMIT", "qty": left, "price": price,
@@ -420,6 +528,9 @@ class Trader:
         for t in self.journal.open_trades():
             if t["status"] != "OPEN" or t["remaining"] <= 0 or t["id"] in exiting:
                 continue
+            fail = self._exit_fail.get(t["id"])
+            if fail and now < fail[1] and not force_reason:
+                continue                     # 매도가 계속 거부되면 잠시 쉬었다가 (주문 도배 방지)
             late = (now - datetime.fromisoformat(t["deadline"])).total_seconds() / 60
             if late > self.tcfg.stale_alert_minutes and t["id"] not in self._stale_alerted:
                 self._stale_alerted.add(t["id"])
@@ -492,7 +603,7 @@ class Trader:
             except Exception:
                 continue
             if px:
-                total += (px - t["entry_price"]) * t["remaining"]
+                total += min((px - t["entry_price"]) * t["remaining"], 0.0)   # 다른 종목 이익으로 손실을 가리지 않게
         return total
 
     def scan_and_enter(self, now: datetime, trade_date, session: str) -> None:
@@ -522,6 +633,9 @@ class Trader:
                     "score": p.score, "price": p.price}
 
         rows = [row(p, p.ok, p.reason) for p in plans]
+        if any(v["bot"] > v["account"] for v in self.mismatch.values()):
+            rows += [row(p, False, "잔고 불일치 → 신규 매수 중단") for p in plans if p.ok]
+            plans = [p for p in plans if not p.ok]
         acct = self.account()
         unrealized = self._unrealized(open_trades) if any(p.ok for p in plans) else 0.0
         for p in sorted((p for p in plans if p.ok), key=lambda p: p.score, reverse=True):
@@ -556,21 +670,34 @@ class Trader:
             o = self.ex.place(symbol, side, qty, price)
         except Exception as e:
             log.warning("주문 실패 %s %s: %s", side, symbol, e)
-            if purpose == "entry":
-                self.journal.entry_finished(trade_id)
-            else:
-                self.journal.exit_unfilled(trade_id)
-            return
+            # 응답만 못 받고 실제로는 접수됐을 수 있다 → 열린 주문에서 찾아 이어받는다
+            oid = None if isinstance(e, TossApiError) and 400 <= (e.status or 0) < 500 else \
+                self._find_orphan(symbol, side)
+            if not oid:
+                self._order_failed(trade_id, purpose, symbol, now, str(e))
+                return
+            log.warning("응답 없던 주문을 찾음 %s %s → %s", side, symbol, oid)
+            o = self.ex.order(oid)
         self.journal.log_order(o, trade_id=trade_id, purpose=purpose, session=session, now=now, note=note)
         if o["status"] in TERMINAL and o["filled"] == 0:
-            if purpose == "entry":
-                self.journal.entry_finished(trade_id)
-            else:
-                self.journal.exit_unfilled(trade_id)
+            self._order_failed(trade_id, purpose, symbol, now, o["status"])
             return
+        if purpose == "exit":
+            self._exit_fail.pop(trade_id, None)
         self.working[o["order_id"]] = Working(o["order_id"], trade_id, purpose, symbol, side, now, note=note,
                                               aggressive=aggressive, qty=qty, scale=scale, ids=[o["order_id"]])
         self.poll_orders(now, session)   # 즉시 체결분 반영
+
+    def _order_failed(self, trade_id: int, purpose: str, symbol: str, now: datetime, why: str) -> None:
+        if purpose == "entry":
+            self.journal.entry_finished(trade_id)
+            return
+        self.journal.exit_unfilled(trade_id)
+        n = self._exit_fail.get(trade_id, (0, now))[0] + 1
+        self._exit_fail[trade_id] = (n, now + timedelta(seconds=min(30 * 2 ** (n - 1), 600)))
+        if n >= 3:
+            self.notifier.send(f"⚠️ {symbol} 매도 주문이 {n}번 연속 실패 ({why}). 잔고·거래정지를 확인하세요",
+                               key=f"exit-fail-{trade_id}", every=1800)
 
     # ---------- 감시·보고 ----------
     def watchdog(self, now: datetime, trade_date, session: str) -> None:
@@ -645,8 +772,17 @@ class Trader:
         mine: dict[str, int] = {}
         for t in self.journal.open_trades():
             mine[t["symbol"]] = mine.get(t["symbol"], 0) + t["remaining"]
-        diff = {s: (mine.get(s, 0), pos.get(s, (0, 0))[0]) for s in set(mine) | set(pos)
+        # 봇이 최근 매매한 종목만 비교 (계좌의 다른 보유 종목은 사용자 것)
+        recent = {r["symbol"] for r in self.journal.q(
+            "SELECT DISTINCT symbol FROM trades WHERE mode=? AND created >= ?",
+            (self.journal.mode, (self.clock() - timedelta(days=3)).astimezone(timezone.utc).isoformat(timespec="seconds")))}
+        diff = {s: (mine.get(s, 0), pos.get(s, (0, 0))[0]) for s in set(mine) | (recent & set(pos))
                 if mine.get(s, 0) != pos.get(s, (0, 0))[0]}
-        self.status["mismatch"] = {s: {"bot": a, "account": b} for s, (a, b) in diff.items()}
+        self.mismatch = {s: {"bot": a, "account": b} for s, (a, b) in diff.items()}
         if diff:
             log.warning("잔고 불일치 (봇 기록, 실제 계좌): %s", diff)
+            self.notifier.send("⚠️ 잔고 불일치 (봇 기록 / 실제 계좌): " +
+                               ", ".join(f"{s} {a}/{b}주" for s, (a, b) in diff.items()) +
+                               (" — 봇 기록이 더 많은 종목이 있어 신규 매수를 멈춥니다"
+                                if any(a > b for a, b in diff.values()) else ""),
+                               key="mismatch-" + ",".join(sorted(diff)), every=3600)

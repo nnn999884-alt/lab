@@ -360,14 +360,13 @@ def test_cancel_rejected_is_retried(env):
     calls = []
     ex.cancel = lambda oid: calls.append(oid) or "cancel-1"
     real_order = ex.order
-    ex.order = lambda oid: {"order_id": oid, "status": "REJECTED", "filled": 0, "avg_price": None} \
+    ex.order = lambda oid: {"order_id": oid, "status": "OP_REJECTED", "filled": 0, "avg_price": None} \
         if oid == "cancel-1" else real_order(oid)
     clock[0] = et(1, 2)
     tr.tick()                                         # TTL 경과 → 취소 요청
     assert len(calls) == 1
-    clock[0] = et(1, 4)
-    tr.tick()                                         # 1분 넘게 처리 중 → 취소 주문 확인 → 거부 → 재시도 가능
-    tr.tick()
+    clock[0] = et(1, 2, ) + timedelta(seconds=5)
+    tr.tick()                                         # 다음 조회에서 취소 거부(CANCEL_REJECTED) 확인 → 바로 다시 취소
     assert len(calls) == 2
 
 
@@ -495,3 +494,114 @@ def test_backstop_fires_while_bot_down_and_is_adopted(env, tmp_path):
     assert t["status"] == "CLOSED" and t["exit_reason"] == "서버 손절 안전망 발동" and t["exited_qty"] == qty
     sells = j.q("SELECT * FROM orders WHERE purpose='exit'")
     assert len(sells) == 1                             # 봇이 또 팔지 않았다
+
+
+# ---------- 독립 리뷰에서 나온 시나리오 ----------
+def _hold_and_start_exit(tr, market, clock, j, ex, bid=1.10):
+    market.set("PEN", 1.03, 1.035)
+    tr.tick()
+    clock[0] = et(9, 5)                               # 매도 구간
+    real_sync = ex.sync
+    ex.sync = lambda: None                            # 일단 안 팔리게
+    market.set("PEN", bid - 0.05, bid - 0.04)
+    tr.tick()
+    w = next(iter(tr.working.values()))
+    return w, real_sync
+
+
+def test_replace_rejected_keeps_following_original(env):
+    tr, market, mv, clock, j, ctl, ex = env
+    w, real_sync = _hold_and_start_exit(tr, market, clock, j, ex)
+    real_order = ex.order
+    ex.modify = lambda oid, price: "rej-1"            # 정정 요청 기록만 생기고 거부됨
+    ex.order = lambda oid: {"order_id": oid, "status": "OP_REJECTED", "filled": 0, "avg_price": None} \
+        if oid == "rej-1" else real_order(oid)
+    clock[0] += timedelta(seconds=70)
+    tr.tick()                                         # 재호가 → 거부 기록
+    assert w.ids[-1] == "rej-1"
+    ex.sync = real_sync
+    clock[0] += timedelta(seconds=5)
+    tr.tick()                                         # 거부 확인 → 원주문으로 돌아가 체결 추적
+    assert w.current == w.order_id
+    t = j.q("SELECT * FROM trades")[0]
+    assert t["status"] == "CLOSED" and t["exited_qty"] == t["qty"]
+
+
+def test_modify_timeout_adopts_successor(env):
+    tr, market, mv, clock, j, ctl, ex = env
+    w, real_sync = _hold_and_start_exit(tr, market, clock, j, ex)
+    real_modify = ex.modify
+    holder = {}
+
+    def modify_then_timeout(oid, price):
+        holder["new"] = real_modify(oid, price)       # 토스에서는 정정됨
+        raise TimeoutError("read timeout")            # 응답만 못 받음
+    ex.modify = modify_then_timeout
+    clock[0] += timedelta(seconds=70)
+    tr.tick()
+    clock[0] += timedelta(seconds=5)
+    ex.sync = real_sync
+    tr.tick()                                         # 원주문 REPLACED + 후속 모름 → 열린 주문에서 찾음
+    assert holder["new"] in w.ids
+    tr.tick()
+    t = j.q("SELECT * FROM trades")[0]
+    assert t["status"] == "CLOSED" and t["exited_qty"] == t["qty"]
+
+
+def test_restart_unsticks_exiting_trade_without_order(env, tmp_path):
+    tr, market, mv, clock, j, ctl, ex = env
+    market.set("PEN", 1.03, 1.035)
+    tr.tick()
+    tid = j.q("SELECT id FROM trades")[0]["id"]
+    j.set_exiting(tid, "손절")                       # 매도 주문을 내기 직전에 죽은 상황
+    Trader(PaperExchange(market, 10_000, tmp_path / "paper.json"), j, SessionCalendar(), mv, tr.tcfg, ctl,
+           clock=lambda: clock[0])
+    assert j.trade(tid)["status"] == "OPEN"
+
+
+def test_paper_sell_modify_not_blocked_by_cash(tmp_path):
+    m = FakeMarket()
+    m.set("A", 1.0, 1.01, size=10_000)
+    ex = PaperExchange(m, 1000, tmp_path / "p.json")
+    ex.place("A", "BUY", 900, 1.01)
+    m.set("A", 0.90, 0.91)
+    o = ex.place("A", "SELL", 900, 1.20)              # 안 팔림
+    new = ex.modify(o["order_id"], 1.15)              # 현금 $90 < 매도금액이어도 정정 가능
+    assert ex.order(new)["status"] == "OPEN"
+
+
+def test_scale_out_order_escalates_to_full_stop(env):
+    tr, market, mv, clock, j, ctl, ex = env
+    market.set("PEN", 1.03, 1.035)
+    tr.tick()
+    clock[0] = et(5, 0)
+    ex.sync = lambda: None                            # 분할 익절 주문이 안 팔린 채로
+    market.set("PEN", 1.20, 1.21)
+    tr.tick()
+    w = next(iter(tr.working.values()))
+    assert w.scale and not w.aggressive
+    market.set("PEN", 0.85, 0.86)                     # 손절가(−10%) 아래로 급락
+    clock[0] += timedelta(seconds=70)
+    tr.tick()
+    t = j.q("SELECT * FROM trades")[0]
+    assert "손절" in t["exit_reason"]                 # 사유가 손절로 바뀌고 분할 주문은 취소
+    assert w.cancel_sent
+
+
+def test_exit_rejections_back_off(env):
+    tr, market, mv, clock, j, ctl, ex = env
+    market.set("PEN", 1.03, 1.035)
+    tr.tick()
+    calls = []
+
+    def reject(sym, side, qty, price):
+        calls.append(side)
+        return {"order_id": f"r{len(calls)}", "symbol": sym, "side": side, "type": "LIMIT", "qty": qty,
+                "price": price, "status": "REJECTED", "filled": 0, "avg_price": None}
+    ex.place = reject
+    clock[0] = et(9, 5)
+    market.set("PEN", 1.05, 1.06)
+    for k in range(10):                               # 5초 간격 10틱
+        clock[0] += timedelta(seconds=5)
+        tr.tick()
+    assert len(calls) <= 3                            # 매 틱 재주문하지 않는다 (30초, 60초 …)

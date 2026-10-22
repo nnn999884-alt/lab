@@ -96,7 +96,12 @@ class TossStream:
 
     @property
     def healthy(self) -> bool:
-        return self.connected
+        return self.connected and self.clock() - self.last_frame < 90
+
+    @property
+    def orders_healthy(self) -> bool:
+        """내 주문 이벤트를 믿어도 되는지 (실거래 계좌 구독 + 연결 살아 있음)."""
+        return bool(self.account) and self.healthy
 
     def pin(self, symbols) -> None:
         """보유·주문 중 종목: 항상 구독 (요청 순위보다 우선)."""
@@ -177,6 +182,7 @@ class TossStream:
         self._force_token = False
         conn = self._connect(self.url, {"Authorization": f"Bearer {token}"})
         self.connected = True
+        self.last_frame = self.clock()
         self.connects += 1
         if self.connects > 1:
             with self._lock:
