@@ -339,6 +339,10 @@ class Handler(BaseHTTPRequestHandler):
         host = self.headers.get("Host") or ""
         if not origin or urlparse(origin).netloc != host:
             return self._json({"error": "같은 출처의 요청만 허용합니다."}, 403)
+        # 비밀번호 없이 외부 주소(터널)로 들어온 요청은 보기만: 주소를 아는 누구나 청산·정지를 누를 수 있게 되므로
+        if not self.data.cfg.dashboard_password and urlparse("//" + host).hostname not in ("127.0.0.1", "localhost"):
+            return self._json({"error": "외부 주소에서는 보기만 됩니다. 조작은 이 컴퓨터나 텔레그램으로"
+                                        " (.env 에 PENNYBOT_DASHBOARD_PASSWORD 를 넣으면 외부에서도 조작 가능)."}, 403)
         try:
             body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
         except ValueError:

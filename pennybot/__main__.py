@@ -5,7 +5,7 @@
   python -m pennybot summarize --date D    # 영업일 D(미국 날짜)의 세션 요약 다시 만들기
   python -m pennybot trade [--once]        # 세션 매매 엔진 (mode: paper 기본, live 는 이중 확인)
   python -m pennybot dashboard [--demo]    # 로컬 대시보드 http://127.0.0.1:8050 (--demo: 예시 데이터)
-  python -m pennybot tunnel                # 대시보드 외부 주소 (cloudflared, 비밀번호 필수, 주소는 알림으로)
+  python -m pennybot tunnel                # 대시보드 외부 주소 (cloudflared, 주소는 알림으로, 비밀번호 없으면 보기 전용)
   python -m pennybot probe-orders --symbol SYM --yes-real-order   # 토스 정정·취소 동작 실계좌 확인 (1주)
   python -m pennybot screen                # (구) Coil & Catalyst 스크리닝
   python -m pennybot run [--once]          # (구) 매매 루프
@@ -229,9 +229,9 @@ def cmd_tunnel(cfg: Config, port: int) -> None:
     from pathlib import Path
 
     from .trading.notify import Notifier
-    if not cfg.dashboard_password:
-        raise SystemExit("외부로 열기 전에 .env 에 PENNYBOT_DASHBOARD_PASSWORD 를 넣으세요"
-                         " (없으면 주소를 아는 누구나 전략을 켜고 끌 수 있습니다).")
+    # 비밀번호가 없으면 외부 주소는 보기 전용 (대시보드가 외부에서 온 제어 요청을 거절)
+    how = ("아이디 아무거나, 비밀번호는 .env 의 PENNYBOT_DASHBOARD_PASSWORD" if cfg.dashboard_password
+           else "비밀번호 없음 · 보기 전용, 조작은 이 컴퓨터나 텔레그램으로")
     exe = next((p for p in (Path("tools/cloudflared.exe"), Path("tools/cloudflared")) if p.exists()), None) \
         or shutil.which("cloudflared")
     if not exe:
@@ -246,8 +246,8 @@ def cmd_tunnel(cfg: Config, port: int) -> None:
         m = re.search(r"https://[a-z0-9-]+\.trycloudflare\.com", line)
         if m and not sent:
             sent = True
-            print(f"외부 주소: {m.group(0)}  (비밀번호: .env 의 PENNYBOT_DASHBOARD_PASSWORD, 아이디는 아무거나)")
-            notifier.send(f"🌐 대시보드 외부 주소: {m.group(0)}\n(아이디 아무거나, 비밀번호는 .env 의 PENNYBOT_DASHBOARD_PASSWORD)")
+            print(f"외부 주소: {m.group(0)}  ({how})")
+            notifier.send(f"🌐 대시보드 외부 주소: {m.group(0)}\n({how})")
         elif " ERR " in line:
             logging.warning("cloudflared: %s", line.strip())
     raise SystemExit(f"cloudflared 종료 (코드 {p.wait()})")

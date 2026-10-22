@@ -90,6 +90,20 @@ def test_password_required_when_set(tmp_path):
         srv.shutdown()
 
 
+def test_external_host_is_read_only_without_password(server):
+    base, _ = server
+    ext = "https://abc.trycloudflare.com"
+    req = urllib.request.Request(base + "/api/overview", headers={"Host": "abc.trycloudflare.com"})
+    with urllib.request.urlopen(req) as r:                                   # 보기는 된다
+        assert json.loads(r.read())["mode"] == "paper"
+    req = urllib.request.Request(base + "/api/control", data=b'{"kill": true}', method="POST",
+                                 headers={"Content-Type": "application/json", "Host": "abc.trycloudflare.com",
+                                          "Origin": ext})
+    with pytest.raises(urllib.error.HTTPError) as e:                          # 조작은 막힌다
+        urllib.request.urlopen(req)
+    assert e.value.code == 403 and "보기만" in json.loads(e.value.read())["error"]
+
+
 def test_control_requires_same_origin(server):
     base, tmp = server
     with pytest.raises(urllib.error.HTTPError) as e:
