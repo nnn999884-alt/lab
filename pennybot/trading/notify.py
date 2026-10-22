@@ -16,7 +16,29 @@ import time
 import requests
 
 log = logging.getLogger(__name__)
-TG = "https://api.telegram.org/bot{token}/{method}"
+TG = "https://api.telegram.org/bot{token}/{method}"   # 텔레그램 Bot API 공식 형식 (토큰이 주소에 들어간다)
+
+
+def redact(text: str, *secrets: str) -> str:
+    """오류 메시지에 들어간 토큰·웹훅 주소를 가린다 (로그 파일에 비밀값이 남지 않게)."""
+    for sec in secrets:
+        if sec:
+            text = text.replace(sec, "***")
+    return text
+
+
+def chunks(text: str, size: int) -> list[str]:
+    """줄 단위로 size 글자 이하 조각 (텔레그램 4096자, 디스코드 2000자 제한)."""
+    out, cur = [], ""
+    for line in text.split("\n"):
+        while len(line) > size:
+            out.append(line[:size])
+            line = line[size:]
+        if len(cur) + len(line) + 1 > size:
+            out.append(cur)
+            cur = ""
+        cur = f"{cur}\n{line}" if cur else line
+    return out + ([cur] if cur else [])
 
 
 class Notifier:
@@ -58,17 +80,31 @@ class Notifier:
 
     def _deliver(self, text: str) -> None:
         if self.url:
-            try:
-                # content = 디스코드, text = 슬랙
-                requests.post(self.url, json={"content": text, "text": text}, timeout=5)
-            except requests.RequestException as e:
-                log.warning("웹훅 알림 실패: %s", e)
+            for part in chunks(text, 1900):
+                try:
+                    # content = 디스코드, text = 슬랙
+                    r = requests.post(self.url, json={"content": part, "text": part}, timeout=5)
+                    if r.status_code >= 400:
+                        log.warning("웹훅 알림 실패: HTTP %s", r.status_code)
+                except requests.RequestException as e:
+                    log.warning("웹훅 알림 실패: %s", redact(str(e), self.url))
         if self.tg_token and self.tg_chat:
-            try:
-                requests.post(TG.format(token=self.tg_token, method="sendMessage"),
-                              json={"chat_id": self.tg_chat, "text": text}, timeout=10)
-            except requests.RequestException as e:
-                log.warning("텔레그램 알림 실패: %s", e)
+            for part in chunks(text, 4000):
+                try:
+                    r = requests.post(TG.format(token=self.tg_token, method="sendMessage"),
+                                      json={"chat_id": self.tg_chat, "text": part}, timeout=10)
+                    if r.status_code >= 400:
+                        # 401 = 토큰 틀림, 400 chat not found = chat id 틀림 또는 봇에게 먼저 말을 안 걸었음
+                        log.warning("텔레그램 알림 실패: HTTP %s %s", r.status_code, _desc(r))
+                except requests.RequestException as e:
+                    log.warning("텔레그램 알림 실패: %s", redact(str(e), self.tg_token))
+
+
+def _desc(r) -> str:
+    try:
+        return r.json().get("description", "")
+    except ValueError:
+        return ""
 
 
 HELP = ("명령: /상태 · /정지 (신규 매수 중단) · /재개 · /청산 확인 (보유 전량 청산) · /리포트 [영업일]\n"
@@ -93,7 +129,7 @@ class TelegramCommands:
             try:
                 self.poll(timeout=25)
             except Exception as e:
-                log.warning("텔레그램 명령 수신 실패: %s", e)
+                log.warning("텔레그램 명령 수신 실패: %s", redact(str(e), self.token))
                 time.sleep(10)
 
     def poll(self, timeout: int = 25) -> None:
@@ -101,7 +137,11 @@ class TelegramCommands:
         if self.offset is not None:
             params["offset"] = self.offset
         r = self.s.get(TG.format(token=self.token, method="getUpdates"), params=params, timeout=timeout + 10)
-        for u in r.json().get("result", []):
+        body = r.json()
+        if not body.get("ok", True):
+            # 409 = 같은 토큰으로 다른 곳에서 명령을 받는 중 (매매 봇을 두 개 켰거나 telegram-setup 실행 중)
+            raise RuntimeError(f"getUpdates 실패: {body.get('error_code')} {body.get('description')}")
+        for u in body.get("result", []):
             self.offset = u["update_id"] + 1
             msg = u.get("message") or {}
             if str((msg.get("chat") or {}).get("id")) != self.chat:

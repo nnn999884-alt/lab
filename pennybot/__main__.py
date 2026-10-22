@@ -258,7 +258,12 @@ def cmd_telegram_setup(cfg: Config) -> None:
     tok = cfg.trading.telegram_token
     if not tok:
         raise SystemExit("먼저 .env 에 PENNYBOT_TELEGRAM_TOKEN 을 넣으세요 (텔레그램 @BotFather → /newbot 으로 발급).")
-    r = requests.get(f"https://api.telegram.org/bot{tok}/getUpdates", timeout=15).json()
+    try:
+        r = requests.get(f"https://api.telegram.org/bot{tok}/getUpdates", timeout=15).json()
+    except requests.RequestException as e:
+        raise SystemExit("텔레그램 접속 실패: " + str(e).replace(tok, "***"))
+    if r.get("error_code") == 409:
+        raise SystemExit("매매 봇이 이미 텔레그램 명령을 받고 있습니다. 매매 창을 잠시 닫고 다시 실행하세요.")
     if not r.get("ok"):
         raise SystemExit(f"토큰이 맞지 않습니다: {r.get('description')}")
     chats = {(u.get("message") or {}).get("chat", {}).get("id"): (u.get("message") or {}).get("chat", {})

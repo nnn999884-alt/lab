@@ -200,3 +200,32 @@ def test_telegram_report_with_date_and_empty_message(tmp_path):
     assert tg.handle("/리포트 2026-10-21") == "리포트 2026-10-21"
     assert tg.handle("/report") == "리포트 None"
     assert tg.handle("") is None
+
+
+def test_secrets_not_logged_and_long_messages_split(monkeypatch, caplog):
+    import requests
+
+    from pennybot.trading import notify
+    tok = "123456:SECRET-TOKEN"
+    hook = "https://discord.com/api/webhooks/1/SECRET-HOOK"
+    calls = []
+
+    def post(url, json=None, timeout=None):
+        calls.append((url, json))
+        raise requests.ConnectionError(f"Max retries exceeded with url: {url}")
+    monkeypatch.setattr(notify.requests, "post", post)
+    n = Notifier(hook, tok, "42", background=False)
+    n.send("x\n" * 3000)                              # 6000자 → 텔레그램 2조각, 디스코드 4조각
+    assert sum(1 for u, _ in calls if "telegram" in u) == 2
+    assert sum(1 for u, _ in calls if "discord" in u) == 4
+    assert all(len(j.get("text", "")) <= 4000 for _, j in calls)
+    assert "SECRET" not in caplog.text and "***" in caplog.text
+
+
+def test_getupdates_conflict_raises(tmp_path):
+    class S:
+        def get(self, *a, **k): return Resp({"ok": False, "error_code": 409, "description": "Conflict"})
+    tg = TelegramCommands("t", "1", Control(tmp_path), FakeTrader(), Notifier(background=False), session=S())
+    import pytest
+    with pytest.raises(RuntimeError, match="409"):
+        tg.poll(timeout=0)
