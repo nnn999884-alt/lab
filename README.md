@@ -160,6 +160,10 @@ python -m pennybot backtest --start 2026-11-02 --end 2026-11-27 --param runner_o
 주목 종목의 개장 프리미엄 점검을 보여줍니다.
 내 컴퓨터(127.0.0.1)에서만 열리고 토스 API는 부르지 않습니다.
 
+**밖에서(휴대폰 등) 보기**: `.env`에 `PENNYBOT_DASHBOARD_PASSWORD`를 넣으면 `start.bat`이 `tunnel.bat`도 같이 띄워
+`https://….trycloudflare.com` 외부 주소를 엽니다 (Cloudflare 무료 터널, 가입 불필요). 주소는 켤 때마다 바뀌고 **텔레그램으로 옵니다**.
+접속하면 아이디·비밀번호 창이 뜹니다: 아이디는 아무거나, 비밀번호는 `.env` 값. 비밀번호가 없으면 외부 주소는 열리지 않습니다.
+
 ## 24시간 돌리기
 
 ```bash

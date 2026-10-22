@@ -63,6 +63,33 @@ def test_read_endpoints(server):
         assert b"Pennybot" in r.read()
 
 
+def test_password_required_when_set(tmp_path):
+    import base64
+    cfg = Config()
+    cfg.trading.db_path, cfg.collector.db_path = build(tmp_path)
+    cfg.state_dir = str(tmp_path)
+    cfg.dashboard_password = "s3cret"
+    srv = make_server(cfg, port=0)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{srv.server_address[1]}"
+    try:
+        for auth in (None, "Basic " + base64.b64encode(b"x:wrong").decode(), "Basic !!!"):
+            req = urllib.request.Request(base + "/api/overview", headers={"Authorization": auth} if auth else {})
+            with pytest.raises(urllib.error.HTTPError) as e:
+                urllib.request.urlopen(req)
+            assert e.value.code == 401 and "Basic" in e.value.headers["WWW-Authenticate"]
+        ok = {"Authorization": "Basic " + base64.b64encode(b"me:s3cret").decode()}
+        with urllib.request.urlopen(urllib.request.Request(base + "/api/overview", headers=ok)) as r:
+            assert json.loads(r.read())["mode"] == "paper"
+        req = urllib.request.Request(base + "/api/control", data=b'{"kill": true}', method="POST",
+                                     headers={"Content-Type": "application/json", "Origin": base})
+        with pytest.raises(urllib.error.HTTPError) as e:
+            urllib.request.urlopen(req)
+        assert e.value.code == 401
+    finally:
+        srv.shutdown()
+
+
 def test_control_requires_same_origin(server):
     base, tmp = server
     with pytest.raises(urllib.error.HTTPError) as e:

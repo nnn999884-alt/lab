@@ -178,6 +178,7 @@ class Config:
     trading: TradingConfig = field(default_factory=TradingConfig)
     toss: TossConfig = field(default_factory=TossConfig)
     sec_user_agent: str = ""
+    dashboard_password: str = ""     # 있으면 대시보드에 비밀번호 (외부 주소로 열 때 필수)
 
     @property
     def is_live(self) -> bool:
@@ -239,6 +240,7 @@ def load_config(path: str | Path = "config.yaml") -> Config:
     cfg.trading.notify_webhook = os.getenv("PENNYBOT_WEBHOOK", cfg.trading.notify_webhook)
     cfg.trading.telegram_token = os.getenv("PENNYBOT_TELEGRAM_TOKEN", "")
     cfg.trading.telegram_chat = os.getenv("PENNYBOT_TELEGRAM_CHAT", "")
+    cfg.dashboard_password = os.getenv("PENNYBOT_DASHBOARD_PASSWORD", "")
 
     # 실거래는 yaml + 환경변수 이중 확인
     if cfg.is_live and os.getenv("PENNYBOT_LIVE_CONFIRM") != "YES":

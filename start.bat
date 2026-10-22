@@ -12,3 +12,5 @@ start "pennybot 수집기" cmd /c run_forever.bat collect
 timeout /t 5 /nobreak >nul
 start "pennybot 매매" cmd /c run_forever.bat trade
 start "pennybot 대시보드" cmd /c run_forever.bat dashboard
+rem .env 에 대시보드 비밀번호가 있으면 외부 주소도 연다 (주소는 텔레그램으로)
+findstr /r /c:"^PENNYBOT_DASHBOARD_PASSWORD=..*" .env >nul 2>&1 && start "pennybot 외부 주소" cmd /c tunnel.bat

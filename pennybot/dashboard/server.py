@@ -8,6 +8,8 @@
 """
 from __future__ import annotations
 
+import base64
+import hmac
 import json
 import logging
 import sqlite3
@@ -270,7 +272,30 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _authorized(self) -> bool:
+        """PENNYBOT_DASHBOARD_PASSWORD 가 있으면 HTTP Basic 비밀번호를 확인한다 (아이디는 아무거나)."""
+        pw = self.data.cfg.dashboard_password
+        if not pw:
+            return True
+        h = self.headers.get("Authorization") or ""
+        try:
+            given = base64.b64decode(h[6:]).decode("utf-8").partition(":")[2] if h.startswith("Basic ") else ""
+        except ValueError:
+            given = ""
+        if hmac.compare_digest(given.encode(), pw.encode()):
+            return True
+        body = b'{"error": "password required"}'
+        self.send_response(401)
+        self.send_header("WWW-Authenticate", 'Basic realm="pennybot", charset="UTF-8"')
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+        return False
+
     def do_GET(self):
+        if not self._authorized():
+            return
         u = urlparse(self.path)
         qs = {k: v[0] for k, v in parse_qs(u.query).items()}
         n = lambda k, d: max(1, min(int(qs.get(k, d)), 1000))
@@ -306,6 +331,8 @@ class Handler(BaseHTTPRequestHandler):
         self._json({"error": "not found"}, 404)
 
     def do_POST(self):
+        if not self._authorized():
+            return
         if urlparse(self.path).path != "/api/control":
             return self._json({"error": "not found"}, 404)
         origin = self.headers.get("Origin") or ""

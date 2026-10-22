@@ -5,6 +5,7 @@
   python -m pennybot summarize --date D    # 영업일 D(미국 날짜)의 세션 요약 다시 만들기
   python -m pennybot trade [--once]        # 세션 매매 엔진 (mode: paper 기본, live 는 이중 확인)
   python -m pennybot dashboard [--demo]    # 로컬 대시보드 http://127.0.0.1:8050 (--demo: 예시 데이터)
+  python -m pennybot tunnel                # 대시보드 외부 주소 (cloudflared, 비밀번호 필수, 주소는 알림으로)
   python -m pennybot probe-orders --symbol SYM --yes-real-order   # 토스 정정·취소 동작 실계좌 확인 (1주)
   python -m pennybot screen                # (구) Coil & Catalyst 스크리닝
   python -m pennybot run [--once]          # (구) 매매 루프
@@ -220,6 +221,38 @@ def cmd_dashboard(cfg: Config, port: int, demo: bool) -> None:
     serve(cfg, port)
 
 
+def cmd_tunnel(cfg: Config, port: int) -> None:
+    """대시보드를 외부 주소(https://….trycloudflare.com)로 연다. 주소는 켤 때마다 바뀌므로 알림으로 보낸다."""
+    import re
+    import shutil
+    import subprocess
+    from pathlib import Path
+
+    from .trading.notify import Notifier
+    if not cfg.dashboard_password:
+        raise SystemExit("외부로 열기 전에 .env 에 PENNYBOT_DASHBOARD_PASSWORD 를 넣으세요"
+                         " (없으면 주소를 아는 누구나 전략을 켜고 끌 수 있습니다).")
+    exe = next((p for p in (Path("tools/cloudflared.exe"), Path("tools/cloudflared")) if p.exists()), None) \
+        or shutil.which("cloudflared")
+    if not exe:
+        raise SystemExit("cloudflared 가 없습니다. tunnel.bat 이 받아 오거나,"
+                         " https://github.com/cloudflare/cloudflared/releases 에서 tools 폴더에 넣으세요.")
+    t = cfg.trading
+    notifier = Notifier(t.notify_webhook, t.telegram_token, t.telegram_chat, background=False)
+    p = subprocess.Popen([str(exe), "tunnel", "--no-autoupdate", "--url", f"http://127.0.0.1:{port}"],
+                         stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, errors="replace")
+    sent = False
+    for line in p.stderr:
+        m = re.search(r"https://[a-z0-9-]+\.trycloudflare\.com", line)
+        if m and not sent:
+            sent = True
+            print(f"외부 주소: {m.group(0)}  (비밀번호: .env 의 PENNYBOT_DASHBOARD_PASSWORD, 아이디는 아무거나)")
+            notifier.send(f"🌐 대시보드 외부 주소: {m.group(0)}\n(아이디 아무거나, 비밀번호는 .env 의 PENNYBOT_DASHBOARD_PASSWORD)")
+        elif " ERR " in line:
+            logging.warning("cloudflared: %s", line.strip())
+    raise SystemExit(f"cloudflared 종료 (코드 {p.wait()})")
+
+
 def cmd_backtest(cfg: Config, args) -> None:
     """수집기 DB 를 재생해 매매 엔진을 그대로 돌린다 (토스 API 접속 없음)."""
     from datetime import date, datetime
@@ -301,7 +334,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="미국 페니주 자동매매 (토스증권)")
     ap.add_argument("command", nargs="?", default="collect",
                     choices=["check", "accounts", "collect", "summarize", "trade", "dashboard", "probe-orders",
-                             "backtest", "telegram-setup", "screen", "run"])
+                             "backtest", "telegram-setup", "tunnel", "screen", "run"])
     ap.add_argument("--config", default="config.yaml")
     ap.add_argument("--once", action="store_true", help="collect/run: 한 번만 실행")
     ap.add_argument("--date", help="summarize: 미국 영업일 YYYY-MM-DD")
@@ -365,6 +398,7 @@ def _dispatch(cfg, args) -> None:
         "probe-orders": lambda: cmd_probe_orders(cfg, args.symbol, args.yes_real_order),
         "backtest": lambda: cmd_backtest(cfg, args),
         "telegram-setup": lambda: cmd_telegram_setup(cfg),
+        "tunnel": lambda: cmd_tunnel(cfg, args.port),
         "screen": lambda: cmd_screen(cfg),
         "run": lambda: cmd_run(cfg, args.once),
     }[args.command]()
