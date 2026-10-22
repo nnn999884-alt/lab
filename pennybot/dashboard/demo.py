@@ -146,7 +146,18 @@ def build(state_dir: str | Path = "state_demo", seed: int = 7) -> tuple[str, str
                     for i, (ev, dr) in enumerate(events)])
     (d / "control.json").write_text(json.dumps({"kill": False, "flatten": False, "strategies": {}}), encoding="utf-8")
     _demo_backtests(d, rnd, now)
+    _demo_reports(d, j, now)
     return str(d / "trading.db"), str(d / "market.db")
+
+
+def _demo_reports(d: Path, j: Journal, now) -> None:
+    """일일 리포트 예시: 예시 매매 기록으로 최근 영업일 몇 개."""
+    from ..trading.report import build, render, save
+    days = [r["trade_date"] for r in j.q("SELECT DISTINCT trade_date FROM trades WHERE status='CLOSED' "
+                                         "ORDER BY trade_date DESC LIMIT 6")]
+    for td in days:
+        rep = build(j, td, now)
+        save(rep, render(rep), d / "reports")
 
 
 def _demo_backtests(d: Path, rnd, now) -> None:

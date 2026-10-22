@@ -56,6 +56,9 @@ def test_read_endpoints(server):
     bt = get(base + "/api/backtests")
     assert [b["run"] for b in bt] == ["demo-2", "demo-1"] and "trades" in bt[0] and "trades" not in bt[1]
     assert bt[0]["params"] == {"runner_overnight.trail_pct": 6}
+    reps = get(base + "/api/reports")
+    assert reps and reps[0]["text"].startswith("📊 일일 리포트") and "trades" in reps[0]
+    assert [r["trade_date"] for r in reps] == sorted((r["trade_date"] for r in reps), reverse=True)
     with urllib.request.urlopen(base + "/") as r:
         assert b"Pennybot" in r.read()
 

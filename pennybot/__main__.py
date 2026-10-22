@@ -157,7 +157,7 @@ def cmd_trade(cfg: Config, once: bool) -> None:
     control = Control(cfg.state_dir)
     trader = Trader(ex, Journal(t.db_path, mode=cfg.mode), cal,
                     MarketView(cfg.collector.db_path, client, cal, ex), t, control,
-                    notifier, fund=fund, stream=stream)
+                    notifier, fund=fund, stream=stream, reports_dir=str(Path(cfg.state_dir) / "reports"))
     if t.telegram_token and t.telegram_chat and not once:
         TelegramCommands(t.telegram_token, t.telegram_chat, control, trader, notifier).start()
         notifier.send(f"🤖 매매 봇 시작 ({cfg.mode}). /상태 로 확인")

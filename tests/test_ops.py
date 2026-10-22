@@ -68,7 +68,7 @@ def test_fees_in_pnl_and_daily_report(env):
     fees = t["qty"] * (t["entry_price"] + t["exit_price"]) * 0.001
     assert abs(t["fees"] - fees) < 1e-9 and abs(t["pnl"] - (gross - fees)) < 1e-9
     rep = tr.report_text("2026-10-21")
-    assert "1건" in rep and "PEN" in rep and f"{t['pnl']:+.2f}$" in rep
+    assert "오늘: 1건" in rep and "PEN" in rep and f"+${t['pnl']:,.2f}" in rep and "[데이→프리]" in rep
     assert "보유 종목 없음" in tr.status_text()
 
 
@@ -155,3 +155,48 @@ def test_market_view_warnings_active_only(tmp_path):
     assert mv.warnings("X") == ["INVESTMENT_WARNING"]
     mv.warnings("X")
     assert C.calls == 1                                  # 5분 캐시
+
+
+def test_daily_report_waits_for_morning_kst_and_sends_once(env, tmp_path):
+    from datetime import timedelta
+    tr, market, mv, clock, j, ctl, ex = env
+    tr.reports_dir = str(tmp_path / "reports")
+    sent = []
+    tr.notifier.send = lambda text, **kw: sent.append(text)
+    j.set_meta("last_report", "2026-10-20")
+    market.set("PEN", 1.03, 1.035)
+    tr.tick()
+    clock[0] = et(9, 1)
+    market.set("PEN", 1.07, 1.08)
+    tr.tick()                                          # 프리마켓에 청산
+    sent.clear()
+    clock[0] = et(17, 0)                               # 정규장 끝 (한국 06:00) → 07:30 까지 기다림
+    tr.daily_report(clock[0])
+    assert not sent
+    clock[0] = et(18, 31)                              # 한국 07:31
+    tr.daily_report(clock[0])
+    tr.daily_report(clock[0] + timedelta(minutes=5))
+    assert len(sent) == 1 and "일일 리포트 2026-10-21" in sent[0] and "PEN" in sent[0]
+    assert (tmp_path / "reports" / "2026-10-21.txt").read_text(encoding="utf-8") == sent[0]
+    assert j.get_meta("last_report") == "2026-10-21"
+
+
+def test_daily_report_catches_up_after_bot_was_off(env):
+    from datetime import timedelta
+    tr, market, mv, clock, j, ctl, ex = env
+    sent = []
+    tr.notifier.send = lambda text, **kw: sent.append(text)
+    j.set_meta("last_report", "2026-10-20")
+    clock[0] = et(21, 0) + timedelta(days=0)           # 다음 날 데이마켓에 켬 (한국 10:00)
+    tr.cal.classify(clock[0])
+    tr.daily_report(clock[0])
+    assert len(sent) == 1 and "2026-10-21" in sent[0] and "매매 없음" in sent[0]
+
+
+def test_telegram_report_with_date_and_empty_message(tmp_path):
+    class T:
+        def report_text(self, d=None): return f"리포트 {d}"
+    tg = TelegramCommands("t", "1", Control(tmp_path), T(), Notifier(background=False))
+    assert tg.handle("/리포트 2026-10-21") == "리포트 2026-10-21"
+    assert tg.handle("/report") == "리포트 None"
+    assert tg.handle("") is None

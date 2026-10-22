@@ -71,7 +71,7 @@ class Notifier:
                 log.warning("텔레그램 알림 실패: %s", e)
 
 
-HELP = ("명령: /상태 · /정지 (신규 매수 중단) · /재개 · /청산 확인 (보유 전량 청산) · /리포트 (오늘 손익)\n"
+HELP = ("명령: /상태 · /정지 (신규 매수 중단) · /재개 · /청산 확인 (보유 전량 청산) · /리포트 [영업일]\n"
         "영어도 됩니다: /status /kill /resume /flatten confirm /report")
 
 
@@ -111,7 +111,9 @@ class TelegramCommands:
                 self.notifier.send(reply)
 
     def handle(self, text: str) -> str | None:
-        cmd = text.split("@")[0].lower()
+        cmd = text.split("@")[0].lower().strip()
+        if not cmd:
+            return None                    # 사진·스티커 등 글 없는 메시지
         if cmd in ("/상태", "/status", "/start"):
             return self.trader.status_text()
         if cmd in ("/정지", "/kill", "/stop"):
@@ -125,8 +127,9 @@ class TelegramCommands:
             return "🧹 보유 종목 전량 청산을 시작합니다."
         if cmd in ("/청산", "/flatten"):
             return "정말 전량 청산하려면 '/청산 확인' 을 보내세요."
-        if cmd in ("/리포트", "/report"):
-            return self.trader.report_text()
+        if cmd.split()[0] in ("/리포트", "/report"):
+            arg = cmd.split()[1] if len(cmd.split()) > 1 else None      # /리포트 2026-10-21
+            return self.trader.report_text(arg)
         if cmd.startswith("/"):
             return HELP
         return None

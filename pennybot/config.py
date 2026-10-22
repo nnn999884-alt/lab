@@ -137,6 +137,8 @@ class TradingConfig:
     notify_webhook: str = ""             # 디스코드/슬랙 웹훅 (환경변수 PENNYBOT_WEBHOOK 우선)
     telegram_token: str = ""             # 텔레그램 봇 토큰·내 chat id: 환경변수 PENNYBOT_TELEGRAM_TOKEN / _CHAT
     telegram_chat: str = ""
+    daily_report: bool = True            # 영업일이 끝나면 일일 리포트 (알림 + state/reports/ 파일)
+    daily_report_time_kst: str = "07:30" # 한국 시간 이 시각 이후에 보냄 (정규장은 새벽 5~6시에 끝나므로). "00:00" = 끝나자마자
     strategies: dict = field(default_factory=lambda: {
         # gap_risk_pct: 밤사이 최악의 갭(%) — 수량은 손절폭이 아니라 이 갭을 기준으로 정한다
         "runner_overnight": {"enabled": True, "budget_pct": 0.40, "max_positions": 4,

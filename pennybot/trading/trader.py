@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
-from ..sessions import AFTER, CLOSED, DAY, KST, REGULAR, SessionCalendar
+from ..sessions import CLOSED, DAY, KST, REGULAR, SessionCalendar
 from .control import Control
 from ..toss_api import TossApiError
 from .exchange import TERMINAL, Exchange
@@ -73,6 +73,7 @@ class Trader:
     clock: object = field(default=lambda: datetime.now(timezone.utc))
     fund: object = None          # Fundamentals: 희석 프로필·펌프 신호 (없으면 수집기 공시만으로 판단)
     stream: object = None        # TossStream: 내 주문 이벤트가 오면 그 주문만 조회 (없거나 끊기면 매 틱 REST)
+    reports_dir: str | None = None   # 일일 리포트 파일 폴더 (None = 알림만)
 
     def __post_init__(self):
         self.risk = Risk(self.tcfg, self.journal, self.control)
@@ -149,8 +150,6 @@ class Trader:
             log.info("세션 변경 %s → %s: 걸린 주문 모두 취소", self.last_session, session)
             self.cancel_all(now, "세션 변경")
             self.poll_orders(now, session)
-            if session == AFTER and trade_date:
-                self.notifier.send(self.report_text(trade_date))   # 정규장 마감 = 그 영업일 매매 끝
         self.last_session = session
         self.status = {"session": session, "trade_date": str(trade_date) if trade_date else None,
                        "mode": self.journal.mode, "working": len(self.working)}
@@ -171,6 +170,8 @@ class Trader:
             self._stage("snapshot", self.snapshot, now, trade_date)
         if self._due("reconcile", now, timedelta(minutes=15)):
             self._stage("reconcile", self.reconcile)
+        if self.tcfg.daily_report and self._due("report", now, timedelta(minutes=5)):
+            self._stage("report", self.daily_report, now)
         if session != CLOSED and self._due("watchdog", now, timedelta(minutes=5)):
             self._stage("watchdog", self.watchdog, now, trade_date, session)
         self.status["mismatch"] = self.mismatch
@@ -727,20 +728,37 @@ class Trader:
             lines.append("보유 종목 없음")
         return "\n".join(lines)
 
+    def _completed_day(self, now: datetime):
+        """정규장이 이미 끝난 가장 최근 영업일 (그날 매매가 끝난 날)."""
+        done = [d for d, day in self.cal.days.items() if REGULAR in day.sessions and day.sessions[REGULAR][1] <= now]
+        return max(done, default=None)
+
+    def daily_report(self, now: datetime) -> None:
+        """영업일이 끝났고 아직 안 보냈으면 리포트 (봇이 그 시각에 꺼져 있었어도 켜지면 보낸다)."""
+        day = self._completed_day(now)
+        last = self.journal.get_meta("last_report")
+        if day is None or (last and last >= day.isoformat()):
+            return
+        hh, mm = (int(x) for x in self.tcfg.daily_report_time_kst.split(":"))
+        end = self.cal.days[day].sessions[REGULAR][1].astimezone(KST)
+        send_at = end.replace(hour=hh, minute=mm, second=0, microsecond=0)
+        if send_at < end - timedelta(hours=12):
+            send_at += timedelta(days=1)
+        if now.astimezone(KST) < send_at and last:       # 처음 켠 날은 기다리지 않고 바로
+            return
+        text = self.report_text(day)
+        if self.reports_dir:
+            from .report import build, save
+            save(build(self.journal, day.isoformat(), now, self.mismatch), text, self.reports_dir)
+        self.notifier.send(text)
+        self.journal.set_meta("last_report", day.isoformat())
+
     def report_text(self, trade_date=None) -> str:
-        td = str(trade_date or self.status.get("trade_date") or "")
-        rows = self.journal.q("""SELECT symbol, pnl, pnl_pct, exit_reason FROM trades
-                                 WHERE status='CLOSED' AND trade_date=? AND mode=? ORDER BY id""",
-                              (td, self.journal.mode))
-        nets = [r["pnl"] or 0 for r in rows]          # pnl 은 이미 수수료 차감
-        lines = [f"📊 {td} 결과: {len(rows)}건, 승 {sum(1 for n in nets if n > 0)}, "
-                 f"순손익 {sum(nets):+.2f}$ (수수료 차감)"]
-        lines += [f"  {r['symbol']} {r['pnl_pct']:+.1f}% {n:+.2f}$ ({r['exit_reason']})"
-                  for r, n in list(zip(rows, nets))[:15]]
-        left = self.journal.open_trades()
-        if left:
-            lines.append("⚠️ 아직 보유: " + ", ".join(f"{t['symbol']} {t['remaining']}주" for t in left))
-        return "\n".join(lines)
+        from .report import build, render
+        td = trade_date or self._completed_day(self.clock())
+        if td is None:
+            return "아직 끝난 영업일이 없습니다."
+        return render(build(self.journal, str(td), self.clock(), self.mismatch))
 
     # ---------- 계좌 ----------
     def account(self) -> Account:

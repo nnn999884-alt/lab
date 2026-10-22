@@ -95,6 +95,8 @@ trading:
   loss_streak_stop: 4           # 4연속 손실이면
   loss_streak_cooldown_hours: 24  # 24시간 신규 매수 쉼
   fee_pct: 0.1                  # 수수료 % (실거래는 토스에서 조회한 값으로 자동 교체)
+  daily_report: true            # 일일 리포트 (알림 + state/reports/)
+  daily_report_time_kst: "07:30"  # 한국 시간 이 시각 이후에 보냄 ("00:00" = 정규장 끝나자마자)
   backstop: true                # 서버 손절 안전망 (토스 조건주문, PC 가 꺼져도 동작)
   backstop_buffer_pct: 3        # 봇 손절가보다 3% 아래에 감시
   backstop_slippage_pct: 8      # 발동 시 지정가 = 감시가 −8%

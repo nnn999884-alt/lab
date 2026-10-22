@@ -187,6 +187,7 @@ class Backtest:
         market = ReplayMarket(self.db_path, now_fn, half_spread_pct=self.half_spread_pct,
                               assumed_size=self.assumed_size)
         self.tcfg.fee_pct = self.fee_pct
+        self.tcfg.daily_report = False
         ex = PaperExchange(market, self.tcfg.paper_cash, out / "paper.json", fee_pct=self.fee_pct)
         mv = MarketView(self.db_path, ReplayClient(self.db_path, cal, now_fn), cal, ex, clock=now_fn)
         journal = Journal(out / "backtest.db", mode="backtest")

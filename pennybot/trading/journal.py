@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS signals (
 CREATE TABLE IF NOT EXISTS equity (
     ts TEXT PRIMARY KEY, cash REAL, positions_value REAL, equity REAL, day_pnl REAL, mode TEXT);
 CREATE TABLE IF NOT EXISTS heartbeat (component TEXT PRIMARY KEY, ts TEXT, info TEXT);
+CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 CREATE INDEX IF NOT EXISTS ix_trades_status ON trades (status);
 CREATE INDEX IF NOT EXISTS ix_signals_ts ON signals (ts);
 """
@@ -199,6 +200,13 @@ class Journal:
     def snapshot_equity(self, cash: float, positions_value: float, day_pnl: float, now: datetime) -> None:
         self._x("INSERT OR REPLACE INTO equity VALUES (?,?,?,?,?,?)",
                 (now_iso(now), cash, positions_value, cash + positions_value, day_pnl, self.mode))
+
+    def get_meta(self, key: str) -> str | None:
+        r = self.q("SELECT value FROM meta WHERE key=?", (f"{self.mode}:{key}",))
+        return r[0]["value"] if r else None
+
+    def set_meta(self, key: str, value: str) -> None:
+        self._x("INSERT OR REPLACE INTO meta VALUES (?,?)", (f"{self.mode}:{key}", value))
 
     def beat(self, component: str, info: dict, now: datetime) -> None:
         self._x("INSERT OR REPLACE INTO heartbeat VALUES (?,?,?)",

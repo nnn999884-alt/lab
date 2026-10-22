@@ -241,6 +241,20 @@ def _backtests(state_dir: str, limit: int = 10) -> list[dict]:
     return out
 
 
+def _reports(state_dir: str, limit: int = 30) -> list[dict]:
+    """일일 리포트 (state/reports/<영업일>.txt + .json), 최신순."""
+    out = []
+    for f in sorted(Path(state_dir, "reports").glob("*.txt"), reverse=True)[:limit]:
+        row = {"trade_date": f.stem, "text": f.read_text(encoding="utf-8")}
+        try:
+            j = json.loads(f.with_suffix(".json").read_text(encoding="utf-8"))
+            row.update(net=j["day"]["net"], trades=j["day"]["trades"], wins=j["day"]["wins"])
+        except (OSError, ValueError, KeyError):
+            pass
+        out.append(row)
+    return out
+
+
 class Handler(BaseHTTPRequestHandler):
     data: Data = None  # 서버 생성 시 주입
 
@@ -274,6 +288,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/runners": lambda: d.runners(n("days", 10)),
             "/api/dilution": lambda: d.dilution_events(n("limit", 60)),
             "/api/backtests": lambda: _backtests(d.cfg.state_dir, n("limit", 10)),
+            "/api/reports": lambda: _reports(d.cfg.state_dir, n("limit", 30)),
         }
         if u.path in routes:
             try:

@@ -76,6 +76,10 @@ section { margin-bottom: 16px; }
 .tip .k { color: var(--text-secondary); }
 .empty { color: var(--text-muted); font-size: 13px; padding: 24px 0; text-align: center; }
 .tablewrap { overflow-x: auto; }
+.report { margin: 0; padding: 12px 14px; white-space: pre-wrap; word-break: break-word; font: 12.5px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  background: var(--bg-subtle, rgba(127,127,127,.06)); border-radius: 8px; max-height: 420px; overflow: auto; }
+#reports tr { cursor: pointer; }
+#reports tr[aria-selected="true"] td { background: rgba(127,127,127,.12); }
 table { border-collapse: collapse; width: 100%; font-size: 12.5px; font-variant-numeric: tabular-nums; }
 th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
 th { color: var(--text-secondary); font-weight: 600; position: sticky; top: 0; background: var(--surface-1); }
@@ -180,6 +184,15 @@ details summary { cursor: pointer; color: var(--text-secondary); font-size: 12.5
     <h2>공시·보도자료 이벤트</h2>
     <p class="sub">SEC 공시 본문과 보도자료로 판정한 사건. ▲ 호재, ▼ 악재</p>
     <div class="tablewrap" style="max-height:360px"><table id="dilution"></table></div>
+  </section>
+
+  <section class="card">
+    <h2>일일 리포트</h2>
+    <p class="sub">영업일이 끝나면 한국 시간 07:30 에 알림으로 보내고 여기에 남깁니다</p>
+    <div class="grid two" style="grid-template-columns:minmax(0,1fr) minmax(0,2fr)">
+      <div class="tablewrap" style="max-height:420px"><table id="reports"></table></div>
+      <pre id="report-text" class="report">리포트가 아직 없습니다.</pre>
+    </div>
   </section>
 
   <section class="card">
@@ -536,6 +549,23 @@ async function loadRunners() {
   ], ev, "희석 이벤트 없음 (SEC_USER_AGENT 를 설정하면 공시 본문까지 판정합니다)");
 }
 
+let reportSel = null;
+async function loadReports() {
+  const rows = await api("/api/reports?limit=30");
+  if (!rows.length) return;
+  if (!reportSel || !rows.some(r => r.trade_date === reportSel)) reportSel = rows[0].trade_date;
+  table($("reports"), [
+    { h: "영업일", f: r => r.trade_date }, { h: "매매", num: 1, f: r => r.trades ?? "-" },
+    { h: "순손익", num: 1, f: r => r.net == null ? "-" : fmtUsd(r.net, true), tone: r => tone(r.net) },
+  ], rows);
+  $("reports").querySelectorAll("tbody tr").forEach((tr, i) => {
+    tr.setAttribute("aria-selected", rows[i].trade_date === reportSel);
+    tr.tabIndex = 0;
+    tr.onclick = tr.onkeydown = e => { if (e.type === "click" || e.key === "Enter") { reportSel = rows[i].trade_date; loadReports(); } };
+  });
+  $("report-text").textContent = rows.find(r => r.trade_date === reportSel).text;
+}
+
 async function loadBacktests() {
   const runs = await api("/api/backtests?limit=10");
   const wr = s => s && s.trades ? Math.round(s.win_rate * 100) + "%" : "-";
@@ -588,7 +618,7 @@ try { const t = localStorage.getItem("theme"); if (t) document.documentElement.d
 
 async function refresh() {
   document.querySelector("main").classList.add("loading");
-  const jobs = [loadOverview(), loadEquity(), loadStrategies(), loadTables(), loadRunners(), loadCollector(), loadResearch(), loadBacktests()];
+  const jobs = [loadOverview(), loadEquity(), loadStrategies(), loadTables(), loadRunners(), loadCollector(), loadResearch(), loadBacktests(), loadReports()];
   const res = await Promise.allSettled(jobs);
   res.filter(r => r.status === "rejected").forEach(r => console.warn(r.reason));
   document.querySelector("main").classList.remove("loading");
