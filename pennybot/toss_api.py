@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import os
@@ -72,12 +73,47 @@ class TokenStore:
         except (OSError, ValueError, KeyError):
             return None
 
+    @contextlib.contextmanager
+    def issuing(self, wait: float = 15.0, stale: float = 30.0):
+        """프로세스 간 잠금 (잠금 파일). 30초 넘게 남은 잠금은 죽은 프로세스 것으로 보고 치운다."""
+        lock = self.path.with_suffix(".lock")
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        t0, fd = time.time(), None
+        while fd is None:
+            try:
+                fd = os.open(str(lock), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            except FileExistsError:
+                try:
+                    if time.time() - lock.stat().st_mtime > stale:
+                        lock.unlink(missing_ok=True)
+                        continue
+                except OSError:
+                    pass
+                if time.time() - t0 > wait:
+                    break                              # 너무 오래 기다리면 그냥 진행
+                time.sleep(0.2)
+        try:
+            yield
+        finally:
+            if fd is not None:
+                os.close(fd)
+                try:
+                    lock.unlink()
+                except OSError:
+                    pass
+
     def save(self, token: str, expires_at: float) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(json.dumps({"access_token": token, "expires_at": expires_at}), encoding="utf-8")
         os.chmod(tmp, 0o600)
-        tmp.replace(self.path)
+        for k in range(10):
+            try:
+                tmp.replace(self.path)
+                return
+            except PermissionError:          # 윈도우: 다른 프로세스가 마침 읽는 중이면 잠깐 잠겨 있다
+                time.sleep(0.05 * (k + 1))
+        log.warning("토큰 파일 저장 실패 (다른 프로세스가 사용 중) — 메모리의 토큰으로 계속")
 
 
 @dataclass
@@ -124,7 +160,13 @@ class TossClient:
                 if not force or cached[0] != self._token:
                     self._token = cached[0]
                     return self._token
-            self._token = self._issue_token()
+            # 재발급은 프로세스 사이에서 한 번에 하나만: 수집기·봇이 동시에 받으면 서로의 토큰을 무효로 만든다
+            with self.tokens.issuing():
+                cached = self.tokens.load()
+                if cached and cached[1] - 60 > self._clock() and cached[0] != self._token:
+                    self._token = cached[0]            # 기다리는 사이 다른 프로세스가 받아 둠
+                    return self._token
+                self._token = self._issue_token()
             return self._token
 
     # ---------- 공통 요청 ----------
