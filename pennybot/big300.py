@@ -57,7 +57,8 @@ def analyze_day(m, pc, w):
     }
 
 
-def run(cfg):
+def run(cfg, big_mult=4.0, client=None):
+    """big_mult: 장중 고가 ≥ 전날 종가 × big_mult 인 날 (4 = +300%, 3 = +200%). client 를 주면 캐시에 없는 1분봉을 받는다."""
     import json
     from pathlib import Path
     from .anatomy import day_window, fetch_day
@@ -81,7 +82,7 @@ def run(cfg):
             if b[i][0] < cut or not pc or pc < 0.1:
                 continue
             mult = b[i][2] / pc
-            if mult >= 4:
+            if mult >= big_mult:
                 groups["big"].append((s, i))
             elif 1.2 <= mult < 2:
                 groups["ctl"].append((s, i))
@@ -94,7 +95,7 @@ def run(cfg):
             pre = daily(b[max(0, i - 71):i])               # 전날까지 일봉 (D0)
             if not pre:
                 continue
-            m = fetch_day(None, rdb, s, d0, d1)
+            m = fetch_day(client if g == "big" else None, rdb, s, d0, d1)
             row = {"symbol": s, "d": d1, "score": pre["score"], "signals": pre["signals"], **pre["metrics"],
                    "price": pc, "shares": shares.get(s)}
             if len(m) >= 30:
@@ -110,7 +111,7 @@ def run(cfg):
     return out
 
 
-def format_report(out) -> str:
+def format_report(out, label="+300%") -> str:
     big, ctl = out["big"], out["ctl"]
     def med(rows, k):
         xs = [r[k] for r in rows if r.get(k) is not None]
@@ -119,8 +120,8 @@ def format_report(out) -> str:
         xs = [r for r in rows if r]
         return sum(1 for r in xs if fn(r)) / len(xs) * 100 if xs else 0
     f = lambda v, d=0: "-" if v is None else f"{v:+.{d}f}"
-    L = [f"장중 +300% {len(big)}건  vs  비교군(장중 +20~100%) {len(ctl)}건  — 최근 200일", "",
-         "① 급등 전 (전날까지 일봉)              +300%      비교군"]
+    L = [f"장중 {label} {len(big)}건  vs  비교군(장중 +20~100%) {len(ctl)}건  — 최근 200일", "",
+         f"① 급등 전 (전날까지 일봉)              {label:>6}      비교군"]
     for name, k, d in (("60일 고점 대비 %", "dd60", 0), ("10일 수익률 %", "ret10", 0), ("30일 변동폭 평균 %", "range30", 0),
                        ("60일 안 +30% 급등 횟수", "spikes60", 1), ("전날 거래량 (평소 대비 배)", "vol_ratio", 1),
                        ("20일 평균 거래대금 $K", "dollar20", 0), ("가격 $", "price", 2), ("발행주식 M주 (현재값)", "shares", 1),
