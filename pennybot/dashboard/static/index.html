@@ -343,7 +343,8 @@ body.readonly .readonly-note { display: inline; }
     <section class="card">
       <div class="pre-head"><h2>🧪 가상 매매</h2><span class="sub" id="vs-sum" style="margin:0"></span></div>
       <p class="sub" id="vs-rule">신호 = 1분 회전율 0.5%+ 또는 1분 거래대금 $5만+ 가 처음 터진 분. 전략 넷이 각자 사고팔고 정규장 마감에 정리 (실제 주문 없음).
-        ① VWAP −10% 지정가 → +10% ② 프리 06~09시 바로 → +20% ③ 고점 −30% 지정가 → +20% ④ 신호가 −15% 지정가 → +15% · 손절 모두 −35%</p>
+        ① VWAP −10% 지정가 → +10% ② 프리 06~09시 바로 → +20% ③ 고점 −30% 지정가 → +20% ④ 신호가 −15% 지정가 → +15%
+        ⑤ 5분 뒤 고점 −10% 눌림 + 거래대금 유지 → 바로, +15% ⑥ 3분 반 뒤 같은 조건 → 그 가격 지정가 3분(돌파면 시장가), +10% · 손절 모두 −35%</p>
       <div class="vs-strats" id="vs-strats"></div>
       <div class="vs-list" id="vs"></div>
       <button id="vs-more" class="more-btn" hidden>더 보기</button>
@@ -1152,7 +1153,7 @@ async function loadVs() {
   drawVs();
 }
 let vsRows = [], vsShown = 8;
-const STRAT_NAME = { S1: "① VWAP 눌림", S2: "② 프리 추격", S3: "③ 깊은 털기", S4: "④ 신호가 눌림", "이전": "이전 규칙" };
+const STRAT_NAME = { S1: "① VWAP 눌림", S2: "② 프리 추격", S3: "③ 깊은 털기", S4: "④ 신호가 눌림", S5: "⑤ 5분 눌림", S6: "⑥ 3분반 눌림", "이전": "이전 규칙" };
 const untilS = (a, b) => { const m = Math.max(0, Math.round((new Date(b) - new Date(a)) / 60000)); return m >= 60 ? `${Math.floor(m / 60)}시간 ${m % 60}분 뒤` : `${m}분 뒤`; };
 const vsOpen = new Set();
 function drawVs() {

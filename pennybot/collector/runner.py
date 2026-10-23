@@ -63,6 +63,7 @@ class Collector:
         self.notifier = notifier          # 급등 전조 알림 (텔레그램·웹훅)
         self.link = link                  # () -> 대시보드 외부 주소
         self._pre_thread = None
+        self._arch_thread = None
         self._pre_tried = None
         self._ev_last: dict = {}                  # (종목, 종류) → 마지막 이벤트 시각
         self._rank_prev: dict = {}                # 랭킹 종류 → {종목: 순위}
@@ -113,6 +114,8 @@ class Collector:
             self._run("candles", self.sync_candles, now)
             if prev_session == AFTER and prev_date:
                 self._run("summary", self.summarize, prev_date.isoformat())
+            if prev_session == REGULAR and session == AFTER and c.archive_1m:
+                self._run("archive", self.start_archive, trade_date)
         self._last_session = cur
 
         if self.edgar and self._due("edgar", now, timedelta(minutes=c.edgar_poll_minutes)):
@@ -443,6 +446,39 @@ class Collector:
             return d
         return trade_date
 
+    def start_archive(self, trade_date) -> None:
+        """정규장이 끝나면 백그라운드로: 오늘 장중 감시·가상 매매한 종목의 하루치 1분봉(데이마켓~정규장)을 research.db 에 저장.
+        이미 받은 날은 건너뛴다 (bars_1m_done 'full:<날짜>')."""
+        if self._arch_thread and self._arch_thread.is_alive():
+            return
+        d0 = self.store.query("SELECT MAX(d0) FROM precursor_daily")
+        if not d0 or not d0[0][0]:
+            return
+        import threading
+        self._arch_thread = threading.Thread(target=self.archive_1m, args=(d0[0][0], trade_date.isoformat()),
+                                             name="archive", daemon=True)
+        self._arch_thread.start()
+
+    def archive_1m(self, d0: str, d: str) -> int:
+        from pathlib import Path
+        from ..anatomy import fetch_day
+        from ..research import ResearchDB
+        store = Store(self.cfg.db_path)
+        syms = sorted({r[0] for r in store.query("SELECT symbol FROM precursor_live WHERE d0=?", (d0,))}
+                      | {r[0] for r in store.query("SELECT symbol FROM vsignals WHERE d0=?", (d0,))})
+        rdb = ResearchDB(Path(self.cfg.db_path).parent / "research.db")
+        n = 0
+        for sym in syms:
+            if rdb.q("SELECT 1 FROM bars_1m_done WHERE symbol=? AND d=?", (sym, f"full:{d}")):
+                continue
+            try:
+                if fetch_day(self.c, rdb, sym, d0, d):
+                    n += 1
+            except Exception as e:
+                log.debug("1분봉 저장 실패 %s: %s", sym, e)
+        log.info("하루치 1분봉 저장 %s: %d/%d종목 (research.db)", d, n, len(syms))
+        return n
+
     def ensure_precursor_daily(self, trade_date, session) -> None:
         """기준일 점수가 없으면 백그라운드로 전 종목 계산 (약 2,000번 일봉 조회 → 몇 분, 그동안 수집은 계속)."""
         exp = self._expected_d0(trade_date, session)
@@ -719,7 +755,7 @@ class Collector:
         fresh = lambda k: k is not None and k >= len(today) - 3
         for key, st in live:
             p = plan(today, prev_close, shares, st)
-            if not p:
+            if not p or p.get("waiting"):
                 continue
             if key not in state:
                 if not fresh(p["trig_k"]) and not fresh(p["fill_k"]):
@@ -735,7 +771,7 @@ class Collector:
                         "INSERT INTO vsignals (symbol, d0, opened, session, entry, score, reason, status, high, low, last, tp, sl, strat) "
                         "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         (sym, d0, f[0] if filled else b[0], session, p["limit"], score, reason, "OPEN" if filled else "ORDER",
-                         p["limit"], min(f[3], p["limit"]) if filled and st["entry"] != "now" else p["limit"], today[-1][4],
+                         p["limit"], min(f[3], p["limit"]) if filled and st["entry"] in ("vwap", "signal", "high") else p["limit"], today[-1][4],
                          st["tp"], st["sl"], key))
                 self._vnotify("buy" if filled else "order", c.lastrowid, session)
                 continue

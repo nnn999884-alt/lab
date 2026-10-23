@@ -28,8 +28,16 @@ STRATEGIES = {
     "S4": {"name": "전략4 신호가 눌림", "entry": "signal", "dip": 15, "minutes": 30, "hours": "pre", "tp": 15, "sl": 35,
            "why": "신호가에서 −15% 눌린 자리에 체결됐습니다.",
            "test": "+4.8 / +1.7 / +9.3%, 승률 88%"},
+    "S5": {"name": "전략5 5분 눌림", "entry": "hold", "wait": 5, "dip": 10, "keep": 0.5, "hours": "pre", "tp": 15, "sl": 35,
+           "why": "급등 5분 뒤 고점에서 −10% 넘게 눌렸는데 거래대금이 유지되고 있습니다 (눌림목).",
+           "test": "+5.9 / +1.8 / +4.5%, 승률 68%"},
+    "S6": {"name": "전략6 3분반 눌림", "entry": "hold_lim", "wait": 4, "dip": 10, "keep": 0.5, "minutes": 7, "hours": "pre",
+           "tp": 10, "sl": 35,
+           "why": "급등 3분 반 뒤 고점에서 −10% 넘게 눌렸는데 거래대금이 유지됩니다. 그 가격 지정가(3분) 또는 고점 돌파 시 시장가로 체결.",
+           "test": "+1.6 / +0.6 / +3.1%, 승률 75%"},
 }
-LIMIT_KO = {"vwap": "VWAP −{dip}% (VWAP 따라 움직임)", "signal": "신호가 −{dip}%", "high": "신호 뒤 고점 −{dip}% (고점 따라 올라감)"}
+LIMIT_KO = {"vwap": "VWAP −{dip}% (VWAP 따라 움직임)", "signal": "신호가 −{dip}%", "high": "신호 뒤 고점 −{dip}% (고점 따라 올라감)",
+            "hold_lim": "눌린 지금 가격, 3분 안 미체결 취소 · 고점 돌파 시 시장가"}
 
 
 def breakeven(st: dict) -> float:
@@ -66,13 +74,43 @@ def in_hours(ts: str, hours: str) -> bool:
 
 def plan(bars: list[tuple], prev_close: float, shares: float | None, st: dict) -> dict | None:
     """bars 는 그날 데이마켓 첫 봉부터. → {trig_k, trig_px, limit, fill_k, fill_px} 또는 신호 없음/시간대 밖이면 None.
-    entry: now = 신호 분 종가 +0.5% 에 바로 / vwap·signal·high = 다음 minutes 분 동안 지정가, 저가가 닿으면 체결."""
+    entry: now = 신호 분 종가 +0.5% 에 바로 / vwap·signal·high = 다음 minutes 분 동안 지정가, 저가가 닿으면 체결 /
+    hold = 신호 wait 분 뒤 종가가 신호 뒤 고점보다 dip% 이상 낮고, 최근 5분 거래대금이 신호까지 5분의 keep 배 이상이면 그 종가 +0.5%
+    (아직 wait 분이 안 지났으면 {waiting: True}) /
+    hold_lim = hold 와 같은 조건이면 그 종가에 지정가 3분, 그사이 신호 뒤 고점을 넘으면 시장가(고점 +0.5%).
+    1분봉이라 '3분 30초 뒤' 는 신호 4번째 봉(wait=4) 종가로 본다."""
     t = signal_k(bars, prev_close, shares)
     if t is None or not in_hours(bars[t][0], st["hours"]):
         return None
     p = {"trig_k": t, "trig_px": bars[t][4], "limit": None, "fill_k": None, "fill_px": None}
     if st["entry"] == "now":
         p.update(limit=bars[t][4] * 1.005, fill_k=t, fill_px=bars[t][4] * 1.005)
+        return p
+    if st["entry"] in ("hold", "hold_lim"):
+        c = t + st["wait"]
+        if c >= len(bars):
+            p["waiting"] = True
+            return p
+        burst = sum(b[4] * b[5] for b in bars[max(0, t - 4):t + 1])
+        recent = sum(b[4] * b[5] for b in bars[c - 4:c + 1])
+        hi = max(b[2] for b in bars[t:c + 1])
+        if bars[c][4] > hi * (1 - st["dip"] / 100) or recent < burst * st["keep"]:
+            return None
+        if st["entry"] == "hold":
+            p.update(limit=bars[c][4] * 1.005, fill_k=c, fill_px=bars[c][4] * 1.005)
+            return p
+        p["limit"] = lim = bars[c][4]
+        for k in range(c + 1, min(len(bars), c + 4)):
+            if bars[k][2] > hi:                          # 고점 돌파 → 시장가
+                p["fill_k"], p["fill_px"] = k, max(bars[k][1], hi) * 1.005
+                break
+            if bars[k][3] <= lim:
+                p["fill_k"], p["fill_px"] = k, min(bars[k][1], lim)
+                break
+        if p["fill_k"] is not None:
+            p["limit"] = p["fill_px"]
+        elif len(bars) > c + 3:
+            return None                                  # 3분 지나도 안 닿음 → 취소
         return p
     vw = vwap_series(bars) if st["entry"] == "vwap" else None
     cut = 1 - st["dip"] / 100

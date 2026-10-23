@@ -209,3 +209,40 @@ def test_day_bars_backfills_once_then_merges(tmp_path):
     assert len(full) == 7 and full[0][0] == start and C.calls == 1
     nxt = [((T0 + timedelta(minutes=7)).isoformat(), 1.3, 1.3, 1.3, 1.3, 5.0)]
     assert len(col._day_bars("PENX", nxt, start)) == 8 and C.calls == 1   # 두 번째부터는 이어 붙이기만
+
+
+def test_hold_strategies():
+    from pennybot.vstrat import STRATEGIES, plan
+    # 04:03 신호 1.0 → 1.30 고점 → 눌림 1.10 (−15%), 거래대금 유지
+    px = [0.9] * 3 + [1.0, 1.2, 1.3, 1.2, 1.12, 1.10, 1.08, 1.09, 1.10, 1.11]
+    bars = bars_of(px)
+    s5 = plan(bars, 0.9, None, STRATEGIES["S5"])                          # 5분 뒤(k=8) 1.10 ≤ 1.30×0.9 → 바로
+    assert s5["fill_k"] == 8 and abs(s5["fill_px"] - 1.10 * 1.005) < 1e-9
+    assert plan(bars[:8], 0.9, None, STRATEGIES["S5"])["waiting"]          # 아직 5분 안 됨
+    thin = bars[:4] + [b[:5] + (100.0,) for b in bars[4:]]                # 거래대금 말라버림 → 안 삼
+    assert plan(thin, 0.9, None, STRATEGIES["S5"]) is None
+    s6 = plan(bars, 0.9, None, STRATEGIES["S6"])                          # 4분 뒤(k=7) 1.12 지정가 → 다음 분 1.10 체결
+    assert s6["fill_k"] == 8 and abs(s6["fill_px"] - 1.10) < 1e-9
+    up = bars_of(px[:8] + [1.35])                                         # 그 다음 분 고점 1.30 돌파 → 시장가
+    s6b = plan(up, 0.9, None, STRATEGIES["S6"])
+    assert s6b["fill_k"] == 8 and abs(s6b["fill_px"] - 1.30 * 1.005) < 1e-9
+    flat = bars_of(px[:8] + [1.15, 1.16, 1.15])                           # 3분 동안 안 닿음 → 취소
+    assert plan(flat, 0.9, None, STRATEGIES["S6"]) is None
+
+
+def test_archive_saves_watched_symbols(tmp_path, monkeypatch):
+    import pennybot.anatomy as an
+    col, st, sent = make(tmp_path)
+    st.put_precursor_daily([{"d0": "2026-10-22", "symbol": "PENX", "score": 9, "close": 1, "created": "x", "signals": "[]", "metrics": "{}"}])
+    st.put_precursor_live([{"d0": "2026-10-22", "symbol": "PENX", "ts": "x", "signals": "[]", "metrics": "{}", "alerted": None},
+                           {"d0": "2026-10-22", "symbol": "ABCD", "ts": "x", "signals": "[]", "metrics": "{}", "alerted": None}])
+    got = []
+
+    def fake(client, rdb, sym, d0, d):
+        got.append((sym, d0, d))
+        rdb.put("bars_1m_done", [{"symbol": sym, "d": f"full:{d}"}])
+        return [("t", 1, 1, 1, 1, 1)]
+    monkeypatch.setattr(an, "fetch_day", fake)
+    assert col.archive_1m("2026-10-22", "2026-10-23") == 2
+    assert sorted(got) == [("ABCD", "2026-10-22", "2026-10-23"), ("PENX", "2026-10-22", "2026-10-23")]
+    assert col.archive_1m("2026-10-22", "2026-10-23") == 0                # 이미 받은 날은 건너뜀
