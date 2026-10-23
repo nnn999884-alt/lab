@@ -69,10 +69,18 @@ class Collector:
         self._rank_prev: dict = {}                # 랭킹 종류 → {종목: 순위}
         self._rank_skip: tuple = (None, set())    # (기준일, 일봉 점수를 못 매긴 랭킹 종목)
         self._day_cache: dict = {}                # 종목 → (그날 시작, 그날 1분봉) — 가상 매매 VWAP 용
-        self._fast_hist: dict = {}                # 종목 → [(시각, 현재가)] 최근 몇 분 (빠른 훑기)
-        self._fast_seen: dict = {}                # 종목 → 마지막으로 1분봉 확인한 시각
         self._fast_pc: tuple = (None, {})         # (기준일, 종목 → 전날 종가)
-        self._fast_hot: tuple = (None, set())     # (기준일, 빠른 훑기로 잡은 종목) → 1분 감시·가상 매매에도 넣는다
+        self._fast_hot: tuple = (None, set())     # (기준일, 랭킹 훑기로 새로 잡은 종목) → 실시간 구독·1분 감시·가상 매매에 넣는다
+        # 실시간 체결 (웹소켓)
+        self._rt = None                           # TossStream (체결만)
+        self._rt_syms: set = set()                # 지금 구독할 종목
+        self._rt_win: dict = {}                   # 종목 → deque[(초, 가격, 수량)] 최근 60초
+        self._rt_min: dict = {}                   # 종목 → {분: 수량} 최근 40분 (평소 거래량)
+        self._rt_seeded: set = set()              # 1분봉으로 평소 거래량을 채운 종목
+        self._rt_fired: dict = {}                 # 종목 → 마지막 실시간 신호 시각(초)
+        self._rt_shares: dict = {}
+        import queue
+        self._rt_q = queue.Queue()
         self._short_done: set[tuple[str, str]] = set()   # (종류, 날짜) 이미 받은 일별 파일
         self._seen_news: set[str] = set()
         self.clock = clock
@@ -161,9 +169,17 @@ class Collector:
 
     def run(self, sleep=time.sleep) -> None:
         log.info("수집기 시작 (DB=%s)", self.cfg.db_path)
+        import threading
         if self.cfg.fast_scan_seconds and self.cfg.precursor:
-            import threading
-            threading.Thread(target=self._fast_loop, name="fast-scan", daemon=True).start()
+            threading.Thread(target=self._fast_loop, name="rank-scan", daemon=True).start()
+        if self.cfg.realtime_alerts and self.cfg.precursor:
+            from .. import stream
+            if stream.available():
+                self._rt = stream.TossStream(self.c, None, channels=("trade",), on_trade=self._on_trade).start()
+                threading.Thread(target=self._rt_worker, name="rt-alert", daemon=True).start()
+                log.info("실시간 체결 알림 켜짐 (웹소켓, 최대 %d종목)", self._rt.max_symbols)
+            else:
+                log.warning("websocket-client 패키지가 없어 실시간 알림 없이 1분 확인만 씁니다")
         while True:
             try:
                 self.tick()
@@ -700,7 +716,8 @@ class Collector:
                 lv["signals"].append("burst")
                 lv["metrics"]["grade"], lv["metrics"]["grade_why"] = alert_grade(
                     today[k][0], tiers[sym], close, json.loads(met or "{}").get("vol_ratio"))
-            fire = burst and in_hours(today[k][0], "pre") and sym not in prev_alert and not self._alerted(self.store, d0, sym)
+            fire = (burst and in_hours(today[k][0], "pre") and sym not in prev_alert and not self._alerted(self.store, d0, sym)
+                    and not (self._rt and self._rt.healthy))   # 실시간 체결이 살아 있으면 알림은 실시간 쪽이 맡는다
             out.append({"d0": d0, "symbol": sym, "ts": iso(now), "signals": json.dumps(lv["signals"]),
                         "metrics": json.dumps(lv["metrics"]), "alerted": iso(now) if fire else prev_alert.get(sym)})
             if fire:
@@ -708,7 +725,8 @@ class Collector:
                             (["랭킹 진입"] if sym in ranked_in else []) + (["빠른 포착"] if sym in hot else []))
             if self.cfg.vsignal and session != AFTER:      # 가상 매매는 알림과 따로: 1분 거래 터짐 → 아래 지정가
                 self._vtrade(now, d0, sym, score, close, today, shares.get(sym), session, start)
-        for r in out:                                    # 루프 도는 사이 빠른 훑기가 보낸 알림 표시를 덮어쓰지 않게
+        self._rt_set([x[0] for x in rows])
+        for r in out:                                    # 루프 도는 사이 실시간 쪽이 보낸 알림 표시를 덮어쓰지 않게
             if not r["alerted"]:
                 r["alerted"] = self._alerted(self.store, d0, r["symbol"])
         self.store.put_precursor_live(out)
@@ -749,7 +767,91 @@ class Collector:
         self._event(now, sym, "precursor", f"🔥 {sym} 급등 전조 {m['grade']}급 (1분 거래 터짐 · "
                     f"{m.get('chg', 0):+.1f}% · 3분 ${m.get('dollar_3m', 0) / 1e3:.0f}K)", m.get("chg"))
 
-    # ---------- 빠른 훑기: 10초마다 전 종목 현재가 → 막 튄 종목만 1분봉으로 확인 → 바로 알림 ----------
+    # ---------- 실시간: 웹소켓 체결 → 최근 60초 거래대금·회전율·평소 대비 거래량 → 바로 알림 (등락률은 안 봄) ----------
+    def _rt_set(self, symbols) -> None:
+        """구독할 종목 (1분 감시 목록 + 랭킹 훑기로 새로 잡은 종목). 새 종목은 1분봉으로 평소 거래량을 채운다."""
+        hot = self._fast_hot[1] if self._fast_hot[0] else set()
+        want = list(dict.fromkeys(list(hot) + list(symbols)))
+        if self._rt:
+            want = want[:self._rt.max_symbols]
+            self._rt.pin(want)
+        for s in want:
+            if s not in self._rt_seeded:
+                self._rt_seeded.add(s)
+                self._rt_q.put(("seed", s))
+        self._rt_syms = set(want)
+
+    def _on_trade(self, sym: str, price: float, vol: float, t: float | None = None) -> None:
+        """웹소켓 스레드에서 체결마다. 무거운 일(1분봉 조회·알림)은 큐로 넘긴다."""
+        from collections import deque
+        t = t if t is not None else time.time()
+        w = self._rt_win.setdefault(sym, deque())
+        w.append((t, price, vol))
+        while w and t - w[0][0] > 60:
+            w.popleft()
+        mins = self._rt_min.setdefault(sym, {})
+        m = int(t // 60)
+        mins[m] = mins.get(m, 0.0) + vol
+        if len(mins) > 45:
+            for k in sorted(mins)[:-40]:
+                mins.pop(k, None)
+        if t - self._rt_fired.get(sym, 0) < 600:
+            return
+        d60 = sum(p * v for _, p, v in w)
+        v60 = sum(v for _, _, v in w)
+        sh = self._rt_shares.get(sym)
+        if not (d60 >= self.cfg.rt_min_dollar or (sh and self.cfg.rt_min_turnover <= v60 / sh * 100 <= 1000)):
+            return
+        base = sum(v for k, v in mins.items() if m - 31 <= k <= m - 2) / 30   # 직전 30분 분당 평균 (지금 분·직전 분 제외)
+        if sym not in self._rt_seeded or v60 < self.cfg.rt_surge * max(base, 1.0):
+            return
+        self._rt_fired[sym] = t
+        self._rt_q.put(("alert", sym, d60, v60, price))
+
+    def _rt_worker(self) -> None:
+        store = Store(self.cfg.db_path)                  # 스레드 전용 연결
+        self._rt_shares = dict(store.query("SELECT symbol, shares FROM stock_info WHERE shares > 0"))
+        while True:
+            job = self._rt_q.get()
+            try:
+                if job[0] == "seed":
+                    self._rt_seed(job[1])
+                else:
+                    self._rt_alert(store, *job[1:])
+            except Exception as e:
+                log.warning("실시간 처리 실패 %s: %s", job[:2], str(e)[:160])
+
+    def _rt_seed(self, sym: str) -> None:
+        """구독 시작할 때 최근 40분 1분봉으로 평소 거래량을 채워 둔다 (재시작 직후 몰림 방지)."""
+        try:
+            cs = (self.c.candles(sym, "1m", 40) or {}).get("candles", [])
+        except Exception as e:
+            log.debug("실시간 평소 거래량 실패 %s: %s", sym, e)
+            return
+        mins = self._rt_min.setdefault(sym, {})
+        for cd in cs:
+            end = datetime.fromisoformat(cd["timestamp"].replace("Z", "+00:00")).timestamp()
+            k = int((end - 30) // 60)
+            mins[k] = max(mins.get(k, 0.0), float(cd["volume"]))
+
+    def _rt_alert(self, store, sym: str, d60: float, v60: float, price: float) -> None:
+        from ..trading.messages import money_s
+        now = self.clock()
+        trade_date, session = self.cal.classify(now)
+        if session not in (DAY, PRE, REGULAR):
+            return
+        d0 = store.query("SELECT MAX(d0) FROM precursor_daily")
+        if not d0 or not d0[0][0]:
+            return
+        d0 = d0[0][0]
+        pc = store.query("SELECT close FROM daily_bars WHERE symbol=? AND d=?", (sym, d0))
+        pc = pc[0][0] if pc and pc[0][0] else price
+        sh = self._rt_shares.get(sym)
+        tag = f"⚡ 실시간 1분 {money_s(d60)}" + (f" · 회전율 {v60 / sh * 100:.1f}%" if sh else "")
+        log.info("실시간 거래 터짐 %s 60초 $%.0f 회전율 %s", sym, d60, f"{v60 / sh * 100:.2f}%" if sh else "-")
+        self._fast_confirm(now, trade_date, session, store, d0, sym, pc, check=False, tags=[tag])
+
+    # ---------- 랭킹 훑기: 거래대금·거래량 실시간 랭킹에 새로 든 종목을 바로 실시간 구독 ----------
     def _fast_loop(self) -> None:
         store = Store(self.cfg.db_path)                  # 스레드 전용 연결
         while True:
@@ -760,45 +862,42 @@ class Collector:
                 if session in (DAY, PRE, REGULAR) and self.universe:
                     self.fast_scan(now, trade_date, session, store)
             except Exception as e:
-                log.warning("빠른 훑기 실패: %s", str(e)[:160])
+                log.warning("랭킹 훑기 실패: %s", str(e)[:160])
             time.sleep(max(1.0, self.cfg.fast_scan_seconds - (time.time() - t0)))
 
     def fast_scan(self, now: datetime, trade_date, session: str, store=None) -> list[str]:
-        """전날 대비 +5%↑ 이면서 약 1분 전보다 +3%↑ 튄 종목 → 1분봉으로 거래 터짐 확인 → 알림 (정규장 전만, 정규장은 피드만).
-        재시작 직후엔 1분 전 가격이 없어 아무것도 안 잡는다 (지난 신호로 몰려 오지 않게). → 확인된 종목."""
-        from collections import deque
+        """거래대금·거래량 실시간 랭킹(시장·토스) 상위에 있는데 아직 구독 안 한 유니버스 종목 → 실시간 구독에 넣는다. → 새로 넣은 종목."""
         store = store or self.store
         d0 = store.query("SELECT MAX(d0) FROM precursor_daily")
         if not d0 or not d0[0][0]:
             return []
         d0 = d0[0][0]
-        if self._fast_pc[0] != d0:
-            self._fast_pc = (d0, dict(store.query("SELECT symbol, close FROM daily_bars WHERE d=?", (d0,))))
+        if self._fast_hot[0] != d0:
             self._fast_hot = (d0, set())
-        pcs = self._fast_pc[1]
-        jumps = []
-        for p in self.c.prices(sorted(self.universe)):
-            s, last = p["symbol"], float(p["lastPrice"] or 0)
-            if s in self.universe and last:
-                self.universe[s]["last"] = last
-            pc = pcs.get(s)
-            if not pc or not last:
+        seen = []
+        for type_ in ("MARKET_TRADING_AMOUNT", "TOSS_SECURITIES_TRADING_AMOUNT", "MARKET_TRADING_VOLUME", "TOSS_SECURITIES_TRADING_VOLUME"):
+            try:
+                res = self.c.rankings(type_, "realtime") or {}
+            except Exception as e:
+                log.debug("랭킹 실패 %s: %s", type_, e)
                 continue
-            h = self._fast_hist.setdefault(s, deque(maxlen=30))
-            old = next((x for t, x in h if (now - t).total_seconds() <= 75), None)
-            h.append((now, last))
-            if old and (last / pc - 1) * 100 >= 5 and (last / old - 1) * 100 >= 3:
-                jumps.append((s, pc))
-        hit = []
-        for s, pc in jumps:
-            if self._fast_seen.get(s) and now - self._fast_seen[s] < timedelta(minutes=3):
-                continue
-            self._fast_seen[s] = now
-            if self._fast_confirm(now, trade_date, session, store, d0, s, pc):
-                hit.append(s)
-        return hit
+            for r in res.get("rankings", [])[:50]:
+                s = r.get("symbol")
+                if s in self.universe and s not in seen:
+                    seen.append(s)
+        new = [s for s in seen if s not in self._rt_syms and s not in self._fast_hot[1]]
+        if new:
+            self._fast_hot[1].update(new)
+            self._rt_set(list(self._rt_syms))
+            for s in new:                                # 1분 감시·가상 매매용 일봉 점수 (없으면)
+                if not store.query("SELECT 1 FROM precursor_daily WHERE d0=? AND symbol=?", (d0, s)):
+                    row = self._precursor_row(s, d0, store, src="fast")
+                    if row:
+                        store.put_precursor_daily([row])
+            log.info("랭킹 새로 든 종목 → 실시간 구독: %s", ", ".join(new[:10]))
+        return new
 
-    def _fast_confirm(self, now, trade_date, session, store, d0, sym, pc) -> bool:
+    def _fast_confirm(self, now, trade_date, session, store, d0, sym, pc, check: bool = True, tags=None) -> bool:
         from ..precursor import alert_grade, live, tier
         from ..vstrat import in_hours
         try:
@@ -817,8 +916,8 @@ class Collector:
         shares = sh[0][0] if sh and sh[0][0] else None
         last2 = today[-2:]
         d2, v2 = sum(b[4] * b[5] for b in last2), sum(b[5] for b in last2)
-        if not (d2 >= 5e4 or (shares and 0.5 <= v2 / shares * 100 <= 1000)):
-            return False                                 # 가격만 튀고 거래는 얇음
+        if check and not (d2 >= 5e4 or (shares and 0.5 <= v2 / shares * 100 <= 1000)):
+            return False                                 # 거래가 얇음
         self._fast_hot[1].add(sym)                       # 다음 1분 감시·가상 매매에 넣는다
         if self._alerted(store, d0, sym):
             return True
@@ -839,7 +938,7 @@ class Collector:
         store.put_precursor_live([{"d0": d0, "symbol": sym, "ts": iso(now), "signals": json.dumps(lv["signals"]),
                                    "metrics": json.dumps(lv["metrics"]), "alerted": iso(now) if fire else None}])
         if fire:
-            self._alert(store, now, session, sym, score, sig, met, lv, t_, ["빠른 포착"])
+            self._alert(store, now, session, sym, score, sig, met, lv, t_, tags or ["빠른 포착"])
         return True
 
     # ---------- 가상 매수·매도 (알림만, 실제 주문 없음) ----------

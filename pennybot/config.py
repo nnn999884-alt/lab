@@ -94,7 +94,11 @@ class CollectorConfig:
     precursor_min_score: int = 5     # 장중 감시·알림 대상 일봉 점수 (최대 10)
     precursor_live_max: int = 60     # 장중 감시 종목 수 상한 (1분에 이만큼 1분봉 조회)
     precursor_rank_max: int = 40     # 목록 밖이라도 지금 랭킹(급등률·거래대금·거래량)에 든 종목을 이만큼 더 장중 감시
-    fast_scan_seconds: int = 10      # 전 종목 현재가를 이 간격으로 훑어 막 튄 종목을 바로 확인·알림 (별도 스레드, 0 = 끔)
+    fast_scan_seconds: int = 10      # 거래대금·거래량 실시간 랭킹을 이 간격으로 봐서 새로 든 종목을 바로 실시간 구독 (0 = 끔)
+    realtime_alerts: bool = True     # 웹소켓 체결로 실시간 알림 (계정당 연결 2개 중 1개 사용, 끊기면 1분 확인으로 대체)
+    rt_min_dollar: float = 5e4       # 최근 60초 거래대금 이상이거나
+    rt_min_turnover: float = 0.5     # 최근 60초 회전율(%) 이상이고
+    rt_surge: float = 5.0            # 최근 60초 거래량이 그 종목 직전 30분 분당 평균의 이만큼 배 이상이면 알림 (등락률은 안 봄)
     spike_min_dollar: float = 5000.0  # 1분 급등·급락 이벤트: 그 2분 거래대금이 이만큼은 돼야 (얇은 체결 소음 제외)
     precursor_daily_alert: int = 10  # 장 마감 뒤 점수 계산이 끝나면 상위 N종목 목록 알림 (0 = 끔)
     vsignal: bool = True             # 가상 매매 알림 (실제 주문 없음) — 전략 정의는 pennybot/vstrat.py

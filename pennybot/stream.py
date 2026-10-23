@@ -58,15 +58,18 @@ def available() -> bool:
 class TossStream:
     def __init__(self, client, account_seq: str | None = None, *, url: str = WS_URL, connect=None,
                  clock=time.monotonic, ping_interval: float = 60.0, decl_interval: float = 2.0,
-                 max_symbols: int | None = None):
+                 max_symbols: int | None = None, channels: tuple = ("orderbook", "trade"), on_trade=None):
         self.c = client
         self.account = str(account_seq) if account_seq else None
         self.url = url
         self._connect = connect or (lambda url, headers: _WSConn(url, headers))
         self.clock = clock
         self.ping_interval, self.decl_interval = ping_interval, decl_interval
+        self.channels = channels               # 수집기는 체결만 (종목당 1건 → 100종목)
+        self.on_trade = on_trade               # 체결마다 on_trade(종목, 가격, 수량) — 실시간 거래대금 알림
+        per = len(channels)
         budget = MAX_TOPICS - (1 if self.account else 0)
-        self.max_symbols = min(max_symbols or budget // 2, budget // 2)   # 종목당 호가+체결 2건
+        self.max_symbols = min(max_symbols or budget // per, budget // per)   # 종목당 구독 채널 수만큼
         self._lock = threading.Lock()
         self._books: dict[str, tuple[Book, float]] = {}
         self._trades: dict[str, tuple[float, float]] = {}
@@ -174,7 +177,7 @@ class TossStream:
         if self.account:
             subs.append({"type": "personal:order", "codes": [self.account]})
         if symbols:
-            subs += [{"type": "orderbook:us", "codes": symbols}, {"type": "trade:us", "codes": symbols}]
+            subs += [{"type": f"{ch}:us", "codes": symbols} for ch in self.channels]
         return subs
 
     def _session(self) -> None:
@@ -268,6 +271,11 @@ class TossStream:
             if data.get("price") is not None:
                 with self._lock:
                     self._trades[code] = (float(data["price"]), now)
+                if self.on_trade:
+                    try:
+                        self.on_trade(code, float(data["price"]), float(data.get("volume") or 0))
+                    except Exception as e:
+                        log.debug("체결 처리 실패 %s: %s", code, e)
         elif ch == "personal:order":
             order = data.get("order") or {}
             if order.get("orderId"):

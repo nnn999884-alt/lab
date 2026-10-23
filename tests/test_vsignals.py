@@ -261,37 +261,72 @@ def test_archive_saves_watched_symbols(tmp_path, monkeypatch):
     assert col.archive_1m("2026-10-22", "2026-10-23") == 0                # 이미 받은 날은 건너뜀
 
 
-def test_fast_scan_alerts_on_jump_with_volume(tmp_path):
+def test_realtime_trigger_uses_volume_not_price(tmp_path):
     col, st, sent = make(tmp_path)
-    col.universe = {"PENX": {"name": "펜엑스", "last": 1.0}, "THIN": {"name": "얇음", "last": 1.0}}
-    st.put_precursor_daily([{"d0": "2026-10-22", "symbol": s, "score": 7, "close": 1.0, "created": "x", "signals": "[]",
-                             "metrics": json.dumps({"dd60": -80, "vol_ratio": 60})} for s in ("PENX", "THIN")])
-    st.put_daily_bars([{"symbol": s, "d": "2026-10-22", "open": 1, "high": 1, "low": 1, "close": 1.0, "volume": 1} for s in ("PENX", "THIN")])
-    px = {"PENX": 1.0, "THIN": 1.0}
+    col._rt_seeded = {"PENX"}
+    col._rt_shares = {"PENX": 1e7}
+    t = 1_800_000_000.0                                                   # 분 경계와 무관한 고정 시각
+    for k in range(30):                                                   # 평소: 분당 1,000주
+        col._rt_min.setdefault("PENX", {})[int(t // 60) - 31 + k] = 1000.0
+    col._on_trade("PENX", 1.0, 20000, t)                                  # 60초 $2만 · 회전율 0.2% → 아직
+    assert col._rt_q.empty()
+    col._on_trade("PENX", 0.98, 40000, t + 20)                            # 60초 $5.9만, 6만주 (평소 60배) → 신호 (가격은 내려도)
+    job = col._rt_q.get_nowait()
+    assert job[0] == "alert" and job[1] == "PENX" and job[2] >= 5e4
+    col._on_trade("PENX", 1.0, 90000, t + 30)                             # 10분 안 다시 → 안 보냄
+    assert col._rt_q.empty()
+    # 원래 거래가 많은 종목: 금액은 커도 평소의 5배가 안 되면 안 보냄
+    col._rt_seeded.add("BIGV")
+    for k in range(30):
+        col._rt_min.setdefault("BIGV", {})[int(t // 60) - 31 + k] = 100000.0
+    col._on_trade("BIGV", 50.0, 2000, t)                                  # $10만이지만 평소 분당 10만주
+    assert col._rt_q.empty()
+    col._on_trade("NEWX", 1.0, 100000, t)                                 # 평소 거래량을 아직 안 채운 종목 → 안 보냄
+    assert col._rt_q.empty()
+
+
+def test_rank_scan_subscribes_newcomers(tmp_path):
+    col, st, sent = make(tmp_path)
+    col.universe = {"PENX": {"name": "펜엑스", "last": 1.0}, "NEWX": {"name": "뉴", "last": 1.0}}
+    st.put_precursor_daily([{"d0": "2026-10-22", "symbol": "PENX", "score": 7, "close": 1.0, "created": "x", "signals": "[]", "metrics": "{}"}])
 
     class C:
-        def prices(self, syms):
-            return [{"symbol": s, "lastPrice": str(px[s])} for s in syms]
+        def rankings(self, type_, duration="realtime", **kw):
+            return {"rankings": [{"symbol": "AAPL"}, {"symbol": "PENX"}, {"symbol": "NEWX"}]}
 
         def candles(self, sym, interval, count, before=None):
-            vol = 80000 if sym == "PENX" else 50
+            return {"candles": []}
+    col.c = C()
+    col._rt_syms = {"PENX"}
+    assert col.fast_scan(T0, None, "PRE") == ["NEWX"]                     # AAPL 은 유니버스 밖, PENX 는 이미 구독
+    assert "NEWX" in col._rt_syms and ("seed", "NEWX") in list(col._rt_q.queue)
+    assert col.fast_scan(T0, None, "PRE") == []
+
+
+def test_realtime_alert_sends(tmp_path):
+    col, st, sent = make(tmp_path)
+    st.put_precursor_daily([{"d0": "2026-10-22", "symbol": "PENX", "score": 7, "close": 1.0, "created": "x", "signals": "[]",
+                             "metrics": json.dumps({"dd60": -80, "vol_ratio": 60})}])
+    st.put_daily_bars([{"symbol": "PENX", "d": "2026-10-22", "open": 1, "high": 1, "low": 1, "close": 1.0, "volume": 1}])
+
+    class C:
+        def candles(self, sym, interval, count, before=None):
             return {"candles": [{"timestamp": (T0 + timedelta(minutes=k)).isoformat(), "openPrice": 1, "highPrice": 1.1,
-                                 "lowPrice": 1, "closePrice": 1.08, "volume": vol} for k in range(3)]}
+                                 "lowPrice": 1, "closePrice": 1.08, "volume": 1000} for k in range(3)]}
 
         def orderbook(self, sym):
             return {"asks": []}
 
     class Cal:
+        def classify(self, now):
+            return (None, "PRE")
+
         def bounds(self, d, s):
             return None
     col.c, col.cal = C(), Cal()
-    t1 = T0 + timedelta(minutes=3)
-    assert col.fast_scan(t1, None, "PRE") == []                           # 첫 훑기: 1분 전 가격 없음 → 기록만
-    px.update(PENX=1.08, THIN=1.08)                                       # +8% (1분 새 +8%)
-    assert col.fast_scan(t1 + timedelta(seconds=10), None, "PRE") == ["PENX"]   # THIN 은 거래 얇아서 안 잡힘
-    assert len(sent.msgs) == 1 and "급등 전조 (PENX" in sent.msgs[0][0] and "빠른 포착" in sent.msgs[0][0]
-    assert st.query("SELECT alerted IS NOT NULL FROM precursor_live WHERE symbol='PENX'")[0][0] == 1
-    px.update(PENX=1.15)
-    col._fast_seen.clear()
-    col.fast_scan(t1 + timedelta(seconds=20), None, "PRE")                # 이미 알림 → 다시 안 보냄
+    col.clock = lambda: T0 + timedelta(minutes=3)                        # 04:03 ET
+    col._rt_shares = {"PENX": 1e6}
+    col._rt_alert(st, "PENX", 80000.0, 70000.0, 1.08)
+    assert len(sent.msgs) == 1 and "⚡ 실시간 1분 $80K · 회전율 7.0%" in sent.msgs[0][0]
+    col._rt_alert(st, "PENX", 90000.0, 80000.0, 1.10)                    # 하루 한 번
     assert len(sent.msgs) == 1
