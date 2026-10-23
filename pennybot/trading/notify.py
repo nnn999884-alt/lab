@@ -187,6 +187,9 @@ class TelegramCommands:
             b = brief(self.market_db, cmd.split()[1])
             fund = getattr(self.trader, "fund", None)
             b = with_filings(b, getattr(fund, "dil", None), self.research_db)
+            mv = getattr(self.trader, "mv", None)
+            if b["found"] and mv is not None and hasattr(mv, "day_stats"):
+                b["stats"] = mv.day_stats(b["symbol"])          # 오늘 등락·거래량·거래대금 (토스 일봉)
             url = self.trader.dashboard_url() if hasattr(self.trader, "dashboard_url") else None
             return render(b) + (f"\n\n📊 {url}/?s={b['symbol']}" if url and b["found"] else "")
         if cmd in ("/대시보드", "/dashboard"):

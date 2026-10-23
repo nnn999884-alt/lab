@@ -42,32 +42,105 @@ def _sess(s: str | None) -> str:
     return SESSION_KO.get(s, s or "-")
 
 
-def buy_filled(t: dict, qty: int, price: float, session: str) -> str:
+def qty_s(v: float | None) -> str:
+    if v is None:
+        return "-"
+    return f"{v / 1e6:.1f}M" if v >= 1e6 else f"{v / 1e3:.0f}K" if v >= 1e3 else f"{v:,.0f}"
+
+
+def money_s(v: float | None) -> str:
+    if v is None:
+        return "-"
+    return f"${v / 1e6:.1f}M" if v >= 1e6 else f"${v / 1e3:.0f}K" if v >= 1e3 else f"${v:,.0f}"
+
+
+def _held(t: dict) -> str | None:
+    from datetime import datetime
+    if not (t.get("entry_ts") and t.get("exit_ts")):
+        return None
+    s = (datetime.fromisoformat(t["exit_ts"]) - datetime.fromisoformat(t["entry_ts"])).total_seconds()
+    d, h, m = int(s // 86400), int(s % 86400 // 3600), int(s % 3600 // 60)
+    return f"{d}일 {h}시간" if d else f"{h}시간 {m}분" if h else f"{m}분"
+
+
+def info_block(stats: dict | None = None, brief: dict | None = None, reason: str | None = None) -> list[str]:
+    """알림 아래에 붙는 종목 정보 (있는 것만). stats: MarketView.day_stats, brief: brief.brief(+with_filings)."""
+    s, b, L = stats or {}, brief or {}, []
+    if s:
+        part = [x for x in (
+            f"{pct(s['change_pct'])}" if s.get("change_pct") is not None else None,
+            f"거래량 {qty_s(s.get('volume'))}" + (f" (평소 {s['vol_ratio']:.1f}배)" if s.get("vol_ratio") else ""),
+            f"거래대금 {money_s(s.get('dollar'))}" if s.get("dollar") else None) if x]
+        if part:
+            L.append("📊 오늘 " + " · ".join(part))
+        chart = [x for x in (
+            f"30일 {pct(s['ret_30'])}" if s.get("ret_30") is not None else None,
+            f"60일 고점 대비 {pct(s['dd_60'])}" if s.get("dd_60") is not None else None,
+            f"변동폭 {s['range_30']:.0f}%" if s.get("range_30") is not None else None) if x]
+        if chart:
+            L.append("📉 " + " · ".join(chart))
+    sh, bo = b.get("short") or {}, b.get("borrow")
+    part = []
+    if sh.get("ratio") is not None:
+        part.append(f"공매도 {sh['ratio'] * 100:.0f}%")
+    if bo:
+        part.append(f"대차 수수료 {bo['fee_rate']:.0f}% (가능 {qty_s(bo['available'])}주)")
+    if b.get("ssr"):
+        part.append("SSR")
+    if b.get("reg_sho"):
+        part.append("Reg SHO")
+    if part:
+        L.append("🩳 " + " · ".join(part))
+    f = b.get("filings") or {}
+    part = []
+    if f.get("dilution_score") is not None:
+        part.append(f"희석 {f['dilution_score']:.0f}점")
+    if f.get("motives"):
+        part.append("부양 동기: " + ", ".join(m["label"] for m in f["motives"][:3]))
+    if part:
+        L.append("💧 " + " · ".join(part))
+    ev = next((e for e in b.get("events") or [] if e.get("summary") or e.get("title")), None)
+    if ev:
+        L.append(f"📰 {ev['ts'][5:10]} " + (ev.get("summary") or ev.get("title") or "")[:120])
+    if b.get("halts"):
+        h = b["halts"][0]
+        L.append(f"⏸ 최근 거래정지 {h['halt_ts'][5:16].replace('T', ' ')} ET {h['reason_ko']}")
+    if reason:
+        L.append(f"💬 {reason[:160]}")
+    return (["", "── 종목 정보 ──"] + L) if L else []
+
+
+def buy_filled(t: dict, qty: int, price: float, session: str, info: list[str] | None = None) -> str:
     lines = [f"🟢 매수 체결 · {t['symbol']}",
-             f"{qty}주 × {px(price)} = {usd(qty * price)}",
-             f"{_strat(t)} · {_sess(session)}"]
+             f"{qty}주 × {px(price)} = {usd(qty * price)}"]
     if t.get("stop") or t.get("target"):
-        lines.append(f"손절 {px(t.get('stop'))} · 익절 {px(t.get('target'))}")
-    return "\n".join(lines)
+        tp = (t["target"] / price - 1) * 100 if t.get("target") and price else None
+        sl = (t["stop"] / price - 1) * 100 if t.get("stop") and price else None
+        lines.append(f"🎯 익절 {px(t.get('target'))} ({pct(tp)}) · 🛑 손절 {px(t.get('stop'))} ({pct(sl)})")
+    lines.append(f"📌 {_strat(t)} · {_sess(session)}")
+    return "\n".join(lines + (info or []))
 
 
-def scaled_out(t: dict, qty: int, price: float) -> str:
+def scaled_out(t: dict, qty: int, price: float, info: list[str] | None = None) -> str:
     gain = (price / t["entry_price"] - 1) * 100 if t.get("entry_price") else None
     return "\n".join([
         f"🟡 분할 익절 · {t['symbol']}",
         f"{qty}주 × {px(price)} ({pct(gain)})",
         f"나머지 {t['remaining']}주: 손절을 본전 {px(t.get('entry_price'))}로, 고점 대비 −{t.get('trail_pct') or 0:g}% 트레일링",
-    ])
+    ] + (info or []))
 
 
-def closed(t: dict) -> str:
+def closed(t: dict, info: list[str] | None = None) -> str:
     pnl = t.get("pnl") or 0.0
     icon = "🔵" if pnl >= 0 else "🔴"
+    held = _held(t)
+    peak = (t["high_water"] / t["entry_price"] - 1) * 100 if t.get("high_water") and t.get("entry_price") else None
     lines = [f"{icon} 청산 · {t['symbol']} · {t.get('exit_reason') or '-'}",
-             f"{usd(pnl, sign=True)} ({pct(t.get('pnl_pct'))}) 수수료 뺀 순손익",
-             f"{px(t.get('entry_price'))} → {px(t.get('exit_price'))} · {t.get('exited_qty') or t.get('qty') or 0}주",
-             f"{_strat(t)} · {_sess(t.get('entry_session'))} → {_sess(t.get('exit_session'))}"]
-    return "\n".join(lines)
+             f"{usd(pnl, sign=True)} ({pct(t.get('pnl_pct'))}) 순손익" + (f" · 보유 {held}" if held else ""),
+             f"{px(t.get('entry_price'))} → {px(t.get('exit_price'))} · {t.get('exited_qty') or t.get('qty') or 0}주"
+             + (f" · 보유 중 최고 {pct(peak)}" if peak is not None else ""),
+             f"📌 {_strat(t)} · {_sess(t.get('entry_session'))} → {_sess(t.get('exit_session'))}"]
+    return "\n".join(lines + (info or []))
 
 
 def backstop_fired(t: dict) -> str:

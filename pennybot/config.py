@@ -85,7 +85,8 @@ class CollectorConfig:
     watch_size: int = 120            # 호가·1분봉을 촘촘히 받을 종목 수
     orderbook_poll_seconds: int = 60
     candle_sync_minutes: int = 30    # 감시 종목 1분봉 동기화 주기 (세션 종료 시에도 실행)
-    ranking_poll_minutes: int = 10
+    ranking_poll_minutes: int = 10   # 휴장·애프터마켓
+    ranking_poll_live_seconds: int = 60   # 데이·프리·정규장: 랭킹이 계속 바뀌므로 1분마다
     edgar_poll_minutes: int = 5
     runner_min_pct: float = 30.0     # 정규장 종가 기준 이만큼 오른 종목을 급등주로 기록
     news_poll_minutes: int = 2
@@ -106,7 +107,8 @@ class TradingConfig:
     max_price: float = 5.00
     max_spread_pct: float = 3.0          # 데이마켓은 스프레드가 넓어 매매 기준보다 조금 느슨하게
     entry_cutoff_minutes: int = 30       # 데이마켓 종료 30분 전부터 신규 매수 중단
-    scan_minutes: int = 5
+    scan_minutes: int = 5            # (예전 설정, scan_seconds 가 우선)
+    scan_seconds: int = 15           # 전략 스캔 간격 (후보 호가는 웹소켓 실시간)
     forced_exit_minutes: int = 60        # 정규장 개장 후 N분에 전량 청산
     entry_ttl_seconds: int = 300         # 매수 지정가 미체결 시 취소
     exit_reprice_seconds: int = 60       # 매도 지정가 재호가 주기

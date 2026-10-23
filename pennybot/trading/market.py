@@ -23,6 +23,8 @@ class MarketView:
     def __init__(self, db_path: str, client, calendar: SessionCalendar, exchange, clock=None):
         self.db = sqlite3.connect(ro_uri(db_path), uri=True, check_same_thread=False) \
             if db_path != ":memory:" else sqlite3.connect(":memory:")
+        self.db_path = db_path
+        self._stats: dict[str, tuple[float, dict]] = {}
         self.c = client
         self.cal = calendar
         self.ex = exchange
@@ -30,6 +32,33 @@ class MarketView:
         self._warn: dict[str, tuple[datetime, list[str]]] = {}
         # 백테스트에서는 재생 시각까지의 데이터만 보이게 한다 (미래 데이터 차단). 실시간이면 현재 시각
         self.clock = clock or (lambda: datetime.now(timezone.utc))
+
+    def day_stats(self, symbol: str, max_age: float = 120) -> dict:
+        """알림용: 오늘(최신 일봉) 등락·거래량·거래대금, 20일 평균 대비 거래량, 30일 차트 요약. 2분 캐시, 실패하면 {}."""
+        import time as _t
+        hit = self._stats.get(symbol)
+        if hit and _t.time() - hit[0] < max_age:
+            return hit[1]
+        out: dict = {}
+        try:
+            cs = list(reversed((self.c.candles(symbol, "1d", 61) or {}).get("candles", [])))   # 오래된 → 최신
+            bars = [(float(c["openPrice"]), float(c["highPrice"]), float(c["lowPrice"]), float(c["closePrice"]),
+                     float(c["volume"])) for c in cs]
+            if len(bars) >= 2:
+                o, h, l, c, v = bars[-1]
+                pc = bars[-2][3]
+                prev20 = bars[-21:-1]
+                avg20 = sum(b[4] for b in prev20) / len(prev20)
+                last30 = bars[-31:-1] if len(bars) > 31 else bars[:-1]
+                out = {"change_pct": (c / pc - 1) * 100 if pc else None, "volume": v, "dollar": v * (o + h + l + c) / 4,
+                       "vol_ratio": v / avg20 if avg20 else None,
+                       "ret_30": (c / last30[0][3] - 1) * 100 if last30 and last30[0][3] else None,
+                       "dd_60": (c / max(b[1] for b in bars[-60:]) - 1) * 100,
+                       "range_30": sum((b[1] - b[2]) / b[3] for b in last30 if b[3]) / max(1, len(last30)) * 100}
+        except Exception as e:
+            log.debug("일봉 통계 실패 %s: %s", symbol, e)
+        self._stats[symbol] = (_t.time(), out)
+        return out
 
     def _asof(self) -> str:
         return _utc(self.clock())

@@ -152,6 +152,14 @@ def render(b: dict) -> str:
         lines.append(f"{_px(p['last'])}{chg} · {SESS.get(p['session'], p['session'])} · 영업일 {p['trade_date']}")
         if b.get("sessions"):
             lines.append(" → ".join(f"{SESS.get(x['session'], x['session'])} {_px(x['last'])}" for x in b["sessions"]))
+    st = b.get("stats") or {}
+    if st:
+        from .trading.messages import money_s, qty_s
+        part = [f"거래량 {qty_s(st.get('volume'))}" + (f" (평소 {st['vol_ratio']:.1f}배)" if st.get("vol_ratio") else ""),
+                f"거래대금 {money_s(st.get('dollar'))}"]
+        if st.get("ret_30") is not None:
+            part.append(f"30일 {st['ret_30']:+.0f}%")
+        lines.append("📊 " + " · ".join(part))
     q = b.get("quote")
     if q and q.get("bid") and q.get("ask"):
         lines.append(f"호가 {_px(q['bid'])} / {_px(q['ask'])} (스프레드 {(q['ask'] / q['bid'] - 1) * 100:.1f}%)")

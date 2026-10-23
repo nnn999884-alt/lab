@@ -170,7 +170,7 @@ class Trader:
             self._stage("exits", self.manage_exits, now, session)
         self._stage("backstop", self.sync_backstops, now, session)
         if session == DAY and not ctl["kill"] and self._entry_window(now, trade_date):
-            if self._due("scan", now, timedelta(minutes=self.tcfg.scan_minutes)):
+            if self._due("scan", now, timedelta(seconds=getattr(self.tcfg, "scan_seconds", 0) or self.tcfg.scan_minutes * 60)):
                 self._stage("scan", self.scan_and_enter, now, trade_date, session)
         if self._due("equity", now, timedelta(minutes=5)):
             self._stage("snapshot", self.snapshot, now, trade_date)
@@ -334,15 +334,38 @@ class Trader:
     def _on_fill(self, w: Working, delta: int, px: float, session: str, now: datetime) -> None:
         if w.purpose == "entry":
             self.journal.record_entry_fill(w.trade_id, delta, px, session, now, fee=self._fee(delta, px))
-            self.notifier.send(msg.buy_filled(self.journal.trade(w.trade_id), delta, px, session))
+            tr = self.journal.trade(w.trade_id)
+            self.notifier.send(msg.buy_filled(tr, delta, px, session, self._info(w.symbol, tr.get("reason"))))
             return
         t = self.journal.record_exit_fill(w.trade_id, delta, px, session, now, fee=self._fee(delta, px))
         if w.scale and not t["scaled"]:
             self.journal.set_scaled(w.trade_id, True, stop=t["entry_price"])   # 나머지는 본전 손절 + 트레일링
-            self.notifier.send(msg.scaled_out(t, delta, px))
+            self.notifier.send(msg.scaled_out(t, delta, px, self._info(t["symbol"])))
         if t["status"] == "CLOSED":
             self.exit_reprices.pop(w.trade_id, None)
-            self.notifier.send(msg.closed(self.journal.trade(w.trade_id)))
+            self.notifier.send(msg.closed(self.journal.trade(w.trade_id), self._info(w.symbol)))
+
+    def _info(self, symbol: str, reason: str | None = None) -> list[str]:
+        """알림 아래 종목 정보: 오늘 등락·거래량·거래대금(토스 일봉), 공매도·대차·SSR·공시(수집기 DB),
+        희석·부양 동기(이미 계산해 둔 것만 — 체결 처리 중에 SEC 를 새로 부르지 않는다). 실패해도 알림은 나간다."""
+        try:
+            stats = self.mv.day_stats(symbol) if hasattr(self.mv, "day_stats") else {}
+            b = {}
+            path = getattr(self.mv, "db_path", None)
+            if path and path != ":memory:":
+                from ..brief import brief
+                from ..motive import _LIVE
+                b = brief(path, symbol)
+                hit = _LIVE.get((symbol.upper(), self.clock().date()))
+                prof = self.fund._profile.get((symbol, self.clock().date())) if self.fund and hasattr(self.fund, "_profile") else None
+                if hit:
+                    b["filings"] = hit
+                elif prof is not None:
+                    b["filings"] = {"dilution_score": prof.score, "dilution_reasons": prof.reasons, "motives": []}
+            return msg.info_block(stats, b, reason)
+        except Exception as e:
+            log.debug("알림 종목 정보 실패 %s: %s", symbol, e)
+            return []
 
     def _fee(self, qty: int, px: float) -> float:
         return qty * px * self.tcfg.fee_pct / 100

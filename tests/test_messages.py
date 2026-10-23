@@ -40,3 +40,19 @@ def test_dashboard_command():
     tr.url = "https://abc.trycloudflare.com"
     assert tc.handle("/dashboard") == "📊 대시보드: https://abc.trycloudflare.com"
     assert "/대시보드" in tc.handle("/도움")
+
+
+def test_info_block_readable():
+    stats = {"change_pct": 3.1, "volume": 3.2e6, "dollar": 3.9e6, "vol_ratio": 4.1, "ret_30": -45, "dd_60": -70, "range_30": 16}
+    brief = {"short": {"ratio": 0.52}, "borrow": {"fee_rate": 45.0, "available": 15000}, "ssr": True,
+             "filings": {"dilution_score": 28, "motives": [{"label": "ATM 진행 중"}, {"label": "상폐 기한 D-40"}]},
+             "events": [{"ts": "2026-10-21T13:00:00+00:00", "summary": "$2.0M · 주당 $0.8000"}], "halts": []}
+    L = msg.info_block(stats, brief, "30일 −45%, 데이마켓 전날 종가 근처")
+    text = "\n".join(L)
+    assert L[1] == "── 종목 정보 ──"
+    assert "📊 오늘 +3.1% · 거래량 3.2M (평소 4.1배) · 거래대금 $3.9M" in text
+    assert "🩳 공매도 52% · 대차 수수료 45% (가능 15K주) · SSR" in text
+    assert "💧 희석 28점 · 부양 동기: ATM 진행 중, 상폐 기한 D-40" in text and "📰 10-21 $2.0M" in text
+    assert msg.info_block() == []
+    full = msg.buy_filled(T, 120, 1.2345, "DAY", L)
+    assert full.startswith("🟢 매수 체결 · PENX\n120주 × $1.2345 = $148.14\n🎯 익절 $1.38")

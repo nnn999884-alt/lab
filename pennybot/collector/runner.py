@@ -30,6 +30,8 @@ log = logging.getLogger(__name__)
 RANKINGS = [  # (type, duration)
     ("MARKET_TRADING_AMOUNT", "realtime"),
     ("TOSS_SECURITIES_TRADING_AMOUNT", "realtime"),
+    ("MARKET_TRADING_VOLUME", "realtime"),
+    ("TOSS_SECURITIES_TRADING_VOLUME", "realtime"),
     ("TOP_GAINERS", "1d"),
     ("TOP_LOSERS", "1d"),
 ]
@@ -112,7 +114,8 @@ class Collector:
                 self._run("halts", self.poll_halts)
         if session == CLOSED:
             return
-        if self._due("rankings", now, timedelta(minutes=c.ranking_poll_minutes)):
+        every = timedelta(seconds=c.ranking_poll_live_seconds) if session != AFTER else timedelta(minutes=c.ranking_poll_minutes)
+        if self._due("rankings", now, every):
             self._run("rankings", self.poll_rankings, now, trade_date, session)
             self._run("watch", self.select_watch, now, trade_date)
         if self._due("prices", now, timedelta(seconds=c.price_poll_seconds)):

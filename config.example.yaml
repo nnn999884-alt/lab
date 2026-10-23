@@ -68,7 +68,8 @@ collector:
   watch_size: 120             # 호가·1분봉을 촘촘히 받을 종목 수
   orderbook_poll_seconds: 60
   candle_sync_minutes: 30
-  ranking_poll_minutes: 10
+  ranking_poll_minutes: 10       # 애프터마켓
+  ranking_poll_live_seconds: 60   # 데이·프리·정규장
   edgar_poll_minutes: 5
   news_poll_minutes: 2        # 보도자료 피드
   news_feeds: []              # 비우면 기본 4곳 (pennybot/news.py DEFAULT_FEEDS). 주소가 바뀌면 여기서 교체
