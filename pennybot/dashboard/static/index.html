@@ -339,7 +339,7 @@ body.readonly .readonly-note { display: inline; }
     </section>
     <section class="card">
       <div class="pre-head"><h2>🧪 가상 매매</h2><span class="sub" id="vs-sum" style="margin:0"></span></div>
-      <p class="sub" id="vs-rule">1분 회전율 0.5%+ 또는 1분 거래대금 $5만+ 가 처음 터지면 — 프리마켓 06~09시(동부)면 바로 매수 · 익절 +30%, 그 밖의 시간이면 −20% 지정가(60분) · 익절 +15%. 손절 −35% · 정규장 마감 정리, 실제 주문 없음</p>
+      <p class="sub" id="vs-rule">정규장 전(데이·프리마켓)에 1분 회전율 0.5%+ 또는 1분 거래대금 $5만+ 가 처음 터지면 → 60분 동안 VWAP −10% 에 지정가 → 익절 +10% · 손절 −35% · 정규장 마감 정리. 과거 검증 승률 85%, 실제 주문 없음</p>
       <div class="vs-list" id="vs"></div>
       <button id="vs-more" class="more-btn" hidden>더 보기</button>
     </section>
@@ -1147,7 +1147,7 @@ function drawVs() {
     const l1 = document.createElement("div"); l1.className = "vs-l1";
     l1.append(span("vs-st", wait ? "🧾" : r.status === "OPEN" ? "⏳" : v >= 0 ? "✅" : "❌"), span("vs-sym", r.symbol), span("vs-name", r.name || ""),
               span("vs-ret " + (wait ? "muted" : tone(v) || ""), wait ? "지정가 대기" : fmtPct(v)));
-    const l2 = wait ? span("vs-l2", `지정가 ${fmtPx(r.entry)} · 지금 ${fmtPx(r.last)} · ${kst(r.opened)} 신호 (60분 유효)`)
+    const l2 = wait ? span("vs-l2", `지정가 ${fmtPx(r.entry)} (VWAP −10%) · 지금 ${fmtPx(r.last)} · ${kst(r.opened)} 신호 (60분 유효)`)
       : span("vs-l2", `${fmtPx(r.entry)} → ${r.status === "OPEN" ? fmtPx(r.last) + " 보유 중" : fmtPx(r.exit_price) + " " + r.exit_reason}`
       + ` · 최고 ${fmtPct((r.high / r.entry - 1) * 100, 0)}${r.high_at && r.high > r.entry ? ` (${untilS(r.opened, r.high_at)})` : ""}`
       + ` 최저 ${fmtPct((r.low / r.entry - 1) * 100, 0)} · ${kst(r.opened)} ${SESS_SHORT[r.session] || ""}`);

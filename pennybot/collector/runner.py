@@ -67,6 +67,7 @@ class Collector:
         self._ev_last: dict = {}                  # (종목, 종류) → 마지막 이벤트 시각
         self._rank_prev: dict = {}                # 랭킹 종류 → {종목: 순위}
         self._rank_skip: tuple = (None, set())    # (기준일, 일봉 점수를 못 매긴 랭킹 종목)
+        self._day_cache: dict = {}                # 종목 → (그날 시작, 그날 1분봉) — 가상 매매 VWAP 용
         self._short_done: set[tuple[str, str]] = set()   # (종류, 날짜) 이미 받은 일별 파일
         self._seen_news: set[str] = set()
         self.clock = clock
@@ -668,21 +669,55 @@ class Collector:
                                    buttons=alert_buttons(sym, link))
                 log.info("급등 전조 알림 %s (%s)", sym, ", ".join(lv["signals"]))
             if self.cfg.vsignal and session != AFTER:      # 가상 매매는 알림과 따로: 1분 거래 터짐 → 아래 지정가
-                self._vlimit(now, d0, sym, score, close, today, shares.get(sym), session)
+                self._vlimit(now, d0, sym, score, close, today, shares.get(sym), session, start)
             if fire:
                 self._event(now, sym, "precursor", f"🔥 {sym} 급등 전조 발동 ({score}점 · 1시간 거래량 "
                             f"{lv['metrics'].get('vol_x', 0):.1f}배 · {lv['metrics'].get('chg', 0):+.1f}%)", lv["metrics"].get("chg"))
         self.store.put_precursor_live(out)
 
     # ---------- 가상 매수·매도 (알림만, 실제 주문 없음) ----------
-    def _vlimit(self, now, d0, sym, score, prev_close, today, shares, session) -> None:
-        """종목당 하루 한 번: 신호 → 가상 지정가 주문(ORDER) → 닿으면 체결(OPEN). 방금(최근 3분) 일어난 것만 처리."""
+    def _day_bars(self, sym: str, recent: list[tuple], start: str) -> list[tuple]:
+        """그날 데이마켓 첫 봉부터의 1분봉 (VWAP 용). 최근 200분으로 모자라면 앞쪽을 한 번 받아 두고, 이후엔 이어 붙인다."""
+        have = self._day_cache.get(sym)
+        if have and have[0] == start:
+            merged = {b[0]: b for b in have[1]}
+        elif recent and recent[0][0] <= start:
+            merged = {}
+        else:
+            merged, before = {}, (recent[0][0] if recent else None)
+            for _ in range(8):
+                try:
+                    res = self.c.candles(sym, "1m", 200, before) or {}
+                except Exception as e:
+                    log.debug("1분봉 앞쪽 실패 %s: %s", sym, e)
+                    break
+                page = res.get("candles", [])
+                for cd in page:
+                    ts = iso(datetime.fromisoformat(cd["timestamp"].replace("Z", "+00:00")))
+                    merged[ts] = (ts, float(cd["openPrice"]), float(cd["highPrice"]), float(cd["lowPrice"]),
+                                  float(cd["closePrice"]), float(cd["volume"]))
+                before = res.get("nextBefore")
+                if not page or not before or min(merged) <= start:
+                    break
+        merged.update({b[0]: b for b in recent})
+        bars = sorted(b for t, b in merged.items() if t >= start)
+        self._day_cache[sym] = (start, bars)
+        return bars
+
+    def _vlimit(self, now, d0, sym, score, prev_close, today, shares, session, start=None) -> None:
+        """종목당 하루 한 번: 정규장 전 신호 → 가상 지정가 주문(ORDER, VWAP −dip%) → 닿으면 체결(OPEN). 방금(최근 3분) 일어난 것만."""
         from ..precursor import limit_plan
+        cur = self.store.query("SELECT id, status FROM vsignals WHERE symbol=? AND d0=? ORDER BY id DESC LIMIT 1", (sym, d0))
+        if cur and cur[0][1] != "ORDER":
+            return                                       # 오늘 이미 끝났거나 보유 중
+        if not cur and not limit_plan(today, prev_close, shares, self.cfg.vsignal_dip, self.cfg.vsignal_order_minutes):
+            return
+        if start and self.c:
+            today = self._day_bars(sym, today, start)    # VWAP 는 그날 첫 봉부터
         p = limit_plan(today, prev_close, shares, self.cfg.vsignal_dip, self.cfg.vsignal_order_minutes)
         if not p:
             return
         fresh = lambda k: k is not None and k >= len(today) - 3
-        cur = self.store.query("SELECT id, status FROM vsignals WHERE symbol=? AND d0=? ORDER BY id DESC LIMIT 1", (sym, d0))
         if not cur:
             if not fresh(p["trig_k"]) and not fresh(p["fill_k"]):
                 return                                   # 수집기가 늦게 켜져 이미 지난 신호
@@ -690,36 +725,26 @@ class Collector:
                 return
             b = today[p["trig_k"]]
             turn = f" · 1분 회전율 {b[5] / shares * 100:.1f}%" if shares else ""
-            lo_h, hi_h = self.cfg.vsignal_pre_hours
-            if lo_h <= datetime.fromisoformat(b[0]).astimezone(ET).hour < hi_h:
-                if not fresh(p["trig_k"]):
-                    return                               # 바로 사는 건 신호 직후에만
-                reason = (f"프리마켓 {datetime.fromisoformat(b[0]).astimezone(ET):%H:%M} ET 첫 거래 터짐 · 1분 거래대금 ${b[4] * b[5] / 1e3:.0f}K{turn}"
-                          f" · 전날 대비 {(b[4] / prev_close - 1) * 100:+.0f}% → 바로 매수 · 전조 {score}점")
-                e = b[4] * 1.005
-                with self.store.db:
-                    c = self.store.db.execute(
-                        "INSERT INTO vsignals (symbol, d0, opened, session, entry, score, reason, status, high, low, last, tp) "
-                        "VALUES (?,?,?,?,?,?,?, 'OPEN', ?, ?, ?, ?)", (sym, d0, b[0], session, e, score, reason, e, e, b[4],
-                                                                      self.cfg.vsignal_pre_take_profit))
-                self._vnotify("buy", c.lastrowid, session)
-                return
-            reason = (f"1분 거래대금 ${b[4] * b[5] / 1e3:.0f}K{turn} · 신호가 {b[4]:.4g} (전날 대비 {(b[4] / prev_close - 1) * 100:+.0f}%)"
-                      f" → −{self.cfg.vsignal_dip:g}% 지정가 · 전조 {score}점")
+            reason = (f"1분 거래대금 ${b[4] * b[5] / 1e3:.0f}K{turn} · {datetime.fromisoformat(b[0]).astimezone(ET):%H:%M} ET"
+                      f" · 신호가 {b[4]:.4g} (전날 대비 {(b[4] / prev_close - 1) * 100:+.0f}%) → VWAP −{self.cfg.vsignal_dip:g}% 지정가 · 전조 {score}점")
             with self.store.db:
                 c = self.store.db.execute(
                     "INSERT INTO vsignals (symbol, d0, opened, session, entry, score, reason, status, high, low, last) "
                     "VALUES (?,?,?,?,?,?,?, 'ORDER', ?, ?, ?)", (sym, d0, b[0], session, p["limit"], score, reason,
-                                                               p["limit"], p["limit"], b[4]))
+                                                               p["limit"], p["limit"], today[-1][4]))
             self._vnotify("order", c.lastrowid, session)
             cur = [(c.lastrowid, "ORDER")]
-        vid, status = cur[0]
-        if status == "ORDER" and p["fill_k"] is not None:
+        vid = cur[0][0]
+        if p["fill_k"] is not None:
             f = today[p["fill_k"]]
             with self.store.db:
                 self.store.db.execute("UPDATE vsignals SET status='OPEN', opened=?, entry=?, high=?, low=?, last=? WHERE id=?",
                                       (f[0], p["fill_px"], p["fill_px"], min(f[3], p["fill_px"]), f[4], vid))
             self._vnotify("buy", vid, session)
+        else:
+            with self.store.db:                          # 지정가는 VWAP 따라 움직인다
+                self.store.db.execute("UPDATE vsignals SET entry=?, high=?, low=?, last=? WHERE id=?",
+                                      (p["limit"], p["limit"], p["limit"], today[-1][4], vid))
 
     def _vnotify(self, kind: str, vid: int, session: str) -> None:
         from ..precursor import vsignal_text

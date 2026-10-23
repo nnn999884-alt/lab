@@ -165,26 +165,44 @@ def money_at(bars: list[tuple], k: int, prev_close: float, shares: float | None)
     return (bars[k][4] / prev_close - 1) * 100 >= 5 and (d3 >= MONEY_3M or TURN_3M <= turn3 <= MAX_TURNOVER)
 
 
-def limit_plan(bars: list[tuple], prev_close: float, shares: float | None, dip: float = 20.0, minutes: int = 60) -> dict | None:
-    """1분 거래가 처음 터진 분(전날 대비 +5%↑ 이고 1분 회전율 0.5%+ 또는 1분 거래대금 $5만+) → 그 종가 −dip% 지정가,
-    minutes 분 안에 저가가 닿으면 체결 (지정가, 그 분 시가가 더 낮으면 시가).
-    급등 후보 날 1,919일(결과 모르고 고름)에서 지정가보다 2% 더 내려가야 체결로 치는 엄격한 가정으로도
-    −20% 지정가 · 익절 +15% · 손절 −35% 가 앞·뒤 기간 모두 1건당 +3.4% (승률 65%, 신호 476번 중 62번 체결).
-    추격(터지자마자·2차 파동 돌파·10~30분 대기)은 모두 손해이거나 거의 본전. 체결 직전 거래대금 유지 조건은 도움 안 됨.
-    → {trig_k, trig_px, limit, until_k, fill_k, fill_px} 또는 신호 없으면 None.
+def vwap_series(bars: list[tuple]) -> list[float]:
+    """그날 첫 봉부터 누적 VWAP (전형가 = (고+저+종)/3)."""
+    cv = cpv = 0.0
+    out = []
+    for b in bars:
+        cv += b[5]
+        cpv += (b[2] + b[3] + b[4]) / 3 * b[5]
+        out.append(cpv / cv if cv else b[4])
+    return out
 
-    단, 프리마켓 06~09시(동부)에 처음 터진 건 바로 사는 게 낫다 (호출하는 쪽에서 판단): 같은 표본에서 터진 분 종가에 사서
-    익절 +30% · 손절 −35% → 앞/뒤 +5.6/+3.2% (82건), 다른 표본(전날 점수 상위 날)에서도 +1.1/+9.8% (67건).
-    데이마켓·프리 초반·정규장에 터진 건 바로 사면 손해이거나 표본마다 들쭉날쭉."""
+
+def limit_plan(bars: list[tuple], prev_close: float, shares: float | None, dip: float = 10.0, minutes: int = 60,
+               last_hour: float = 9.5) -> dict | None:
+    """자동매매 규칙: 그날 1분 거래가 처음 터진 분(전날 대비 +5%↑ & 1분 회전율 0.5%+ 또는 1분 거래대금 $5만+)이
+    정규장 전(동부 09:30 이전, 데이마켓 포함)이면 → 다음 minutes 분 동안 지정가 = 직전 분까지의 VWAP −dip%,
+    저가가 닿으면 체결 (지정가, 그 분 시가가 더 낮으면 시가). bars 는 그날 데이마켓 첫 봉부터여야 VWAP 가 맞다.
+
+    워크포워드 검증 (감시 종목 날 ~2,800일 중 신호 816번, 시간순 3등분): 매수 12 × 유효시간 3 × 시간대 3 × 익절 4 ×
+    손절 2 × 보유 2 = 1,632개 규칙을 앞 ⅔ 에서 고르고 뒤 ⅓ 에서 확인. 이 규칙 + 익절 +10% · 손절 −35% ·
+    정규장 마감 정리 → 1건당 +3.5% / +4.1% / +4.8% (세 덩어리), 승률 85%, 손절까지 간 것 4%, 보유 중앙값 18분,
+    하루 1.6건. 체결은 지정가보다 2% 더 내려가야 친 엄격한 가정. 정규장에 처음 터진 건 안 산다.
+    → {trig_k, trig_px, limit, until_k, fill_k, fill_px} 또는 신호 없음/정규장 신호면 None."""
+    from .sessions import ET
     if not bars or not prev_close:
         return None
     t = next((k for k, b in enumerate(bars) if (b[4] / prev_close - 1) * 100 >= 5
               and (b[4] * b[5] >= 5e4 or (shares and 0.5 <= b[5] / shares * 100 <= MAX_TURNOVER))), None)
     if t is None:
         return None
-    lim = bars[t][4] * (1 - dip / 100)
-    p = {"trig_k": t, "trig_px": bars[t][4], "limit": lim, "until_k": t + minutes, "fill_k": None, "fill_px": None}
+    et = datetime.fromisoformat(bars[t][0]).astimezone(ET)
+    h = et.hour + et.minute / 60
+    if last_hour <= h < 20:                              # 정규장·애프터에 처음 터진 건 안 산다
+        return None
+    vw = vwap_series(bars)
+    p = {"trig_k": t, "trig_px": bars[t][4], "limit": vw[-1] * (1 - dip / 100), "until_k": t + minutes,
+         "fill_k": None, "fill_px": None}
     for k in range(t + 1, min(len(bars), t + minutes + 1)):
+        lim = vw[k - 1] * (1 - dip / 100)
         if bars[k][3] <= lim:
             p["fill_k"], p["fill_px"] = k, min(bars[k][1], lim)
             break
@@ -401,9 +419,9 @@ def vsignal_text(kind: str, sym: str, name: str | None, v: dict, cfg, session_ko
         return "\n".join([
             f"🧪 가상 지정가 주문 {head}",
             "──────────────",
-            f"🧾 {px(e)} 에 매수 대기 (신호가 −{cfg.vsignal_dip:g}%) · {cfg.vsignal_order_minutes}분 유효 · {session_ko} · 실제 주문 아님",
+            f"🧾 {px(e)} 에 매수 대기 (VWAP −{cfg.vsignal_dip:g}%, VWAP 따라 움직임) · {cfg.vsignal_order_minutes}분 유효 · {session_ko} · 실제 주문 아님",
             f"근거: {v['reason']}",
-            "한줄 판단: 거래가 터졌습니다. 첫 턴은 털리는 경우가 많아 추격하지 않고 눌림에 겁니다.",
+            "한줄 판단: 정규장 전에 거래가 터졌습니다. 추격하지 않고 VWAP 아래로 털릴 때 받습니다.",
         ])
     if kind == "buy":
         e = v["entry"]
@@ -415,8 +433,7 @@ def vsignal_text(kind: str, sym: str, name: str | None, v: dict, cfg, session_ko
             f"🎯 익절 {px(e * (1 + tp / 100))} (+{tp:g}%)"
             f" · 🛑 손절 {px(e * (1 - cfg.vsignal_stop / 100))} (−{cfg.vsignal_stop:g}%) · 정규장 마감에 정리",
             f"근거: {v['reason']}",
-            ("한줄 판단: 프리마켓 중후반에 처음 터졌습니다. 이 시간대는 추격해도 이어지는 경우가 많았습니다." if v.get("tp")
-             else "한줄 판단: 신호가에서 크게 눌린 자리에 체결됐습니다. 손절은 넓게(−35%), 익절은 짧게 잡습니다."),
+            "한줄 판단: VWAP 아래로 털린 자리에 체결됐습니다. 익절은 짧게(+10%), 손절은 넓게(−35%) — 과거 승률 85%.",
         ])
     ret = (v["exit_price"] / v["entry"] - 1) * 100
     held = datetime.fromisoformat(v["closed"]) - datetime.fromisoformat(v["opened"])

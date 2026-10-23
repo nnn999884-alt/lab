@@ -32,36 +32,42 @@ def bars_of(px, vol=100000.0):
 
 
 def test_limit_plan():
-    from pennybot.precursor import limit_plan
-    px = [0.9] * 3 + [1.0, 1.10, 0.95, 0.85, 0.79, 0.9]                  # 전날 0.9 → 1.0 (+11%, 1분 $10만) 신호
-    p = limit_plan(bars_of(px), 0.9, None, 20, 60)
-    assert p["trig_k"] == 3 and round(p["limit"], 2) == 0.80 and p["fill_k"] == 7 and round(p["fill_px"], 2) == 0.79
+    from pennybot.precursor import limit_plan, vwap_series
+    px = [0.9] * 3 + [1.0, 1.10, 0.95, 0.85, 0.9]                        # 04:03 ET 신호 (+11%, 1분 $10만)
+    bars = bars_of(px)
+    p = limit_plan(bars, 0.9, None, 10, 60)
+    vw = vwap_series(bars)
+    assert p["trig_k"] == 3 and p["fill_k"] == 6                          # 0.85 ≤ VWAP(0.958) × 0.9 = 0.8625
+    assert abs(p["fill_px"] - 0.85) < 1e-9 and abs(vw[5] * 0.9 - 0.8625) < 1e-3
     assert limit_plan(bars_of(px, vol=1000.0), 0.9, None) is None          # 1분 $1천 → 신호 없음
     assert limit_plan(bars_of(px, vol=1000.0), 0.9, 1e5)["trig_k"] == 3   # 1분 회전율 1% → 신호
-    assert limit_plan(bars_of(px[:7]), 0.9, None)["fill_k"] is None         # 아직 안 닿음
+    assert limit_plan(bars_of(px[:6]), 0.9, None)["fill_k"] is None         # 아직 안 닿음
+    t_reg = datetime(2026, 10, 23, 14, 0, tzinfo=timezone.utc)            # 10:00 ET 정규장 신호 → 안 삼
+    reg = [((t_reg + timedelta(minutes=k)).isoformat(), x, x, x, x, 1e5) for k, x in enumerate(px)]
+    assert limit_plan(reg, 0.9, None) is None
 
 
 def test_virtual_limit_order_fill_and_take_profit(tmp_path):
     col, st, sent = make(tmp_path)
     px = [0.9] * 3 + [1.0, 1.10]
     col._vlimit(T0, "2026-10-22", "PENX", 9, 0.9, bars_of(px), None, "PRE")
-    assert st.query("SELECT status, round(entry, 2) FROM vsignals")[0] == ("ORDER", 0.8)
-    assert sent.msgs[-1][0].startswith("🧪 가상 지정가 주문 (PENX · 펜엑스)") and "$0.8000 에 매수 대기" in sent.msgs[-1][0]
-    col._vlimit(T0, "2026-10-22", "PENX", 9, 0.9, bars_of(px + [0.95]), None, "PRE")   # 안 닿음 → 그대로
-    assert st.query("SELECT status FROM vsignals")[0][0] == "ORDER" and len(sent.msgs) == 1
-    px += [0.95, 0.85, 0.78]
-    col._vlimit(T0, "2026-10-22", "PENX", 9, 0.9, bars_of(px), None, "PRE")             # 0.78 → 지정가 0.80 체결 (시가 0.78)
-    assert st.query("SELECT status, round(entry, 2) FROM vsignals")[0] == ("OPEN", 0.78)
-    assert sent.msgs[-1][0].startswith("🧪 가상 매수 체결 (PENX · 펜엑스)") and "익절 $0.8970" in sent.msgs[-1][0]
-    col.universe["PENX"]["last"] = 0.6                                    # −23%: 아직 보유 (손절 −35%)
+    assert st.query("SELECT status, round(entry, 3) FROM vsignals")[0] == ("ORDER", 0.864)   # VWAP 0.96 × 0.9
+    assert sent.msgs[-1][0].startswith("🧪 가상 지정가 주문 (PENX · 펜엑스)") and "VWAP −10%" in sent.msgs[-1][0]
+    col._vlimit(T0, "2026-10-22", "PENX", 9, 0.9, bars_of(px + [0.95]), None, "PRE")   # 안 닿음 → 지정가만 VWAP 따라
+    assert st.query("SELECT status, round(entry, 3) FROM vsignals")[0] == ("ORDER", 0.863) and len(sent.msgs) == 1
+    px += [0.95, 0.85]
+    col._vlimit(T0, "2026-10-22", "PENX", 9, 0.9, bars_of(px), None, "PRE")             # 0.85 → 체결
+    assert st.query("SELECT status, round(entry, 2) FROM vsignals")[0] == ("OPEN", 0.85)
+    assert sent.msgs[-1][0].startswith("🧪 가상 매수 체결 (PENX · 펜엑스)") and "익절 $0.9350 (+10%)" in sent.msgs[-1][0]
+    col.universe["PENX"]["last"] = 0.6                                    # −29%: 아직 보유 (손절 −35%)
     col.check_vsignals(T0 + timedelta(minutes=10), "PRE")
     assert st.query("SELECT status FROM vsignals")[0][0] == "OPEN"
-    col.universe["PENX"]["last"] = 0.90                                   # +15.4% → 익절
+    col.universe["PENX"]["last"] = 0.94                                   # +10.6% → 익절
     col.check_vsignals(T0 + timedelta(hours=2), "PRE")
     status, reason = st.query("SELECT status, exit_reason FROM vsignals")[0]
-    assert status == "CLOSED" and reason == "익절 +15%"
+    assert status == "CLOSED" and reason == "익절 +10%"
     text = sent.msgs[-1][0]
-    assert text.startswith("🔵 가상 매도 (PENX · 펜엑스) · 익절 +15%") and "최고 +15.4% (매수 1시간 53분 뒤)" in text
+    assert text.startswith("🔵 가상 매도 (PENX · 펜엑스) · 익절 +10%") and "최고 +10.6% (매수 1시간 54분 뒤)" in text
     col._vlimit(T0, "2026-10-22", "PENX", 9, 0.9, bars_of(px), None, "PRE")             # 하루 한 번
     assert st.query("SELECT COUNT(*) FROM vsignals")[0][0] == 1
 
@@ -79,10 +85,11 @@ def test_virtual_order_expires_and_late_signal_ignored(tmp_path):
 
 def test_virtual_position_closes_after_regular(tmp_path):
     col, st, sent = make(tmp_path)
-    px = [0.9] * 3 + [1.0, 1.10, 0.95, 0.78]
-    col._vlimit(T0, "2026-10-22", "PENX", 9, 0.9, bars_of(px), None, "REGULAR")
+    px = [0.9] * 3 + [1.0, 1.10, 0.95, 0.80]
+    col._vlimit(T0, "2026-10-22", "PENX", 9, 0.9, bars_of(px), None, "PRE")
+    assert st.query("SELECT status FROM vsignals")[0][0] == "OPEN"
     col.universe["PENX"]["last"] = 0.82
-    col.check_vsignals(T0 + timedelta(hours=6), "AFTER")
+    col.check_vsignals(T0 + timedelta(hours=10), "AFTER")
     assert st.query("SELECT status, exit_reason FROM vsignals")[0] == ("CLOSED", "정규장 마감 정리")
 
 
@@ -144,18 +151,22 @@ def test_live_money_signal_and_ask_depth():
     assert "호가: 매도 +10% 안" in text and "얇음 ✅" in text
 
 
-def test_premarket_burst_buys_at_once(tmp_path):
-    """동부 06~09시에 처음 터지면 지정가 대신 바로 매수, 익절 +30%."""
+def test_day_bars_backfills_once_then_merges(tmp_path):
     col, st, sent = make(tmp_path)
-    t7 = datetime(2026, 10, 23, 11, 0, tzinfo=timezone.utc)              # 07:00 ET (서머타임)
-    bars = [((t7 + timedelta(minutes=k)).isoformat(), p, p, p, p, 100000.0) for k, p in enumerate([0.9] * 3 + [1.0])]
-    col._vlimit(t7, "2026-10-22", "PENX", 9, 0.9, bars, None, "PRE")
-    status, entry, tp = st.query("SELECT status, round(entry, 3), tp FROM vsignals")[0]
-    assert (status, entry, tp) == ("OPEN", 1.005, 30.0)
-    assert sent.msgs[-1][0].startswith("🧪 가상 매수 체결") and "익절 $1.3065 (+30%)" in sent.msgs[-1][0]
-    col.universe["PENX"]["last"] = 1.2                                    # +19%: +15% 넘었지만 이 매매는 +30% 익절
-    col.check_vsignals(t7 + timedelta(minutes=20), "PRE")
-    assert st.query("SELECT status FROM vsignals")[0][0] == "OPEN"
-    col.universe["PENX"]["last"] = 1.31
-    col.check_vsignals(t7 + timedelta(minutes=40), "PRE")
-    assert st.query("SELECT status, exit_reason FROM vsignals")[0] == ("CLOSED", "익절 +30%")
+    old = [((T0 + timedelta(minutes=k)).isoformat(), 1.0) for k in range(5)]
+
+    class C:
+        calls = 0
+
+        def candles(self, sym, interval, count, before=None):
+            C.calls += 1
+            return {"candles": [{"timestamp": t, "openPrice": p, "highPrice": p, "lowPrice": p, "closePrice": p, "volume": 10}
+                                for t, p in reversed(old)], "nextBefore": None}
+    col.c = C()
+    start = T0.isoformat()
+    recent = bars_of([1.1, 1.2])[:2]
+    recent = [((T0 + timedelta(minutes=5 + k)).isoformat(),) + b[1:] for k, b in enumerate(recent)]
+    full = col._day_bars("PENX", recent, start)
+    assert len(full) == 7 and full[0][0] == start and C.calls == 1
+    nxt = [((T0 + timedelta(minutes=7)).isoformat(), 1.3, 1.3, 1.3, 1.3, 5.0)]
+    assert len(col._day_bars("PENX", nxt, start)) == 8 and C.calls == 1   # 두 번째부터는 이어 붙이기만
