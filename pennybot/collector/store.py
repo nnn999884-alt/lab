@@ -91,6 +91,8 @@ MIGRATIONS = [
     ("filings", "detail", "TEXT"),        # 세부 숫자 JSON (filing_detail: 가격·주식 수·워런트·주관사·Form 4 거래)
     ("vsignals", "high_at", "TEXT"),      # 가상 매매 최고가에 닿은 시각
     ("vsignals", "tp", "REAL"),           # 이 매매의 익절 % (없으면 설정값)
+    ("vsignals", "strat", "TEXT"),        # 가상 매매 전략 (vstrat.STRATEGIES 키)
+    ("vsignals", "sl", "REAL"),           # 이 매매의 손절 %
 ]
 
 

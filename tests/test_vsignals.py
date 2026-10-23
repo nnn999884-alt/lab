@@ -31,34 +31,47 @@ def bars_of(px, vol=100000.0):
     return [((T0 + timedelta(minutes=k)).isoformat(), p, p, p, p, vol) for k, p in enumerate(px)]
 
 
-def test_limit_plan():
-    from pennybot.precursor import limit_plan, vwap_series
+def test_strategy_plans():
+    from pennybot.vstrat import STRATEGIES, plan, vwap_series
     px = [0.9] * 3 + [1.0, 1.10, 0.95, 0.85, 0.9]                        # 04:03 ET 신호 (+11%, 1분 $10만)
     bars = bars_of(px)
-    p = limit_plan(bars, 0.9, None, 10, 60)
-    vw = vwap_series(bars)
-    assert p["trig_k"] == 3 and p["fill_k"] == 6                          # 0.85 ≤ VWAP(0.958) × 0.9 = 0.8625
-    assert abs(p["fill_px"] - 0.85) < 1e-9 and abs(vw[5] * 0.9 - 0.8625) < 1e-3
-    assert limit_plan(bars_of(px, vol=1000.0), 0.9, None) is None          # 1분 $1천 → 신호 없음
-    assert limit_plan(bars_of(px, vol=1000.0), 0.9, 1e5)["trig_k"] == 3   # 1분 회전율 1% → 신호
-    assert limit_plan(bars_of(px[:6]), 0.9, None)["fill_k"] is None         # 아직 안 닿음
-    t_reg = datetime(2026, 10, 23, 14, 0, tzinfo=timezone.utc)            # 10:00 ET 정규장 신호 → 안 삼
+    s1 = plan(bars, 0.9, None, STRATEGIES["S1"])                          # VWAP −10%
+    assert s1["trig_k"] == 3 and s1["fill_k"] == 6 and abs(s1["fill_px"] - 0.85) < 1e-9
+    assert abs(vwap_series(bars)[5] * 0.9 - 0.8625) < 1e-3
+    s4 = plan(bars, 0.9, None, STRATEGIES["S4"])                          # 신호가 1.0 −15% = 0.85
+    assert s4["fill_k"] == 6 and abs(s4["fill_px"] - 0.85) < 1e-9
+    s3 = plan(bars, 0.9, None, STRATEGIES["S3"])                          # 고점 1.10 −30% = 0.77 → 아직
+    assert s3["fill_k"] is None and abs(s3["limit"] - 0.77) < 1e-9
+    assert plan(bars, 0.9, None, STRATEGIES["S2"]) is None                 # 04시 → 06~09시 아님
+    t7 = datetime(2026, 10, 23, 11, 0, tzinfo=timezone.utc)               # 07:00 ET
+    b7 = [((t7 + timedelta(minutes=k)).isoformat(), x, x, x, x, 1e5) for k, x in enumerate(px)]
+    s2 = plan(b7, 0.9, None, STRATEGIES["S2"])
+    assert s2["fill_k"] == 3 and abs(s2["fill_px"] - 1.005) < 1e-9
+    t_reg = datetime(2026, 10, 23, 14, 0, tzinfo=timezone.utc)            # 10:00 ET 정규장 신호 → 아무도 안 삼
     reg = [((t_reg + timedelta(minutes=k)).isoformat(), x, x, x, x, 1e5) for k, x in enumerate(px)]
-    assert limit_plan(reg, 0.9, None) is None
+    assert all(plan(reg, 0.9, None, st) is None for st in STRATEGIES.values())
+    assert plan(bars_of(px, vol=1000.0), 0.9, None, STRATEGIES["S1"]) is None          # 1분 $1천 → 신호 없음
+    assert plan(bars_of(px, vol=1000.0), 0.9, 1e5, STRATEGIES["S1"])["trig_k"] == 3    # 1분 회전율 1% → 신호
+
+
+def only(col, *keys):
+    col.cfg.vsignal_strategies = list(keys)
+    return col
 
 
 def test_virtual_limit_order_fill_and_take_profit(tmp_path):
     col, st, sent = make(tmp_path)
+    only(col, "S1")
     px = [0.9] * 3 + [1.0, 1.10]
-    col._vlimit(T0, "2026-10-22", "PENX", 9, 0.9, bars_of(px), None, "PRE")
-    assert st.query("SELECT status, round(entry, 3) FROM vsignals")[0] == ("ORDER", 0.864)   # VWAP 0.96 × 0.9
-    assert sent.msgs[-1][0].startswith("🧪 가상 지정가 주문 (PENX · 펜엑스)") and "VWAP −10%" in sent.msgs[-1][0]
-    col._vlimit(T0, "2026-10-22", "PENX", 9, 0.9, bars_of(px + [0.95]), None, "PRE")   # 안 닿음 → 지정가만 VWAP 따라
+    col._vtrade(T0, "2026-10-22", "PENX", 9, 0.9, bars_of(px), None, "PRE")
+    assert st.query("SELECT status, round(entry, 3), strat FROM vsignals")[0] == ("ORDER", 0.864, "S1")   # VWAP 0.96 × 0.9
+    assert sent.msgs[-1][0].startswith("🧪 [전략1 VWAP 눌림] 가상 지정가 주문 (PENX · 펜엑스)") and "VWAP −10%" in sent.msgs[-1][0]
+    col._vtrade(T0, "2026-10-22", "PENX", 9, 0.9, bars_of(px + [0.95]), None, "PRE")   # 안 닿음 → 지정가만 VWAP 따라
     assert st.query("SELECT status, round(entry, 3) FROM vsignals")[0] == ("ORDER", 0.863) and len(sent.msgs) == 1
     px += [0.95, 0.85]
-    col._vlimit(T0, "2026-10-22", "PENX", 9, 0.9, bars_of(px), None, "PRE")             # 0.85 → 체결
+    col._vtrade(T0, "2026-10-22", "PENX", 9, 0.9, bars_of(px), None, "PRE")             # 0.85 → 체결
     assert st.query("SELECT status, round(entry, 2) FROM vsignals")[0] == ("OPEN", 0.85)
-    assert sent.msgs[-1][0].startswith("🧪 가상 매수 체결 (PENX · 펜엑스)") and "익절 $0.9350 (+10%)" in sent.msgs[-1][0]
+    assert sent.msgs[-1][0].startswith("🧪 [전략1 VWAP 눌림] 가상 매수 체결") and "익절 $0.9350 (+10%)" in sent.msgs[-1][0]
     col.universe["PENX"]["last"] = 0.6                                    # −29%: 아직 보유 (손절 −35%)
     col.check_vsignals(T0 + timedelta(minutes=10), "PRE")
     assert st.query("SELECT status FROM vsignals")[0][0] == "OPEN"
@@ -67,26 +80,52 @@ def test_virtual_limit_order_fill_and_take_profit(tmp_path):
     status, reason = st.query("SELECT status, exit_reason FROM vsignals")[0]
     assert status == "CLOSED" and reason == "익절 +10%"
     text = sent.msgs[-1][0]
-    assert text.startswith("🔵 가상 매도 (PENX · 펜엑스) · 익절 +10%") and "최고 +10.6% (매수 1시간 54분 뒤)" in text
-    col._vlimit(T0, "2026-10-22", "PENX", 9, 0.9, bars_of(px), None, "PRE")             # 하루 한 번
+    assert text.startswith("🔵 [전략1 VWAP 눌림] 가상 매도 (PENX · 펜엑스) · 익절 +10%") and "최고 +10.6% (매수 1시간 54분 뒤)" in text
+    col._vtrade(T0, "2026-10-22", "PENX", 9, 0.9, bars_of(px), None, "PRE")             # 하루 한 번
     assert st.query("SELECT COUNT(*) FROM vsignals")[0][0] == 1
+
+
+def test_strategies_trade_independently(tmp_path):
+    col, st, sent = make(tmp_path)                                        # 넷 다 켜짐 (기본)
+    px = [0.9] * 3 + [1.0, 1.10, 0.95, 0.85]
+    col._vtrade(T0, "2026-10-22", "PENX", 9, 0.9, bars_of(px[:5]), None, "PRE")
+    assert sorted(st.query("SELECT strat, status FROM vsignals")) == [("S1", "ORDER"), ("S3", "ORDER"), ("S4", "ORDER")]
+    col._vtrade(T0, "2026-10-22", "PENX", 9, 0.9, bars_of(px), None, "PRE")             # 0.85 → ①·④ 체결, ③ 대기
+    assert sorted(st.query("SELECT strat, status FROM vsignals")) == [("S1", "OPEN"), ("S3", "ORDER"), ("S4", "OPEN")]
+    col.universe["PENX"]["last"] = 0.94                                   # +10.6%: ① 익절(+10), ④ 아직(+15)
+    col.check_vsignals(T0 + timedelta(minutes=20), "PRE")
+    assert sorted(st.query("SELECT strat, status FROM vsignals")) == [("S1", "CLOSED"), ("S3", "ORDER"), ("S4", "OPEN")]
+
+
+def test_premarket_chase_buys_at_once(tmp_path):
+    col, st, sent = make(tmp_path)
+    only(col, "S2")
+    t7 = datetime(2026, 10, 23, 11, 0, tzinfo=timezone.utc)
+    bars = [((t7 + timedelta(minutes=k)).isoformat(), p, p, p, p, 1e5) for k, p in enumerate([0.9] * 3 + [1.0])]
+    col._vtrade(t7, "2026-10-22", "PENX", 9, 0.9, bars, None, "PRE")
+    assert st.query("SELECT status, round(entry, 3), tp, sl, strat FROM vsignals")[0] == ("OPEN", 1.005, 20.0, 35.0, "S2")
+    assert sent.msgs[-1][0].startswith("🧪 [전략2 프리 추격] 가상 매수 체결") and "(+20%)" in sent.msgs[-1][0]
 
 
 def test_virtual_order_expires_and_late_signal_ignored(tmp_path):
     col, st, sent = make(tmp_path)
+    only(col, "S1", "S4")
     px = [0.9] * 3 + [1.0, 1.10]
-    col._vlimit(T0, "2026-10-22", "PENX", 9, 0.9, bars_of(px), None, "PRE")
-    col.check_vsignals(T0 + timedelta(minutes=64), "PRE")                # 신호(08:03) + 60분 지남
-    assert st.query("SELECT status FROM vsignals")[0][0] == "EXPIRED"
+    col._vtrade(T0, "2026-10-22", "PENX", 9, 0.9, bars_of(px), None, "PRE")
+    col.check_vsignals(T0 + timedelta(minutes=34), "PRE")                # ④ 는 30분, ① 은 60분
+    assert sorted(st.query("SELECT strat, status FROM vsignals")) == [("S1", "ORDER"), ("S4", "EXPIRED")]
+    col.check_vsignals(T0 + timedelta(minutes=64), "PRE")
+    assert st.query("SELECT status FROM vsignals WHERE strat='S1'")[0][0] == "EXPIRED"
     col2, st2, _ = make(tmp_path / "b")
-    col2._vlimit(T0, "2026-10-22", "PENX", 9, 0.9, bars_of(px + [1.1] * 10), None, "PRE")   # 신호가 10분 전 → 무시
+    col2._vtrade(T0, "2026-10-22", "PENX", 9, 0.9, bars_of(px + [1.1] * 10), None, "PRE")   # 신호가 10분 전 → 무시
     assert st2.query("SELECT COUNT(*) FROM vsignals")[0][0] == 0
 
 
 def test_virtual_position_closes_after_regular(tmp_path):
     col, st, sent = make(tmp_path)
+    only(col, "S1")
     px = [0.9] * 3 + [1.0, 1.10, 0.95, 0.80]
-    col._vlimit(T0, "2026-10-22", "PENX", 9, 0.9, bars_of(px), None, "PRE")
+    col._vtrade(T0, "2026-10-22", "PENX", 9, 0.9, bars_of(px), None, "PRE")
     assert st.query("SELECT status FROM vsignals")[0][0] == "OPEN"
     col.universe["PENX"]["last"] = 0.82
     col.check_vsignals(T0 + timedelta(hours=10), "AFTER")

@@ -136,6 +136,9 @@ details summary { cursor: pointer; color: var(--text-secondary); font-size: 12.5
 .vs-ret { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .vs-l2 { display: block; margin-top: 2px; font-size: 12.5px; color: var(--text-secondary); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .vs-why { display: block; margin-top: 4px; font-size: 12px; color: var(--text-muted); }
+.vs-strats { display: grid; gap: 4px; margin: 6px 0 4px; }
+.vs-strat { font-size: 12.5px; color: var(--text-secondary); padding: 5px 8px; border-radius: 8px; background: rgba(127,127,127,.08); overflow-wrap: anywhere; }
+.vs-strat.warn { color: var(--text-primary); background: rgba(208, 59, 59, .14); }
 /* 급등 전조 카드: 숫자 3개 | 미니 차트 */
 .pre-row { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 10px; align-items: end; margin-top: 8px; }
 .pre-row .pre-k3 { margin-top: 0; }
@@ -339,7 +342,9 @@ body.readonly .readonly-note { display: inline; }
     </section>
     <section class="card">
       <div class="pre-head"><h2>🧪 가상 매매</h2><span class="sub" id="vs-sum" style="margin:0"></span></div>
-      <p class="sub" id="vs-rule">정규장 전(데이·프리마켓)에 1분 회전율 0.5%+ 또는 1분 거래대금 $5만+ 가 처음 터지면 → 60분 동안 VWAP −10% 에 지정가 → 익절 +10% · 손절 −35% · 정규장 마감 정리. 과거 검증 승률 85%, 실제 주문 없음</p>
+      <p class="sub" id="vs-rule">신호 = 1분 회전율 0.5%+ 또는 1분 거래대금 $5만+ 가 처음 터진 분. 전략 넷이 각자 사고팔고 정규장 마감에 정리 (실제 주문 없음).
+        ① VWAP −10% 지정가 → +10% ② 프리 06~09시 바로 → +20% ③ 고점 −30% 지정가 → +20% ④ 신호가 −15% 지정가 → +15% · 손절 모두 −35%</p>
+      <div class="vs-strats" id="vs-strats"></div>
       <div class="vs-list" id="vs"></div>
       <button id="vs-more" class="more-btn" hidden>더 보기</button>
     </section>
@@ -1129,11 +1134,25 @@ async function loadVs() {
   const ret = r => ((r.status === "CLOSED" ? r.exit_price : r.last) / r.entry - 1) * 100;
   const wins = done.filter(r => ret(r) > 0).length;
   $("vs-sum").textContent = done.length ? `끝난 ${done.length}건 · 승률 ${Math.round(wins / done.length * 100)}% · 평균 ${fmtPct(done.reduce((a, r) => a + ret(r), 0) / done.length)}` : "";
+  // 전략별 성적 (50건 넘었는데 승률이 손익분기 아래면 ⚠)
+  const by = {};
+  rows.forEach(r => { const k = r.strat || "이전"; (by[k] = by[k] || []).push(r); });
+  const sb = $("vs-strats"); sb.replaceChildren();
+  Object.keys(by).sort().forEach(k => {
+    const rs = by[k], d = rs.filter(r => r.status === "CLOSED"), w = d.filter(r => ret(r) > 0).length;
+    const tp = (rs[0].tp || 10), sl = (rs[0].sl || 35), be = (sl + 1) / (tp + sl);
+    const warn = d.length >= 50 && w / d.length < be;
+    const e = document.createElement("div"); e.className = "vs-strat" + (warn ? " warn" : "");
+    e.textContent = `${STRAT_NAME[k] || k} · 끝난 ${d.length}건` + (d.length ? ` · 승률 ${Math.round(w / d.length * 100)}% (분기 ${Math.round(be * 100)}%) · 평균 ${fmtPct(d.reduce((a, r) => a + ret(r), 0) / d.length)}` : "")
+      + ` · 보유 ${rs.filter(r => r.status === "OPEN").length} · 대기 ${rs.filter(r => r.status === "ORDER").length}` + (warn ? " ⚠ 손익분기 아래" : "");
+    sb.appendChild(e);
+  });
   const rank = r => r.status === "OPEN" ? 0 : r.status === "ORDER" ? 1 : 2;
   vsRows = [...rows].sort((x, y) => rank(x) - rank(y) || (y.opened > x.opened ? 1 : -1));
   drawVs();
 }
 let vsRows = [], vsShown = 8;
+const STRAT_NAME = { S1: "① VWAP 눌림", S2: "② 프리 추격", S3: "③ 깊은 털기", S4: "④ 신호가 눌림", "이전": "이전 규칙" };
 const untilS = (a, b) => { const m = Math.max(0, Math.round((new Date(b) - new Date(a)) / 60000)); return m >= 60 ? `${Math.floor(m / 60)}시간 ${m % 60}분 뒤` : `${m}분 뒤`; };
 const vsOpen = new Set();
 function drawVs() {
@@ -1145,9 +1164,10 @@ function drawVs() {
     const v = ret(r), open = vsOpen.has(r.id), wait = r.status === "ORDER";
     const row = document.createElement("div"); row.className = "vs-row";
     const l1 = document.createElement("div"); l1.className = "vs-l1";
-    l1.append(span("vs-st", wait ? "🧾" : r.status === "OPEN" ? "⏳" : v >= 0 ? "✅" : "❌"), span("vs-sym", r.symbol), span("vs-name", r.name || ""),
+    l1.append(span("vs-st", wait ? "🧾" : r.status === "OPEN" ? "⏳" : v >= 0 ? "✅" : "❌"), span("vs-sym", r.symbol),
+              span("chip", (STRAT_NAME[r.strat] || "이전").split(" ")[0]), span("vs-name", r.name || ""),
               span("vs-ret " + (wait ? "muted" : tone(v) || ""), wait ? "지정가 대기" : fmtPct(v)));
-    const l2 = wait ? span("vs-l2", `지정가 ${fmtPx(r.entry)} (VWAP −10%) · 지금 ${fmtPx(r.last)} · ${kst(r.opened)} 신호 (60분 유효)`)
+    const l2 = wait ? span("vs-l2", `지정가 ${fmtPx(r.entry)} · 지금 ${fmtPx(r.last)} · ${kst(r.opened)} 신호 · ${STRAT_NAME[r.strat] || ""}`)
       : span("vs-l2", `${fmtPx(r.entry)} → ${r.status === "OPEN" ? fmtPx(r.last) + " 보유 중" : fmtPx(r.exit_price) + " " + r.exit_reason}`
       + ` · 최고 ${fmtPct((r.high / r.entry - 1) * 100, 0)}${r.high_at && r.high > r.entry ? ` (${untilS(r.opened, r.high_at)})` : ""}`
       + ` 최저 ${fmtPct((r.low / r.entry - 1) * 100, 0)} · ${kst(r.opened)} ${SESS_SHORT[r.session] || ""}`);

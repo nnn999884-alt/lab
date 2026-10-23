@@ -165,50 +165,6 @@ def money_at(bars: list[tuple], k: int, prev_close: float, shares: float | None)
     return (bars[k][4] / prev_close - 1) * 100 >= 5 and (d3 >= MONEY_3M or TURN_3M <= turn3 <= MAX_TURNOVER)
 
 
-def vwap_series(bars: list[tuple]) -> list[float]:
-    """그날 첫 봉부터 누적 VWAP (전형가 = (고+저+종)/3)."""
-    cv = cpv = 0.0
-    out = []
-    for b in bars:
-        cv += b[5]
-        cpv += (b[2] + b[3] + b[4]) / 3 * b[5]
-        out.append(cpv / cv if cv else b[4])
-    return out
-
-
-def limit_plan(bars: list[tuple], prev_close: float, shares: float | None, dip: float = 10.0, minutes: int = 60,
-               last_hour: float = 9.5) -> dict | None:
-    """자동매매 규칙: 그날 1분 거래가 처음 터진 분(전날 대비 +5%↑ & 1분 회전율 0.5%+ 또는 1분 거래대금 $5만+)이
-    정규장 전(동부 09:30 이전, 데이마켓 포함)이면 → 다음 minutes 분 동안 지정가 = 직전 분까지의 VWAP −dip%,
-    저가가 닿으면 체결 (지정가, 그 분 시가가 더 낮으면 시가). bars 는 그날 데이마켓 첫 봉부터여야 VWAP 가 맞다.
-
-    워크포워드 검증 (감시 종목 날 ~2,800일 중 신호 816번, 시간순 3등분): 매수 12 × 유효시간 3 × 시간대 3 × 익절 4 ×
-    손절 2 × 보유 2 = 1,632개 규칙을 앞 ⅔ 에서 고르고 뒤 ⅓ 에서 확인. 이 규칙 + 익절 +10% · 손절 −35% ·
-    정규장 마감 정리 → 1건당 +3.5% / +4.1% / +4.8% (세 덩어리), 승률 85%, 손절까지 간 것 4%, 보유 중앙값 18분,
-    하루 1.6건. 체결은 지정가보다 2% 더 내려가야 친 엄격한 가정. 정규장에 처음 터진 건 안 산다.
-    → {trig_k, trig_px, limit, until_k, fill_k, fill_px} 또는 신호 없음/정규장 신호면 None."""
-    from .sessions import ET
-    if not bars or not prev_close:
-        return None
-    t = next((k for k, b in enumerate(bars) if (b[4] / prev_close - 1) * 100 >= 5
-              and (b[4] * b[5] >= 5e4 or (shares and 0.5 <= b[5] / shares * 100 <= MAX_TURNOVER))), None)
-    if t is None:
-        return None
-    et = datetime.fromisoformat(bars[t][0]).astimezone(ET)
-    h = et.hour + et.minute / 60
-    if last_hour <= h < 20:                              # 정규장·애프터에 처음 터진 건 안 산다
-        return None
-    vw = vwap_series(bars)
-    p = {"trig_k": t, "trig_px": bars[t][4], "limit": vw[-1] * (1 - dip / 100), "until_k": t + minutes,
-         "fill_k": None, "fill_px": None}
-    for k in range(t + 1, min(len(bars), t + minutes + 1)):
-        lim = vw[k - 1] * (1 - dip / 100)
-        if bars[k][3] <= lim:
-            p["fill_k"], p["fill_px"] = k, min(bars[k][1], lim)
-            break
-    return p
-
-
 def ask_depth(ob: dict, price: float, pct: float = 10.0) -> float | None:
     """호가창 매도 쪽: 현재가 ~ +pct% 안에 걸린 물량의 달러 합 (작을수록 얇다 = 조금만 사도 잘 오른다)."""
     asks = (ob or {}).get("asks") or []
@@ -410,30 +366,31 @@ def until_s(start: str, end: str) -> str:
 
 
 def vsignal_text(kind: str, sym: str, name: str | None, v: dict, cfg, session_ko: str) -> str:
-    """가상 매수·매도 알림 (실제 주문 없음)."""
+    """가상 주문·매수·매도 알림 (실제 주문 없음). v["strat"] = vstrat.STRATEGIES 키."""
     from datetime import datetime
     from .trading.messages import pct, px
+    from .vstrat import LIMIT_KO, STRATEGIES
+    st = STRATEGIES.get(v.get("strat") or "", {})
+    tag = f"[{st['name']}] " if st else ""
     head = f"({sym}" + (f" · {name}" if name else "") + ")"
     if kind == "order":
-        e = v["entry"]
+        basis = LIMIT_KO.get(st.get("entry"), "지정가").format(dip=st.get("dip", ""))
         return "\n".join([
-            f"🧪 가상 지정가 주문 {head}",
+            f"🧪 {tag}가상 지정가 주문 {head}",
             "──────────────",
-            f"🧾 {px(e)} 에 매수 대기 (VWAP −{cfg.vsignal_dip:g}%, VWAP 따라 움직임) · {cfg.vsignal_order_minutes}분 유효 · {session_ko} · 실제 주문 아님",
+            f"🧾 {px(v['entry'])} 에 매수 대기 ({basis}) · {st.get('minutes', 60)}분 유효 · {session_ko} · 실제 주문 아님",
             f"근거: {v['reason']}",
-            "한줄 판단: 정규장 전에 거래가 터졌습니다. 추격하지 않고 VWAP 아래로 털릴 때 받습니다.",
+            "한줄 판단: 정규장 전에 거래가 터졌습니다. 추격하지 않고 털릴 때 받습니다.",
         ])
     if kind == "buy":
-        e = v["entry"]
-        tp = v.get("tp") or cfg.vsignal_take_profit
+        e, tp, sl = v["entry"], v.get("tp") or st.get("tp", 10), v.get("sl") or st.get("sl", 35)
         return "\n".join([
-            f"🧪 가상 매수 체결 {head}",
+            f"🧪 {tag}가상 매수 체결 {head}",
             "──────────────",
             f"💵 {px(e)} · {session_ko} · 실제 주문 아님",
-            f"🎯 익절 {px(e * (1 + tp / 100))} (+{tp:g}%)"
-            f" · 🛑 손절 {px(e * (1 - cfg.vsignal_stop / 100))} (−{cfg.vsignal_stop:g}%) · 정규장 마감에 정리",
+            f"🎯 익절 {px(e * (1 + tp / 100))} (+{tp:g}%) · 🛑 손절 {px(e * (1 - sl / 100))} (−{sl:g}%) · 정규장 마감에 정리",
             f"근거: {v['reason']}",
-            "한줄 판단: VWAP 아래로 털린 자리에 체결됐습니다. 익절은 짧게(+10%), 손절은 넓게(−35%) — 과거 승률 85%.",
+            f"한줄 판단: {st.get('why', '')}" + (f" (과거 검증 {st['test']})" if st.get("test") else ""),
         ])
     ret = (v["exit_price"] / v["entry"] - 1) * 100
     held = datetime.fromisoformat(v["closed"]) - datetime.fromisoformat(v["opened"])
@@ -442,7 +399,7 @@ def vsignal_text(kind: str, sym: str, name: str | None, v: dict, cfg, session_ko
     icon = "🔵" if ret >= 0 else "🔴"
     peak = f" ({until_s(v['opened'], v['high_at'])})" if v.get("high_at") else ""
     return "\n".join([
-        f"{icon} 가상 매도 {head} · {v['exit_reason']}",
+        f"{icon} {tag}가상 매도 {head} · {v['exit_reason']}",
         "──────────────",
         f"💵 {px(v['entry'])} → {px(v['exit_price'])} ({pct(ret)}) · {session_ko}",
         f"보유 {held_s} · 보유 중 최고 {pct((v['high'] / v['entry'] - 1) * 100)}{peak} · 최저 {pct((v['low'] / v['entry'] - 1) * 100)}",
