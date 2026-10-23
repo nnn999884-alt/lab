@@ -36,16 +36,24 @@ def times(v: float | None) -> str:
     return "100배+" if v >= 100 else f"{v:.1f}배"
 LIVE_LABELS = {"wake": "거래 급증", "creep": "매수세 유입", "up10": "+10% 돌파"}
 
-# 급등 후보 등급 — 최근 200일 일봉 검증 (다음 날 장중 +200% 간 비율, 아무것도 안 거르면 0.08%):
-#   2 (★★) 발행 1천만 주 미만 + 전날 거래량 10배+ + 60일 고점 −50% 이하 → 하루 ~17종목, 1.8% (23배), +200% 197건 중 42건
-#   1 (★)  발행 1천만 주 미만 + (거래량 10배+ 또는 거래량 5배+ & −50% 이하) → 하루 ~21종목, 0.7%, 20건 더
-TIER_LABEL = {2: "급등 후보 ★★", 1: "급등 후보 ★"}
+# 급등 후보 등급 — 최근 200일 일봉 검증 (다음 날 장중 +200% 간 비율, 아무것도 안 거르면 0.08%, +200% 전체 197건).
+# 특징 24개를 하나씩·조합으로 보고, 앞 70% 기간에서 고른 조합이 뒤 30% 기간에도 유지되는지 확인했다.
+#   3 (★★★) $2 미만 + 60일 고점 −50% 이하 + 전날 거래량 5배+ + 전날 회전율 10%+ → 하루 ~10종목, 2.3% (뒤 기간 1.9%), 32건
+#   2 (★★)  발행 1천만 주 미만 + 거래량 10배+ + −50% 이하 (★★★ 아닌 것)     → 하루 ~12종목, 1.3%, 23건
+#   1 (★)   발행 1천만 주 미만 + (거래량 10배+ 또는 5배+ & −50% 이하)        → 하루 ~19종목, 0.7%, 18건
+# 셋 합쳐 하루 ~42종목에 +200% 의 37%. 나머지는 전날 일봉에 티가 안 남 (장중 감시로 잡아야 함).
+TIER_LABEL = {3: "급등 후보 ★★★", 2: "급등 후보 ★★", 1: "급등 후보 ★"}
 
 
-def tier(metrics: dict, shares: float | None) -> int:
-    if not shares or shares >= 1e7:
+def tier(metrics: dict, shares: float | None, price: float | None = None) -> int:
+    if not shares:
         return 0
     vr, dd = metrics.get("vol_ratio") or 0, metrics.get("dd60") or 0
+    turn = (metrics.get("volume") or 0) / shares * 100
+    if price and price < 2 and dd <= -50 and vr >= 5 and 10 <= turn <= MAX_TURNOVER:
+        return 3
+    if shares >= 1e7:
+        return 0
     if vr >= 10 and dd <= -50:
         return 2
     return 1 if vr >= 10 or (vr >= 5 and dd <= -50) else 0
@@ -233,7 +241,7 @@ def ranked(db_path: str, limit: int = 50) -> dict:
         r["labels"] = [lab for k, lab in DAILY_LABELS.items() if k in on]
         r["live_labels"] = [LIVE_LABELS[k] for k in r["live"]]
         r["patterns"] = [PATTERN_LABELS[k] for k in PATTERN_LABELS if k in r["signals"]]
-        r["tier"] = tier(r["metrics"], shares.get(r["symbol"]))
+        r["tier"] = tier(r["metrics"], shares.get(r["symbol"]), r["close"])
     rows.sort(key=lambda r: (-len(set(r["live"]) & {"wake", "creep"}), -r["tier"], -r["score"], -(r["metrics"].get("vol_ratio") or 0)))
     total = len(rows)
     rows = rows[:limit]
@@ -302,7 +310,8 @@ def daily_list_text(db_path: str, n: int = 10, dashboard: str | None = None) -> 
     if not rows:
         return "급등 전 감시 목록이 비어 있습니다."
     L = [f"📋 오늘 급등 전 감시 목록 ({r['d0']} 종가 기준)",
-         (f"🎯 급등 후보 {len(picks)}종목 (★★ {sum(x['tier'] == 2 for x in picks)}) — 발행 1천만 주↓ + 전날 거래량 폭발 + 많이 빠짐"
+         (f"🎯 급등 후보 {len(picks)}종목 (★★★ {sum(x['tier'] == 3 for x in picks)} · ★★ {sum(x['tier'] == 2 for x in picks)})"
+          " — 많이 빠짐 + 전날 거래량 폭발 + 유통 주식 대비 많이 거래"
           if picks else f"전체 {r['n']}종목 중 점수 상위 {len(rows)}"),
          "장중에 거래가 터지면 따로 알림" + (f" · 나머지 {len(picks) - 20}종목은 대시보드" if len(picks) > 20 else ""),
          "──────────────"]
@@ -310,7 +319,7 @@ def daily_list_text(db_path: str, n: int = 10, dashboard: str | None = None) -> 
         m = x["metrics"]
         tags = (x.get("filing_tags") or [])[:2] + (x.get("patterns") or [])[:2]
         vol = [l for l in x["labels"] if l.startswith("거래량")]
-        star = f" · {'★★' if x['tier'] == 2 else '★'}" if x.get("tier") else ""
+        star = f" · {'★' * x['tier']}" if x.get("tier") else ""
         L.append(f"{i}. {x['symbol']} {x.get('name') or ''}{star} · {x['score']}점 · {px(x['close'])}")
         L.append(f"   고점 대비 {pct(m.get('dd60'))} · 전날 거래량 {times(m.get('vol_ratio'))}"
                  + (f" · 회전율 {x['turnover_d0']:.1f}%" if x.get("turnover_d0") is not None else "")

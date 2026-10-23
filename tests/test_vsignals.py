@@ -65,6 +65,8 @@ def test_daily_list_text(tmp_path):
 
 def test_tier():
     from pennybot.precursor import tier
+    assert tier({"vol_ratio": 6, "dd60": -60, "volume": 1e6}, 5e6, 1.5) == 3      # 회전율 20% · $2 미만
+    assert tier({"vol_ratio": 6, "dd60": -60, "volume": 1e6}, 5e7, 1.5) == 0      # 회전율 2% · 발행 많음
     assert tier({"vol_ratio": 12, "dd60": -70}, 4e6) == 2
     assert tier({"vol_ratio": 12, "dd60": -10}, 4e6) == 1
     assert tier({"vol_ratio": 6, "dd60": -60}, 4e6) == 1
@@ -81,5 +83,5 @@ def test_daily_list_puts_picks_first(tmp_path):
         {"d0": "2026-10-22", "symbol": "PICK", "score": 4, "close": 1, "created": "x", "signals": "[]", "metrics": met(15, -70)}])
     st.put_stock_info([{"symbol": s, "name": None, "shares": 3e6, "list_date": None, "updated": "x"} for s in ("HIGH", "PICK")])
     text = daily_list_text(str(tmp_path / "m.db"), 5)
-    assert "🎯 급등 후보 1종목 (★★ 1)" in text
+    assert "🎯 급등 후보 1종목 (★★★ 0 · ★★ 1)" in text
     assert text.index("1. PICK") < text.index("2. HIGH") and "PICK  · ★★" in text

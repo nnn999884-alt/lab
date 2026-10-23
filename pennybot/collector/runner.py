@@ -566,7 +566,7 @@ class Collector:
         tiers = {}
         rows = []
         for r in self.store.query("SELECT symbol, score, signals, metrics, close FROM precursor_daily WHERE d0=?", (d0,)):
-            tiers[r[0]] = tier(json.loads(r[3] or "{}"), shares.get(r[0]))
+            tiers[r[0]] = tier(json.loads(r[3] or "{}"), shares.get(r[0]), r[4])
             if tiers[r[0]] or r[1] >= self.cfg.precursor_min_score:
                 rows.append(r)
         rows.sort(key=lambda r: (-tiers[r[0]], -r[1], -(json.loads(r[3] or "{}").get("vol_ratio") or 0)))

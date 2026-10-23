@@ -1149,7 +1149,7 @@ function drawPre() {
     // 1줄: 티커 · 이름 · 점수
     const top = document.createElement("div"); top.className = "pre-top";
     top.append(span("pre-sym", x.symbol), span("pre-name", x.name || ""),
-               ...(x.tier ? [span("pre-score s-hi", x.tier === 2 ? "🎯★★" : "🎯★")] : []),
+               ...(x.tier ? [span("pre-score s-hi", "🎯" + "★".repeat(x.tier))] : []),
                span("pre-score " + (x.score >= 8 ? "s-hi" : x.score >= 5 ? "s-mid" : "s-lo"), x.score + "점"));
     c.appendChild(top);
     // 2줄: 지금 가격 · 등락 · 세션
