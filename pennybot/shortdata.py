@@ -39,7 +39,7 @@ HALT_REASON = {"LUDP": "변동성 정지(LULD)", "LUDS": "변동성 정지(LULD)
 def _get(url: str, ua: str, timeout: int = 20) -> str | None:
     """없는 날짜 파일은 404 또는 HTML 안내 페이지가 온다 → None."""
     r = requests.get(url, headers={"User-Agent": ua}, timeout=timeout)
-    if r.status_code == 404:
+    if r.status_code in (403, 404):             # 아직 안 나왔거나 휴장일 파일 (FINRA 는 403 을 준다)
         return None
     r.raise_for_status()
     text = r.content.decode("utf-8-sig", "replace")

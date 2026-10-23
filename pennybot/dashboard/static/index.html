@@ -271,6 +271,11 @@ body.readonly .readonly-note { display: inline; }
       </div>
       <ul class="feed" id="feed"></ul>
     </section>
+    <section class="card">
+      <div class="pre-head"><h2>🧪 가상 매매 기록</h2><span class="sub" id="vs-sum" style="margin:0"></span></div>
+      <p class="sub">전조 발동 + 과열 전(+15% 미만)에 가상 매수 → 익절 +30% / 손절 −35% / 최대 14일. 실제 주문 없음 — 이 전략이 맞는지 기록</p>
+      <div class="tablewrap" style="max-height:50vh"><table id="vs"></table></div>
+    </section>
     <section class="card pre-wrap">
       <div class="pre-head">
         <h2>⚡ 급등 전조</h2>
@@ -1060,6 +1065,25 @@ document.querySelectorAll("#feed-filter button").forEach(b => b.onclick = () => 
 try { $("feed-sound").checked = localStorage.getItem("feedSound") === "1"; } catch (e) {}
 $("feed-sound").onchange = () => { try { localStorage.setItem("feedSound", $("feed-sound").checked ? "1" : "0"); } catch (e) {} if ($("feed-sound").checked) beep(); };
 
+/* ---------- 가상 매매 기록 ---------- */
+async function loadVs() {
+  const rows = await api("/api/vsignals?limit=100");
+  if (unchanged("vs", rows)) return;
+  const done = rows.filter(r => r.status === "CLOSED");
+  const ret = r => ((r.status === "CLOSED" ? r.exit_price : r.last) / r.entry - 1) * 100;
+  const wins = done.filter(r => ret(r) > 0).length;
+  $("vs-sum").textContent = done.length ? `끝난 ${done.length}건 · 승률 ${Math.round(wins / done.length * 100)}% · 평균 ${fmtPct(done.reduce((a, r) => a + ret(r), 0) / done.length)}` : "";
+  table($("vs"), [
+    { h: "종목", f: r => `${r.status === "OPEN" ? "⏳ " : ret(r) >= 0 ? "✅ " : "❌ "}${r.symbol} ${r.name || ""}`, tone: r => tone(ret(r)) },
+    { h: "수익", num: 1, f: r => fmtPct(ret(r)), tone: r => tone(ret(r)) },
+    { h: "매수", num: 1, f: r => `${fmtPx(r.entry)} · ${kst(r.opened)}` },
+    { h: "세션", minor: 1, f: r => SESS[r.session] || r.session },
+    { h: "지금/매도", num: 1, f: r => r.status === "OPEN" ? `${fmtPx(r.last)} (보유 중)` : `${fmtPx(r.exit_price)} · ${r.exit_reason}` },
+    { h: "최고/최저", num: 1, f: r => `${fmtPct((r.high / r.entry - 1) * 100, 0)} / ${fmtPct((r.low / r.entry - 1) * 100, 0)}` },
+    { h: "근거", wide: 1, f: r => r.reason },
+  ], rows, "아직 없음 — 장중에 전조가 발동하면 가상 매수가 기록됩니다");
+}
+
 /* ---------- 급등 전조 목록 ---------- */
 let preData = null, preFilter = "all", preShown = 24;
 async function loadPre() {
@@ -1327,7 +1351,7 @@ try { const t = localStorage.getItem("theme"); if (t) document.documentElement.d
 
 // 보이는 탭의 데이터만 받는다 (휴대폰 데이터·배터리 절약)
 const TAB_JOBS = {
-  home: () => [loadFeed(), loadPre(), loadEquity(), loadStrategies(), loadTables()],
+  home: () => [loadFeed(), loadVs(), loadPre(), loadEquity(), loadStrategies(), loadTables()],
   symbol: () => [loadShorts()],
   trade: () => [loadTables(), loadReports()],
   analysis: () => [loadC30(), loadBig(), loadHist(), loadRunners(), loadCollector(), loadResearch(), loadBacktests()],

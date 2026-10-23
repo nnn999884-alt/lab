@@ -261,3 +261,58 @@ def top_text(db_path: str, limit: int = 15, dashboard: str | None = None) -> str
     if dashboard:
         L += ["", f"📊 {dashboard}/#symbol"]
     return "\n".join(L)
+
+
+def daily_list_text(db_path: str, n: int = 10, dashboard: str | None = None) -> str:
+    """장 마감 뒤 '오늘 급등 전 감시 목록' 알림."""
+    from .trading.messages import pct, px
+    r = ranked(db_path, 400)
+    rows = sorted(r["rows"], key=lambda x: (-x["score"], -(x["metrics"].get("vol_ratio") or 0)))[:n]
+    if not rows:
+        return "급등 전 감시 목록이 비어 있습니다."
+    L = [f"📋 오늘 급등 전 감시 목록 ({r['d0']} 종가 기준)",
+         f"전체 {r['n']}종목 중 점수 상위 {len(rows)} · 장중에 거래 급증+매수세 유입이 켜지면 따로 알림",
+         "──────────────"]
+    for i, x in enumerate(rows, 1):
+        m = x["metrics"]
+        tags = (x.get("filing_tags") or [])[:2] + (x.get("patterns") or [])[:2]
+        vol = [l for l in x["labels"] if l.startswith("거래량")]
+        L.append(f"{i}. {x['symbol']} {x.get('name') or ''} · {x['score']}점 · {px(x['close'])}")
+        L.append(f"   고점 대비 {pct(m.get('dd60'))} · 전날 거래량 {m.get('vol_ratio') or 0:.1f}배"
+                 + (f" · 회전율 {x['turnover_d0']:.1f}%" if x.get("turnover_d0") is not None else "")
+                 + (f" · 최근 급등 {m['last_spike_d'][5:]}" if m.get("last_spike_d") else ""))
+        if vol or tags:
+            L.append("   🏷 " + " · ".join(vol + tags))
+    if dashboard:
+        L += ["", f"📊 {dashboard}/#home"]
+    return "\n".join(L)
+
+
+def vsignal_text(kind: str, sym: str, name: str | None, v: dict, cfg, session_ko: str) -> str:
+    """가상 매수·매도 알림 (실제 주문 없음)."""
+    from datetime import datetime
+    from .trading.messages import pct, px
+    head = f"({sym}" + (f" · {name}" if name else "") + ")"
+    if kind == "buy":
+        e = v["entry"]
+        return "\n".join([
+            f"🧪 가상 매수 {head}",
+            "──────────────",
+            f"💵 {px(e)} · {session_ko} · 실제 주문 아님",
+            f"🎯 익절 {px(e * (1 + cfg.vsignal_take_profit / 100))} (+{cfg.vsignal_take_profit:g}%)"
+            f" · 🛑 손절 {px(e * (1 - cfg.vsignal_stop / 100))} (−{cfg.vsignal_stop:g}%) · 최대 {cfg.vsignal_max_days}일",
+            f"근거: {v['reason']}",
+            "한줄 판단: 전조가 켜졌고 아직 과열 전입니다. 눌림 −25%까지는 개미털기일 가능성이 높습니다.",
+        ])
+    ret = (v["exit_price"] / v["entry"] - 1) * 100
+    held = datetime.fromisoformat(v["closed"]) - datetime.fromisoformat(v["opened"])
+    h = held.total_seconds()
+    held_s = f"{int(h // 86400)}일 {int(h % 86400 // 3600)}시간" if h >= 86400 else f"{int(h // 3600)}시간 {int(h % 3600 // 60)}분"
+    icon = "🔵" if ret >= 0 else "🔴"
+    return "\n".join([
+        f"{icon} 가상 매도 {head} · {v['exit_reason']}",
+        "──────────────",
+        f"💵 {px(v['entry'])} → {px(v['exit_price'])} ({pct(ret)}) · {session_ko}",
+        f"보유 {held_s} · 보유 중 최고 {pct((v['high'] / v['entry'] - 1) * 100)} · 최저 {pct((v['low'] / v['entry'] - 1) * 100)}",
+        "실제 주문 아님 — 전략 검증용 기록",
+    ])

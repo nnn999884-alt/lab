@@ -136,6 +136,8 @@ class Collector:
             self._run("watch", self.select_watch, now, trade_date)
         if self._due("prices", now, timedelta(seconds=c.price_poll_seconds)):
             self._run("prices", self.poll_prices, now, trade_date, session)
+            if c.vsignal:
+                self._run("vsignals", self.check_vsignals, now, session)
         if self._due("orderbook", now, timedelta(seconds=c.orderbook_poll_seconds)):
             self._run("orderbook", self.poll_orderbooks, now, trade_date, session)
         if self._due("candles", now, timedelta(minutes=c.candle_sync_minutes)):
@@ -475,6 +477,14 @@ class Collector:
                  self.cfg.precursor_min_score, sum(1 for r in rows if r["score"] >= self.cfg.precursor_min_score))
         top = [r["symbol"] for r in sorted(rows, key=lambda r: -r["score"])][:200]
         self.build_stock_tags(d0, top, store)
+        if self.notifier and self.cfg.precursor_daily_alert:
+            try:
+                from ..precursor import daily_list_text
+                link = self.link() if self.link else None
+                self.notifier.send(daily_list_text(self.cfg.db_path, self.cfg.precursor_daily_alert, link),
+                                   buttons=[[{"text": "📊 전체 목록 보기", "url": f"{link}/#home"}]] if link else None)
+            except Exception as e:
+                log.warning("감시 목록 알림 실패: %s", e)
         return len(rows)
 
     def build_stock_tags(self, d0, symbols: list[str], store=None) -> int:
@@ -518,11 +528,14 @@ class Collector:
                 tags.append(f"최근 공모 {off.filed:%m/%d}")
             elif any(m.key == "offering" for m in ms):
                 tags.append("공모 대기")
-            rs = recent({"REVERSE_SPLIT"}, 365)
+            current = [e for e in evs if e.form.upper().startswith(("8-K", "6-K", "DEF 14", "PRE 14"))]
+            recent_cur = lambda kinds, days: next((e for e in sorted(current, key=lambda e: e.filed, reverse=True)
+                                                   if e.kind in kinds and (today - e.filed).days <= days), None)
+            rs = recent_cur({"REVERSE_SPLIT"}, 365)       # 공모 설명서의 '과거 액면병합' 문구는 빼고
             if rs:
                 tags.append(f"액면병합 {rs.filed:%y/%m/%d}")
                 info["reverse_split"] = rs.filed.isoformat()
-            if recent({"CONVERTIBLE"}, 180):
+            if recent_cur({"CONVERTIBLE"}, 180):
                 tags.append("전환사채")
             for m in ms:
                 if m.key == "delisting":
@@ -581,10 +594,74 @@ class Collector:
                                               tags=(json.loads(tg[0][0]) if tg else []) + pats),
                                    buttons=alert_buttons(sym, link))
                 log.info("급등 전조 알림 %s (%s)", sym, ", ".join(lv["signals"]))
+            if fire and self.cfg.vsignal:
+                self._vbuy(now, d0, sym, score, close, lv, session)
             if fire:
                 self._event(now, sym, "precursor", f"🔥 {sym} 급등 전조 발동 ({score}점 · 1시간 거래량 "
                             f"{lv['metrics'].get('vol_x', 0):.1f}배 · {lv['metrics'].get('chg', 0):+.1f}%)", lv["metrics"].get("chg"))
         self.store.put_precursor_live(out)
+
+    # ---------- 가상 매수·매도 (알림만, 실제 주문 없음) ----------
+    def _vbuy(self, now, d0, sym, score, prev_close, lv, session) -> None:
+        from ..precursor import vsignal_text
+        from ..trading.strategies import SESSION_KO
+        m = lv["metrics"]
+        price, chg = m.get("price"), m.get("chg") or 0
+        if not price or chg >= self.cfg.vsignal_max_chg:
+            return                                       # 이미 많이 오른 뒤 → 추격 안 함
+        if self.store.query("SELECT 1 FROM vsignals WHERE symbol=? AND (status='OPEN' OR d0=?)", (sym, d0)):
+            return                                       # 보유 중이거나 오늘 이미 신호
+        reason = f"전조 {score}점 · 1시간 거래량 {m.get('vol_x', 0):.1f}배 · 1시간 {m.get('ret60') or 0:+.1f}% · 전날 대비 {chg:+.1f}%"
+        with self.store.db:
+            cur = self.store.db.execute(
+                "INSERT INTO vsignals (symbol, d0, opened, session, entry, score, reason, status, high, low, last) "
+                "VALUES (?,?,?,?,?,?,?, 'OPEN', ?, ?, ?)", (sym, d0, iso(now), session, price, score, reason, price, price, price))
+        row = self.store.query("SELECT * FROM vsignals WHERE id=?", (cur.lastrowid,))
+        if self.notifier:
+            link = self.link() if self.link else None
+            name = (self.universe.get(sym) or {}).get("name")
+            self.notifier.send(vsignal_text("buy", sym, name, self._vrow(row[0]), self.cfg, SESSION_KO.get(session, session)),
+                               buttons=[[*([{"text": "📊 대시보드", "url": f"{link}/?s={sym}"}] if link else []),
+                                         {"text": f"📋 {sym} 복사", "copy_text": {"text": sym}}]])
+        log.info("가상 매수 %s $%.4g (%s)", sym, price, reason)
+
+    @staticmethod
+    def _vrow(r) -> dict:
+        keys = ["id", "symbol", "d0", "opened", "session", "entry", "score", "reason", "status", "closed", "exit_price",
+                "exit_reason", "high", "low", "last"]
+        return dict(zip(keys, r))
+
+    def check_vsignals(self, now: datetime, session: str) -> None:
+        """보유 중 가상 포지션: 1분 현재가로 익절·손절·기간 만료 → 가상 매도 알림."""
+        from ..precursor import vsignal_text
+        from ..trading.strategies import SESSION_KO
+        rows = [self._vrow(r) for r in self.store.query("SELECT * FROM vsignals WHERE status='OPEN'")]
+        for v in rows:
+            last = (self.universe.get(v["symbol"]) or {}).get("last")
+            if not last:
+                continue
+            hi, lo = max(v["high"] or last, last), min(v["low"] or last, last)
+            ret = (last / v["entry"] - 1) * 100
+            why = None
+            if ret >= self.cfg.vsignal_take_profit:
+                why = f"익절 +{self.cfg.vsignal_take_profit:g}%"
+            elif ret <= -self.cfg.vsignal_stop:
+                why = f"손절 −{self.cfg.vsignal_stop:g}%"
+            elif now - datetime.fromisoformat(v["opened"]) >= timedelta(days=self.cfg.vsignal_max_days):
+                why = f"보유 기간 {self.cfg.vsignal_max_days}일 끝"
+            with self.store.db:
+                if why:
+                    self.store.db.execute("UPDATE vsignals SET status='CLOSED', closed=?, exit_price=?, exit_reason=?, high=?, low=?, last=? "
+                                          "WHERE id=?", (iso(now), last, why, hi, lo, last, v["id"]))
+                else:
+                    self.store.db.execute("UPDATE vsignals SET high=?, low=?, last=? WHERE id=?", (hi, lo, last, v["id"]))
+            if why and self.notifier:
+                v.update(status="CLOSED", closed=iso(now), exit_price=last, exit_reason=why, high=hi, low=lo, last=last)
+                link = self.link() if self.link else None
+                name = (self.universe.get(v["symbol"]) or {}).get("name")
+                self.notifier.send(vsignal_text("sell", v["symbol"], name, v, self.cfg, SESSION_KO.get(session, session)),
+                                   buttons=[[{"text": "📊 대시보드", "url": f"{link}/?s={v['symbol']}"}]] if link else None)
+                log.info("가상 매도 %s %s %+.1f%%", v["symbol"], why, ret)
 
     # ---------- 공매도·대차 ----------
     def poll_short_daily(self, now: datetime) -> None:

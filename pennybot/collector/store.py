@@ -56,6 +56,9 @@ CREATE TABLE IF NOT EXISTS reg_sho (trade_date TEXT, symbol TEXT, PRIMARY KEY (t
 CREATE TABLE IF NOT EXISTS halts (
     symbol TEXT, halt_ts TEXT, reason TEXT, reason_ko TEXT, resume_ts TEXT,
     PRIMARY KEY (symbol, halt_ts));
+CREATE TABLE IF NOT EXISTS vsignals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, symbol TEXT, d0 TEXT, opened TEXT, session TEXT, entry REAL, score INTEGER,
+    reason TEXT, status TEXT, closed TEXT, exit_price REAL, exit_reason TEXT, high REAL, low REAL, last REAL);
 CREATE TABLE IF NOT EXISTS stock_info (
     symbol TEXT PRIMARY KEY, name TEXT, shares REAL, list_date TEXT, updated TEXT);
 CREATE TABLE IF NOT EXISTS stock_tags (
