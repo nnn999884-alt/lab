@@ -228,6 +228,20 @@ body.readonly .readonly-note { display: inline; }
 .chip.filing { border-color: #8b5cf6; color: var(--text-primary); background: rgba(139, 92, 246, .16); font-weight: 600; }
 .chip.pattern { border-color: #14b8a6; color: var(--text-primary); background: rgba(20, 184, 166, .15); font-weight: 600; }
 .pre-judge { display: block; }
+
+/* ---------- 글자 넘침 방지 ---------- */
+.card, .pre-card, .bigcase { overflow: hidden; }
+.pre-card > *, .pre-top > *, .pre-price > * { min-width: 0; }
+.pre-facts { grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); }   /* 좁으면 2열, 넓으면 3열 */
+.pre-facts > span { min-width: 0; overflow-wrap: anywhere; word-break: keep-all; }
+.pre-price { display: flex; flex-wrap: wrap; align-items: baseline; column-gap: 4px; row-gap: 2px; }
+.pre-judge, .pre-facts, .feed .ev, .evlist li, .kv span, .report { overflow-wrap: anywhere; word-break: keep-all; }
+.chips { min-width: 0; }
+.chip { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pre-name { flex: 1 1 0; }
+.pre-score { flex: 0 0 auto; }
+.tablewrap table.cards td { overflow-wrap: anywhere; word-break: keep-all; }
+.brief-head > * { min-width: 0; overflow-wrap: anywhere; }
 </style>
 </head>
 <body>
@@ -468,6 +482,7 @@ body.readonly .readonly-note { display: inline; }
 
 <script>
 "use strict";
+{ const w = new URLSearchParams(location.search).get("w"); if (w) { const s = document.createElement("style"); s.textContent = `main{max-width:${+w}px;margin:0;padding-left:12px;padding-right:12px} .tabs{max-width:${+w}px}`; document.head.appendChild(s); } }
 const SESS = { DAY: "데이마켓", PRE: "프리마켓", REGULAR: "정규장", AFTER: "애프터마켓", CLOSED: "휴장" };
 const STRAT = { runner_overnight: "러너 오버나이트", dilution_catalyst: "희석 해소 촉매", day_ignition: "데이마켓 점화", day_dip: "데이마켓 급락 반등" };
 const STRAT_COLOR = { runner_overnight: "--series-1", dilution_catalyst: "--series-2", day_ignition: "--series-3", day_dip: "--series-4" };
