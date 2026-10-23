@@ -222,6 +222,12 @@ body.readonly .readonly-note { display: inline; }
 .pre-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 3px 10px; }
 .pre-facts .k { color: var(--text-muted); }
 .pre-facts b { font-weight: 650; color: var(--text-primary); }
+
+.pre-chg { font-weight: 700; }
+.sess-badge { margin-left: 6px; font-size: 11.5px; padding: 1px 6px; border-radius: 6px; background: rgba(127,127,127,.18); color: var(--text-secondary); vertical-align: 2px; }
+.chip.filing { border-color: #8b5cf6; color: var(--text-primary); background: rgba(139, 92, 246, .16); font-weight: 600; }
+.chip.pattern { border-color: #14b8a6; color: var(--text-primary); background: rgba(20, 184, 166, .15); font-weight: 600; }
+.pre-judge { display: block; }
 </style>
 </head>
 <body>
@@ -280,7 +286,7 @@ body.readonly .readonly-note { display: inline; }
       <details class="sub" style="margin-top:8px"><summary>점수·증상 설명</summary>
         과거 +500% 급등 직전에 비교군보다 훨씬 흔했던 증상. 낙폭과대(60일 고점 −50%↓) 2점 · 급등 이력(60일 안 하루 +30%) 2점 ·
         거래량 폭발(전날 평소의 3배+) +2점 · 거래량 상승(1.5배+)·고변동(변동폭 10%+·갭 하락·폭락)·거래 마름(10일 −10% + 거래량 절반↓)·동전주($2 미만) 각 1점 (최대 10).
-        60일 고점 근처는 0점. 🔥 장중(1분마다, 5점 이상): 거래 급증 = 최근 1시간 분당 거래량 3배+, 매수세 유입 = 1시간 +3%·15분 +1.5%, +10% 돌파. 거래 급증+매수세 유입이면 텔레그램 알림.</details>
+        60일 고점 근처는 0점. 🔥 장중(1분마다, 5점 이상): 거래 급증 = 최근 1시간 분당 거래량 3배+, 매수세 유입 = 1시간 +3%·15분 +1.5%, +10% 돌파. 거래 급증+매수세 유입이면 텔레그램 알림.<br>보라 = SEC 공시 태그(ATM 진행·워런트 행사가·최근 공모/공모 대기·액면병합 날짜·상폐 기한·전환사채·현금), 청록 = 일봉 패턴(응축: 최근 10일 변동폭이 평소의 60% 이하·박스 30% 이내 / 매집 의심: 20일 동안 오른 날 거래량이 내린 날의 1.5배+인데 가격은 안 오름 / 바닥 다지기: 크게 빠진 뒤 최근 5일 저점이 앞 5일 저점보다 안 깨짐). 회전율 = 거래량 ÷ 발행주식.</details>
     </section>
     <div class="grid tiles">
       <div class="card tile"><div class="label">계좌 평가액</div><div class="value" id="t-equity">-</div><div class="note" id="t-cash"></div></div>
@@ -1065,48 +1071,61 @@ async function loadPre() {
   $("pre-sub").textContent = r.d0 ? `${r.d0} 종가 기준 · ${r.n}종목 · 🔥 지금 움직이는 종목 ${live}개 · 장중 1분마다 갱신` : "아직 없음 — 수집기가 장 마감 뒤 전 종목을 계산합니다";
   drawPre();
 }
+const SESS_SHORT = { DAY: "데이", PRE: "프리", REGULAR: "정규", AFTER: "애프터", CLOSED: "휴장" };
 function drawPre() {
   const box = $("pre-list"); box.replaceChildren();
   const all = (preData && preData.rows) || [];
   const rows = all.filter(x => preFilter === "live" ? x.live.length : preFilter === "top" ? x.score >= 8 : true);
   if (!rows.length) { const d = document.createElement("div"); d.className = "empty"; d.textContent = preFilter === "live" ? "지금 장중 증상이 켜진 종목이 없습니다" : "없음"; box.appendChild(d); }
+  const span = (cls, text) => { const s = document.createElement("span"); if (cls) s.className = cls; s.textContent = text; return s; };
+  const vr = v => v == null ? null : (v >= 100 ? Math.round(v) : v.toFixed(1)) + "배";
+  const turn = v => v == null ? null : (v >= 10 ? Math.round(v) : v >= 1 ? v.toFixed(1) : v.toFixed(2)) + "%";
   rows.slice(0, preShown).forEach(x => {
     const hot = x.live.includes("wake") && x.live.includes("creep");
     const c = document.createElement("div");
     c.className = "pre-card" + (hot ? " hot" : x.live.length ? " warm" : "");
     c.tabIndex = 0;
+    // 1줄: 티커 · 종목명 · 점수
     const top = document.createElement("div"); top.className = "pre-top";
-    const sym = document.createElement("span"); sym.className = "pre-sym"; sym.textContent = (hot ? "🔥 " : "") + x.symbol;
-    const nm = document.createElement("span"); nm.className = "pre-name"; nm.textContent = x.name || "";
-    const sc = document.createElement("span"); sc.className = "pre-score " + (x.score >= 8 ? "s-hi" : x.score >= 5 ? "s-mid" : "s-lo"); sc.textContent = x.score + "점";
-    top.append(sym, nm, sc); c.appendChild(top);
+    top.append(span("pre-sym", (hot ? "🔥 " : "") + x.symbol), span("pre-name", x.name || ""),
+               span("pre-score " + (x.score >= 8 ? "s-hi" : x.score >= 5 ? "s-mid" : "s-lo"), x.score + "점"));
+    c.appendChild(top);
+    // 2줄: 실시간 가격 · 당일 등락률(전날 종가 대비) · 세션
+    const now = x.now || {}, m = x.live_m || {};
     const pr = document.createElement("div"); pr.className = "pre-price";
-    const m = x.live_m || {};
-    const a = document.createElement("span"); a.textContent = fmtPx(x.close); pr.appendChild(a);
-    if (m.price != null) {
-      const arrow = document.createElement("span"); arrow.className = "muted"; arrow.textContent = "  →  "; pr.appendChild(arrow);
-      const now = document.createElement("span"); now.className = "pre-now " + (tone(m.chg) || ""); now.textContent = `${fmtPx(m.price)} ${fmtPct(m.chg)}`; pr.appendChild(now);
+    if (now.price != null) {
+      pr.append(span("pre-now " + (tone(now.chg) || ""), fmtPx(now.price)), span("pre-chg " + (tone(now.chg) || ""), " " + fmtPct(now.chg)),
+                span("sess-badge", SESS_SHORT[now.session] || now.session || ""), span("muted", ` 전날 ${fmtPx(x.close)}`));
+    } else {
+      pr.append(span("pre-now", fmtPx(x.close)), span("muted", " 전날 종가"));
     }
     c.appendChild(pr);
-    if (x.judge) { const j = document.createElement("div"); j.className = "pre-judge"; j.textContent = `${x.judge.state} · 거래 흐름 ${x.judge.flow} · 변동성 ${x.judge.risk}`; c.appendChild(j); }
+    if (x.judge) c.appendChild(span("pre-judge", `${x.judge.state} · 거래 흐름 ${x.judge.flow} · 변동성 ${x.judge.risk}`));
     if (x.bars && x.bars.length > 5) { const mc = document.createElement("div"); mc.className = "chart pre-chart"; c.appendChild(mc); requestAnimationFrame(() => candleChart(mc, x.bars, { height: 86, ma: [5, 20], labels: false })); }
+    // 태그: 장중(빨강) · 거래량(주황) · 공시(보라) · 패턴(청록) · 차트(회색)
     const chips = document.createElement("div"); chips.className = "chips";
-    x.live_labels.forEach(l => { const s = document.createElement("span"); s.className = "chip live"; s.textContent = l; chips.appendChild(s); });
-    x.labels.forEach(l => { const s = document.createElement("span"); s.className = "chip" + (l.startsWith("거래량") ? " vol" : ""); s.textContent = l; chips.appendChild(s); });
+    x.live_labels.forEach(l => chips.appendChild(span("chip live", l)));
+    x.labels.filter(l => l.startsWith("거래량")).forEach(l => chips.appendChild(span("chip vol", l)));
+    (x.filing_tags || []).forEach(l => chips.appendChild(span("chip filing", l)));
+    (x.patterns || []).forEach(l => chips.appendChild(span("chip pattern", l)));
+    x.labels.filter(l => !l.startsWith("거래량")).forEach(l => chips.appendChild(span("chip", l)));
     c.appendChild(chips);
+    // 숫자
     const mt = x.metrics || {};
-    const vr = v => v == null ? null : (v >= 100 ? Math.round(v) : v.toFixed(1)) + "배";
     const facts = [
       ["고점 대비", mt.dd60 != null ? fmtPct(mt.dd60, 0) : null],
       ["10일", mt.ret10 != null ? fmtPct(mt.ret10, 0) : null],
-      ["60일 급등", mt.spikes60 != null ? mt.spikes60 + "회" : null],
+      ["최근 급등", mt.last_spike_d ? `${mt.last_spike_d.slice(5)} ${fmtPct(mt.last_spike_pct, 0)}` : "60일 없음"],
       ["전날 거래량", vr(mt.vol_ratio)],
-      ["거래대금", mt.dollar20 != null ? "$" + fmtQty(mt.dollar20) : null],
+      ["전날 회전율", turn(x.turnover_d0)],
+      ["거래대금(20일)", mt.dollar20 != null ? "$" + fmtQty(mt.dollar20) : null],
+      ["오늘 회전율", turn(x.turnover_today)],
+      ["3분 회전율", turn(x.turnover_3m)],
       ["1시간 거래량", m.vol_x != null ? vr(m.vol_x) : null],
+      ["발행주식", x.shares ? fmtQty(x.shares) + "주" : null],
     ].filter(f => f[1]);
     const f = document.createElement("div"); f.className = "pre-facts";
-    facts.forEach(([k, v]) => { const s = document.createElement("span"); const a = document.createElement("span"); a.className = "k"; a.textContent = k + " ";
-      const b = document.createElement("b"); b.textContent = v; s.append(a, b); f.appendChild(s); });
+    facts.forEach(([k, v]) => { const s = document.createElement("span"); const b = document.createElement("b"); b.textContent = v; s.append(span("k", k + " "), b); f.appendChild(s); });
     c.appendChild(f);
     c.onclick = c.onkeydown = e => { if (e.type === "click" || e.key === "Enter") { lookup(x.symbol); showTab("symbol"); } };
     box.appendChild(c);

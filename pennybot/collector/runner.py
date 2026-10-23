@@ -27,6 +27,12 @@ from .store import Store
 
 log = logging.getLogger(__name__)
 
+# '방금 일어난 일' 피드에 띄울 공시 판정 (형식적인 등록 효력·S-3 제출은 뺀다)
+FEED_EVENTS = {"ATM_NEW", "ATM_TERMINATED", "PUBLIC_OFFERING", "REGISTERED_DIRECT", "PRIVATE_PLACEMENT",
+               "SECURITIES_PURCHASE_AGREEMENT", "WARRANT_REPRICE", "WARRANT_INDUCEMENT", "CONVERTIBLE", "EQUITY_LINE",
+               "OFFERING_TERMINATED", "REGISTRATION_WITHDRAWN", "BUYBACK", "COMPLIANCE_REGAINED", "FDA_APPROVAL",
+               "MATERIAL_CONTRACT", "DELISTING_NOTICE", "REVERSE_SPLIT", "TAKEDOWN", "GOING_CONCERN"}
+
 RANKINGS = [  # (type, duration)
     ("MARKET_TRADING_AMOUNT", "realtime"),
     ("TOSS_SECURITIES_TRADING_AMOUNT", "realtime"),
@@ -163,6 +169,18 @@ class Collector:
                     self.cik_to_symbol[int(r["cik"])] = t
         log.info("유니버스 %d종목 (상장 %d 중 $%.2f~$%.2f)", len(self.universe), len(listed),
                  self.cfg.min_price, self.cfg.max_price)
+        try:
+            info = self.c.stocks(sorted(self.universe)) or []
+            self.store.put_stock_info([{"symbol": s["symbol"], "name": s.get("name"),
+                                        "shares": float(s["sharesOutstanding"]) if s.get("sharesOutstanding") else None,
+                                        "list_date": s.get("listDate"), "updated": snap} for s in info])
+            log.info("종목 정보(발행주식) %d종목", len(info))
+        except Exception as e:
+            log.warning("종목 정보 실패: %s", e)
+
+    def _event_due(self, now: datetime, sym: str, kind: str) -> bool:
+        last = self._ev_last.get((sym, kind))
+        return not last or (now - last).total_seconds() >= 600
 
     def _event(self, now: datetime, sym: str, kind: str, text: str, value: float | None = None) -> None:
         """대시보드 '방금 일어난 일' 피드. 같은 종목·종류는 10분에 한 번만."""
@@ -182,14 +200,28 @@ class Collector:
             if p["symbol"] in self.universe:
                 self.universe[p["symbol"]]["last"] = float(p["lastPrice"])
         self.store.put_prices(rows)
+        from ..trading.strategies import SESSION_KO
         for r in rows:
             a = prev.get(r["symbol"])
             if a and a >= 0.2 and r["last"]:
                 chg = (r["last"] / a - 1) * 100
-                if chg >= 4:
-                    self._event(now, r["symbol"], "spike_up", f"⚡ {r['symbol']} 1분새 {chg:+.1f}% 급등 (${r['last']:.4g})", chg)
-                elif chg <= -7:
-                    self._event(now, r["symbol"], "spike_dn", f"▼ {r['symbol']} 1분새 {chg:.1f}% 급락 (${r['last']:.4g})", chg)
+                kind = "spike_up" if chg >= 4 else "spike_dn" if chg <= -7 else None
+                if not kind or not self._event_due(now, r["symbol"], kind):
+                    continue
+                vol = ""
+                try:                                  # 그 순간 1분봉 거래량·거래대금 (이벤트 날 때만 조회)
+                    cs = (self.c.candles(r["symbol"], "1m", 3) or {}).get("candles", [])
+                    v = sum(float(cd["volume"]) for cd in cs[:2])
+                    d = sum(float(cd["volume"]) * float(cd["closePrice"]) for cd in cs[:2])
+                    from ..trading.messages import money_s, qty_s
+                    vol = f" · 2분 거래량 {qty_s(v)}주 ({money_s(d)})"
+                except Exception:
+                    pass
+                word = "급등" if kind == "spike_up" else "급락"
+                name = (self.universe.get(r["symbol"]) or {}).get("name") or ""
+                self._event(now, r["symbol"], kind,
+                            f"{'⚡' if kind == 'spike_up' else '▼'} {r['symbol']} {name} 1분새 {chg:+.1f}% {word} ${r['last']:.4g}"
+                            f" · {SESSION_KO.get(session, session)}{vol}", chg)
 
     def poll_orderbooks(self, now: datetime, trade_date, session: str) -> None:
         rows = []
@@ -239,7 +271,8 @@ class Collector:
                     old_rk = before.get(sym)
                     if rk <= 10 and (old_rk is None or old_rk - rk >= 3):
                         moved = f"{old_rk}→{rk}위" if old_rk else f"{rk}위 신규 진입"
-                        self._event(now, sym, f"rank:{typ}", f"📈 {sym} {names.get(typ, typ)} {moved}", rk)
+                        nm = (self.universe.get(sym) or {}).get("name") or ""
+                        self._event(now, sym, f"rank:{typ}", f"📈 {sym} {nm} {names.get(typ, typ)} {moved}".replace("  ", " "), rk)
             self._rank_prev[typ] = ranks
 
     def select_watch(self, now: datetime, trade_date) -> None:
@@ -345,13 +378,21 @@ class Collector:
                 self.recent_filers[sym] = now
         if rows:
             self.store.put_filings(rows)
-            from ..filing_detail import EVENT_KO, FORM_KO
+            from ..filing_detail import EVENT_KO, summary
             for r in rows:
-                if r["events"] or r["direction"]:
-                    tag = "▲호재" if r["direction"] > 0 else "▼악재" if r["direction"] < 0 else ""
-                    evs = ", ".join(EVENT_KO.get(k, k) for k in (r["events"] or "").split(",") if k)
-                    self._event(now, r["symbol"], "filing",
-                                f"📰 {r['symbol']} {evs or FORM_KO.get(r['form'], r['form'])} {tag}".strip(), r["direction"])
+                evs = [k for k in (r["events"] or "").split(",") if k]
+                key = [k for k in evs if k in FEED_EVENTS]
+                insider = r["form"] == "4" and (r["insider_buy_usd"] or 0) >= 10000
+                if not key and not insider:
+                    continue                      # 등록 효력·S-3 제출·일반 8-K 같은 형식적인 공시는 피드에 안 띄운다
+                tag = "▲호재" if r["direction"] > 0 else "▼악재" if r["direction"] < 0 else ""
+                what = "내부자 장내 매수" if insider and not key else ", ".join(EVENT_KO.get(k, k) for k in key)
+                info = json.loads(r["detail"]) if r.get("detail") else {}
+                detail = summary(r["form"], info, (self.universe.get(r["symbol"]) or {}).get("last"))
+                name = (self.universe.get(r["symbol"]) or {}).get("name") or ""
+                self._event(now, r["symbol"], "filing",
+                            f"📰 {r['symbol']} {name} {what} {tag}".replace("  ", " ").strip() + (f" · {detail}" if detail else ""),
+                            r["direction"])
             log.info("새 공시 %d건 (유니버스 종목)", len(rows))
 
     def poll_news(self, now: datetime) -> None:
@@ -432,7 +473,68 @@ class Collector:
         store.put_precursor_daily(rows)
         log.info("급등 전조 일봉 점수 %s: %d종목 계산, 2점 이상 %d, %d점 이상 %d", d0, n, len(rows),
                  self.cfg.precursor_min_score, sum(1 for r in rows if r["score"] >= self.cfg.precursor_min_score))
+        top = [r["symbol"] for r in sorted(rows, key=lambda r: -r["score"])][:200]
+        self.build_stock_tags(d0, top, store)
         return len(rows)
+
+    def build_stock_tags(self, d0, symbols: list[str], store=None) -> int:
+        """ATM·워런트·공모·액면병합·상폐 통지·전환사채 태그 (SEC 공시 판정, 디스크 캐시라 두 번째부터 빠름)."""
+        if not self.dilution:
+            return 0
+        from ..dilution import build_profile
+        from ..motive import motives
+        from ..screener import edgar as ed
+        store = store or Store(self.cfg.db_path)
+        try:
+            tick = {str(r["ticker"]).upper(): int(r["cik"]) for r in self.dilution.edgar.ticker_map()}
+        except Exception as e:
+            log.warning("SEC 티커 목록 실패: %s", e)
+            return 0
+        today = datetime.fromisoformat(str(d0)).date() if not hasattr(d0, "year") else d0
+        out = []
+        for sym in symbols:
+            cik = tick.get(sym)
+            if not cik:
+                continue
+            try:
+                evs = self.dilution.events(cik, today)
+                fin = self.dilution.financials(cik, today)
+                filings = ed.parse_submissions(self.dilution.submissions(cik, today))
+            except Exception as e:
+                log.debug("공시 태그 실패 %s: %s", sym, e)
+                continue
+            price = (self.universe.get(sym) or {}).get("last")
+            prof = build_profile(evs, today, None, fin, price, None)
+            ms = motives(evs, filings, fin, today, price)
+            tags, info = [], {"dilution_score": prof.score}
+            if prof.atm_active:
+                tags.append("ATM 진행")
+            if fin and fin.get("warrants") and fin.get("warrant_price"):
+                tags.append(f"워런트 ${fin['warrant_price']:g}")
+            recent = lambda kinds, days: next((e for e in sorted(evs, key=lambda e: e.filed, reverse=True)
+                                               if e.kind in kinds and (today - e.filed).days <= days), None)
+            off = recent({"PUBLIC_OFFERING", "REGISTERED_DIRECT", "TAKEDOWN", "PRIVATE_PLACEMENT", "SECURITIES_PURCHASE_AGREEMENT"}, 60)
+            if off:
+                tags.append(f"최근 공모 {off.filed:%m/%d}")
+            elif any(m.key == "offering" for m in ms):
+                tags.append("공모 대기")
+            rs = recent({"REVERSE_SPLIT"}, 365)
+            if rs:
+                tags.append(f"액면병합 {rs.filed:%y/%m/%d}")
+                info["reverse_split"] = rs.filed.isoformat()
+            if recent({"CONVERTIBLE"}, 180):
+                tags.append("전환사채")
+            for m in ms:
+                if m.key == "delisting":
+                    tags.append(m.label)
+                elif m.key == "cash" and m.label != "현금 바닥 추정":
+                    tags.append(m.label)
+            info["motives"] = [m.label for m in ms]
+            out.append({"d0": str(d0), "symbol": sym, "tags": json.dumps(tags, ensure_ascii=False),
+                        "info": json.dumps(info, ensure_ascii=False)})
+        store.put_stock_tags(out)
+        log.info("공시 태그 %s: %d종목", d0, len(out))
+        return len(out)
 
     def poll_precursor_live(self, now: datetime, trade_date, session: str) -> None:
         """일봉 점수 높은 종목의 오늘 1분봉 → 거래 깨어남·슬금슬금 상승. 둘 다 켜지면 알림 (종목당 하루 한 번)."""
@@ -459,6 +561,7 @@ class Collector:
                            float(cd["highPrice"]), float(cd["lowPrice"]), float(cd["closePrice"]), float(cd["volume"]))
                           for cd in cs)
             lv = live([b for b in bars if b[0] >= start], close, now)
+            lv["metrics"]["session"] = session
             fire = {"wake", "creep"} <= set(lv["signals"]) and sym not in prev_alert
             out.append({"d0": d0, "symbol": sym, "ts": iso(now), "signals": json.dumps(lv["signals"]),
                         "metrics": json.dumps(lv["metrics"]), "alerted": iso(now) if fire else prev_alert.get(sym)})
@@ -469,8 +572,13 @@ class Collector:
                     link = self.link() if self.link else None
                 except Exception:
                     pass
+                sh = self.store.query("SELECT shares FROM stock_info WHERE symbol=?", (sym,))
+                tg = self.store.query("SELECT tags FROM stock_tags WHERE symbol=? ORDER BY d0 DESC LIMIT 1", (sym,))
+                pats = [lab for k, lab in (("compress", "응축"), ("accum", "매집 의심"), ("base", "바닥 다지기")) if k in day["signals"]]
                 self.notifier.send(alert_text(sym, (self.universe.get(sym) or {}).get("name"), day, lv,
-                                              SESSION_KO.get(session, session), link, now),
+                                              SESSION_KO.get(session, session), link, now,
+                                              shares=sh[0][0] if sh and sh[0][0] else None,
+                                              tags=(json.loads(tg[0][0]) if tg else []) + pats),
                                    buttons=alert_buttons(sym, link))
                 log.info("급등 전조 알림 %s (%s)", sym, ", ".join(lv["signals"]))
             if fire:

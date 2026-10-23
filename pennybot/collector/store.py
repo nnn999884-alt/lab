@@ -56,6 +56,10 @@ CREATE TABLE IF NOT EXISTS reg_sho (trade_date TEXT, symbol TEXT, PRIMARY KEY (t
 CREATE TABLE IF NOT EXISTS halts (
     symbol TEXT, halt_ts TEXT, reason TEXT, reason_ko TEXT, resume_ts TEXT,
     PRIMARY KEY (symbol, halt_ts));
+CREATE TABLE IF NOT EXISTS stock_info (
+    symbol TEXT PRIMARY KEY, name TEXT, shares REAL, list_date TEXT, updated TEXT);
+CREATE TABLE IF NOT EXISTS stock_tags (
+    d0 TEXT, symbol TEXT, tags TEXT, info TEXT, PRIMARY KEY (d0, symbol));
 CREATE TABLE IF NOT EXISTS daily_bars (
     symbol TEXT, d TEXT, open REAL, high REAL, low REAL, close REAL, volume REAL, PRIMARY KEY (symbol, d));
 CREATE TABLE IF NOT EXISTS events (
@@ -126,6 +130,8 @@ class Store:
     def put_halts(self, rows): return self._put("halts", rows)
     def put_precursor_daily(self, rows): return self._put("precursor_daily", rows)
     def put_daily_bars(self, rows): return self._put("daily_bars", rows)
+    def put_stock_info(self, rows): return self._put("stock_info", rows)
+    def put_stock_tags(self, rows): return self._put("stock_tags", rows)
     def put_events(self, rows): return self._put("events", rows)
     def put_precursor_live(self, rows): return self._put("precursor_live", rows)
 

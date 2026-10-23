@@ -25,6 +25,7 @@ DAILY_LABELS = {
     "vol_up_strong": "거래량 폭발", "vol_up": "거래량 상승", "crashed": "낙폭과대", "spiked": "급등 이력",
     "volatile": "고변동", "bleed": "거래 마름", "cheap": "동전주",
 }
+PATTERN_LABELS = {"compress": "응축", "accum": "매집 의심", "base": "바닥 다지기"}
 LIVE_LABELS = {"wake": "거래 급증", "creep": "매수세 유입", "up10": "+10% 돌파"}
 
 
@@ -59,13 +60,28 @@ def daily(bars: list[tuple]) -> dict | None:
         "vol_up": vol_ratio >= 1.5,
         "vol_up_strong": vol_ratio >= 3,
     }
+    # 차트 패턴 (점수에는 안 넣고 태그로): 응축 · 매집 의심 · 바닥 다지기
+    rng_pct = [(x[2] - x[3]) / x[4] * 100 for x in bars[-60:] if x[4]]
+    box10 = (max(x[2] for x in bars[-10:]) / min(x[3] for x in bars[-10:]) - 1) * 100 if min(x[3] for x in bars[-10:]) > 0 else 999
+    sig["compress"] = len(rng_pct) >= 60 and statistics.mean(rng_pct[-10:]) <= 0.6 * statistics.mean(rng_pct[:50]) and box10 <= 30
+    w20 = bars[-20:]
+    up_v = sum(x[5] for k, x in enumerate(w20) if x[4] > bars[-21 + k][4])
+    dn_v = sum(x[5] for k, x in enumerate(w20) if x[4] < bars[-21 + k][4])
+    ret20 = (c / cl[-21] - 1) * 100 if cl[-21] else 0
+    sig["accum"] = dn_v > 0 and up_v / dn_v >= 1.5 and ret20 <= 10       # 오를 때 거래가 더 많은데 가격은 안 오름
+    lows = [x[3] for x in bars[-10:]]
+    sig["base"] = dd60 <= -40 and min(lows[5:]) >= min(lows[:5]) and ret10 > -10   # 낙폭 뒤 저점이 더 안 깨짐
+    last_spike = next(((bars[k][0], (bars[k][2] / cl[k - 1] - 1) * 100) for k in range(len(bars) - 1, len(bars) - 61, -1)
+                       if cl[k - 1] and bars[k][2] / cl[k - 1] >= 1.3), (None, None))
     near_high = dd60 > -20
-    score = 0 if near_high else sum(WEIGHT[k] for k, on in sig.items() if on)
+    score = 0 if near_high else sum(WEIGHT.get(k, 0) for k, on in sig.items() if on)
     return {"d0": d, "close": c, "score": score, "near_high": near_high,
             "signals": [k for k, on in sig.items() if on],
             "metrics": {"dd60": dd60, "range30": statistics.mean(rng) if rng else None, "gaps_dn": gaps_dn, "max_dn": max_dn,
                         "spikes60": spikes, "ret10": ret10, "vol_ratio": vol_ratio, "vol10_60": v10 / v60 if v60 else None,
-                        "dollar20": statistics.mean(x[4] * x[5] for x in bars[-20:])}}
+                        "dollar20": statistics.mean(x[4] * x[5] for x in bars[-20:]),
+                        "volume": v, "last_spike_d": last_spike[0], "last_spike_pct": last_spike[1],
+                        "box10": box10, "updown20": up_v / dn_v if dn_v else None}}
 
 
 def live(minute_bars: list[tuple], prev_close: float, now: datetime | None = None) -> dict:
@@ -90,6 +106,10 @@ def live(minute_bars: list[tuple], prev_close: float, now: datetime | None = Non
     m["ret60"] = (price / last60[0][1] - 1) * 100 if last60 else None
     m["ret15"] = (price / last15[0][1] - 1) * 100 if last15 else None
     m["dollar_today"] = sum(b[4] * b[5] for b in minute_bars)
+    m["vol_today"] = sum(b[5] for b in minute_bars)
+    last3 = [b for b in minute_bars if ts(b) > now - timedelta(minutes=3)]
+    m["vol_3m"] = sum(b[5] for b in last3)
+    m["dollar_3m"] = sum(b[4] * b[5] for b in last3)
     if (m.get("vol_x") or 0) >= 3 and m["active_min_60"] >= 5:
         out["signals"].append("wake")
     if (m["ret60"] or 0) >= 3 and (m["ret15"] or 0) >= 1.5:
@@ -119,7 +139,7 @@ def judge(m: dict, dm: dict) -> dict:
 
 
 def alert_text(sym: str, name: str | None, day: dict, lv: dict, session_ko: str, dashboard: str | None = None,
-               now=None) -> str:
+               now=None, shares: float | None = None, tags: list | None = None) -> str:
     """텔레그램 알림: 첫 줄 = 무슨 일·종목, 다음 = 한눈 판단, 마지막 = 근거 숫자."""
     from datetime import datetime, timezone
     from .sessions import KST
@@ -136,10 +156,13 @@ def alert_text(sym: str, name: str | None, day: dict, lv: dict, session_ko: str,
         f"현재 상태: {j['state']}",
         f"타이밍: {j['timing']}",
         f"거래 흐름: {j['flow']} (1시간 거래량 {m.get('vol_x', 0):.1f}배 · 오늘 {money_s(m.get('dollar_today'))})",
+        *( [f"회전율: 오늘 {m.get('vol_today', 0) / shares * 100:.1f}% · 3분 {m.get('vol_3m', 0) / shares * 100:.2f}% (발행 {shares / 1e6:.1f}M주)"]
+           if shares else [] ),
         f"변동성 위험: {j['risk']} (하루 변동폭 {dm.get('range30') or 0:.0f}%)",
         f"한줄 판단: {j['verdict']}",
         "",
         f"📉 차트 전조 {day['score']}점: " + " · ".join(on_d),
+        *( [f"🏷 {' · '.join(tags)}"] if tags else [] ),
         f"   60일 고점 대비 {pct(dm['dd60'])} · 60일 급등 {dm['spikes60']}회 · 전날 거래량 {dm['vol_ratio']:.1f}배",
         f"⏱ 갱신: {t:%m.%d %H:%M:%S}",
     ])
@@ -183,11 +206,32 @@ def ranked(db_path: str, limit: int = 50) -> dict:
         on = set(r["signals"]) - ({"vol_up"} if "vol_up_strong" in r["signals"] else set())
         r["labels"] = [lab for k, lab in DAILY_LABELS.items() if k in on]
         r["live_labels"] = [LIVE_LABELS[k] for k in r["live"]]
+        r["patterns"] = [PATTERN_LABELS[k] for k in PATTERN_LABELS if k in r["signals"]]
     rows.sort(key=lambda r: (-len(set(r["live"]) & {"wake", "creep"}), -r["score"], -(r["metrics"].get("vol_ratio") or 0)))
     total = len(rows)
     rows = rows[:limit]
     con = sqlite3.connect(ro_uri(db_path), uri=True)
     try:
+        for r in rows:                             # 실시간 가격(수집기 1분 현재가)·세션, 발행주식·회전율, 공시 태그
+            px = con.execute("SELECT last, session, ts FROM prices WHERE symbol=? ORDER BY ts DESC LIMIT 1", (r["symbol"],)).fetchone()
+            if px:
+                r["now"] = {"price": px[0], "session": px[1], "ts": px[2], "chg": (px[0] / r["close"] - 1) * 100 if r["close"] else None}
+            try:
+                info = con.execute("SELECT shares, list_date FROM stock_info WHERE symbol=?", (r["symbol"],)).fetchone()
+            except sqlite3.OperationalError:
+                info = None
+            if info and info[0]:
+                r["shares"] = info[0]
+                r["turnover_d0"] = (r["metrics"].get("volume") or 0) / info[0] * 100
+                if r["live_m"].get("vol_3m") is not None:
+                    r["turnover_3m"] = r["live_m"]["vol_3m"] / info[0] * 100
+                    r["turnover_today"] = (r["live_m"].get("vol_today") or 0) / info[0] * 100
+            try:
+                tg = con.execute("SELECT tags, info FROM stock_tags WHERE symbol=? ORDER BY d0 DESC LIMIT 1", (r["symbol"],)).fetchone()
+            except sqlite3.OperationalError:
+                tg = None
+            r["filing_tags"] = json.loads(tg[0]) if tg else []
+            r["filing_info"] = json.loads(tg[1]) if tg and tg[1] else {}
         for r in rows[:80]:                        # 카드 미니 차트: 최근 30일 [o, h, l, c, v]
             bs = con.execute("SELECT open, high, low, close, volume FROM daily_bars WHERE symbol=? AND d<=? "
                              "ORDER BY d DESC LIMIT 30", (r["symbol"], d0)).fetchall()
