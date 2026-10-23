@@ -123,6 +123,24 @@ details summary { cursor: pointer; color: var(--text-secondary); font-size: 12.5
 .evlist li { padding: 5px 0; border-bottom: 1px solid var(--border); }
 .chart svg { touch-action: pan-y; }          /* 차트 위에서 손가락을 옆으로 밀면 값 보기, 위아래는 스크롤 */
 .controls { display: flex; gap: 8px; flex-wrap: wrap; }
+.controls-card { align-items: center; }
+.controls-card h2 { flex: 1 0 100%; margin: 0 0 4px; }
+.theme-btn { padding: 4px 10px; font-size: 12.5px; margin-left: auto; order: 0; }
+/* 가상 매매: 종목당 2줄 */
+.vs-list { display: grid; gap: 0; margin-top: 4px; }
+.vs-row { padding: 8px 2px; border-bottom: 1px solid var(--border); cursor: pointer; min-width: 0; }
+.vs-row:last-child { border-bottom: 0; }
+.vs-l1 { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.vs-sym { font-weight: 700; }
+.vs-name { flex: 1 1 0; min-width: 0; color: var(--text-muted); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vs-ret { font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.vs-l2 { display: block; margin-top: 2px; font-size: 12.5px; color: var(--text-secondary); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.vs-why { display: block; margin-top: 4px; font-size: 12px; color: var(--text-muted); }
+/* 급등 전조 카드: 숫자 3개 | 미니 차트 */
+.pre-row { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 10px; align-items: end; margin-top: 8px; }
+.pre-row .pre-k3 { margin-top: 0; }
+.pre-row .pre-chart { margin-top: 0; }
+.pre-toggle.inline { margin-left: auto; margin-top: 0; font-size: 12px; color: var(--text-muted); }
 .readonly-note { display: none; font-size: 12px; color: var(--text-muted); }
 body.readonly .controls, body.readonly .strat button { display: none; }
 body.readonly .readonly-note { display: inline; }
@@ -270,16 +288,12 @@ body.readonly .readonly-note { display: inline; }
   <header>
     <h1>Pennybot</h1>
     <span class="pill" id="mode">-</span>
+    <button id="theme-btn" class="theme-btn" title="밝게/어둡게">테마</button>
     <span class="pill" id="session">세션 확인 중</span>
     <span class="pill" id="trader-hb">매매 엔진 -</span>
     <span class="pill" id="collector-hb">수집기 -</span>
     <span class="spacer"></span>
     <span class="readonly-note">외부 주소 · 보기 전용 (조작은 텔레그램 /정지 /청산 확인)</span>
-    <div class="controls">
-      <button id="kill-btn" class="danger" aria-pressed="false">킬스위치 켜기</button>
-      <button id="flatten-btn" class="danger">전량 청산</button>
-      <button id="theme-btn" title="밝게/어둡게">테마</button>
-    </div>
   </header>
 
   <div class="warnbox" id="mismatch"></div>
@@ -306,11 +320,6 @@ body.readonly .readonly-note { display: inline; }
       </div>
       <ul class="feed" id="feed"></ul>
     </section>
-    <section class="card">
-      <div class="pre-head"><h2>🧪 가상 매매 기록</h2><span class="sub" id="vs-sum" style="margin:0"></span></div>
-      <p class="sub">전조 발동 + 과열 전(+15% 미만)에 가상 매수 → 익절 +30% / 손절 −35% / 최대 14일. 실제 주문 없음 — 이 전략이 맞는지 기록</p>
-      <div class="tablewrap" style="max-height:50vh"><table id="vs"></table></div>
-    </section>
     <section class="card pre-wrap">
       <div class="pre-head">
         <h2>⚡ 급등 전조</h2>
@@ -327,6 +336,12 @@ body.readonly .readonly-note { display: inline; }
         과거 +500% 급등 직전에 비교군보다 훨씬 흔했던 증상. 낙폭과대(60일 고점 −50%↓) 2점 · 급등 이력(60일 안 하루 +30%) 2점 ·
         거래량 폭발(전날 평소의 3배+) +2점 · 거래량 상승(1.5배+)·고변동(변동폭 10%+·갭 하락·폭락)·거래 마름(10일 −10% + 거래량 절반↓)·동전주($2 미만) 각 1점 (최대 10).
         60일 고점 근처는 0점. 🔥 장중(1분마다, 5점 이상): 거래 급증 = 최근 1시간 분당 거래량 3배+, 매수세 유입 = 1시간 +3%·15분 +1.5%, +10% 돌파. 거래 급증+매수세 유입이면 텔레그램 알림.<br>보라 = SEC 공시 태그(ATM 진행·워런트 행사가·최근 공모/공모 대기·액면병합 날짜·상폐 기한·전환사채·현금), 청록 = 일봉 패턴(응축: 최근 10일 변동폭이 평소의 60% 이하·박스 30% 이내 / 매집 의심: 20일 동안 오른 날 거래량이 내린 날의 1.5배+인데 가격은 안 오름 / 바닥 다지기: 크게 빠진 뒤 최근 5일 저점이 앞 5일 저점보다 안 깨짐). 회전율 = 거래량 ÷ 발행주식.</details>
+    </section>
+    <section class="card">
+      <div class="pre-head"><h2>🧪 가상 매매</h2><span class="sub" id="vs-sum" style="margin:0"></span></div>
+      <p class="sub" id="vs-rule">전조 발동 + 과열 전에 가상 매수 → 실제 주문 없음, 이 전략이 맞는지 기록</p>
+      <div class="vs-list" id="vs"></div>
+      <button id="vs-more" class="more-btn" hidden>더 보기</button>
     </section>
     <div class="grid tiles">
       <div class="card tile"><div class="label">계좌 평가액</div><div class="value" id="t-equity">-</div><div class="note" id="t-cash"></div></div>
@@ -393,6 +408,11 @@ body.readonly .readonly-note { display: inline; }
 
   <!-- ===== 매매: 주문·청산·후보 ===== -->
   <div class="tab" data-tab="trade" hidden>
+    <section class="card controls-card controls">
+      <h2>매매 조작</h2>
+      <button id="kill-btn" class="danger" aria-pressed="false">킬스위치 켜기</button>
+      <button id="flatten-btn" class="danger">전량 청산</button>
+    </section>
     <section class="grid two">
       <div class="card"><h2>최근 주문</h2><p class="sub long">매수·매도 주문과 체결 상태</p>
         <div class="tablewrap" style="max-height:50vh"><table id="orders"></table></div></div>
@@ -1109,16 +1129,33 @@ async function loadVs() {
   const ret = r => ((r.status === "CLOSED" ? r.exit_price : r.last) / r.entry - 1) * 100;
   const wins = done.filter(r => ret(r) > 0).length;
   $("vs-sum").textContent = done.length ? `끝난 ${done.length}건 · 승률 ${Math.round(wins / done.length * 100)}% · 평균 ${fmtPct(done.reduce((a, r) => a + ret(r), 0) / done.length)}` : "";
-  table($("vs"), [
-    { h: "종목", f: r => `${r.status === "OPEN" ? "⏳ " : ret(r) >= 0 ? "✅ " : "❌ "}${r.symbol} ${r.name || ""}`, tone: r => tone(ret(r)) },
-    { h: "수익", num: 1, f: r => fmtPct(ret(r)), tone: r => tone(ret(r)) },
-    { h: "매수", num: 1, f: r => `${fmtPx(r.entry)} · ${kst(r.opened)}` },
-    { h: "세션", minor: 1, f: r => SESS[r.session] || r.session },
-    { h: "지금/매도", num: 1, f: r => r.status === "OPEN" ? `${fmtPx(r.last)} (보유 중)` : `${fmtPx(r.exit_price)} · ${r.exit_reason}` },
-    { h: "최고/최저", num: 1, f: r => `${fmtPct((r.high / r.entry - 1) * 100, 0)} / ${fmtPct((r.low / r.entry - 1) * 100, 0)}` },
-    { h: "근거", wide: 1, f: r => r.reason },
-  ], rows, "아직 없음 — 장중에 전조가 발동하면 가상 매수가 기록됩니다");
+  vsRows = [...rows].sort((x, y) => (x.status === "OPEN" ? 0 : 1) - (y.status === "OPEN" ? 0 : 1) || (y.opened > x.opened ? 1 : -1));
+  drawVs();
 }
+let vsRows = [], vsShown = 8;
+const vsOpen = new Set();
+function drawVs() {
+  const box = $("vs"); box.replaceChildren();
+  const ret = r => ((r.status === "CLOSED" ? r.exit_price : r.last) / r.entry - 1) * 100;
+  const span = (cls, text) => { const e = document.createElement("span"); if (cls) e.className = cls; e.textContent = text; return e; };
+  if (!vsRows.length) { const d = document.createElement("div"); d.className = "empty"; d.textContent = "아직 없음 — 장중에 전조가 발동하면 가상 매수가 기록됩니다"; box.appendChild(d); }
+  vsRows.slice(0, vsShown).forEach(r => {
+    const v = ret(r), open = vsOpen.has(r.id);
+    const row = document.createElement("div"); row.className = "vs-row";
+    const l1 = document.createElement("div"); l1.className = "vs-l1";
+    l1.append(span("vs-st", r.status === "OPEN" ? "⏳" : v >= 0 ? "✅" : "❌"), span("vs-sym", r.symbol), span("vs-name", r.name || ""),
+              span("vs-ret " + (tone(v) || ""), fmtPct(v)));
+    const l2 = span("vs-l2", `${fmtPx(r.entry)} → ${r.status === "OPEN" ? fmtPx(r.last) + " 보유 중" : fmtPx(r.exit_price) + " " + r.exit_reason}`
+      + ` · 최고 ${fmtPct((r.high / r.entry - 1) * 100, 0)} 최저 ${fmtPct((r.low / r.entry - 1) * 100, 0)} · ${kst(r.opened)} ${SESS_SHORT[r.session] || ""}`);
+    row.append(l1, l2);
+    if (open && r.reason) row.appendChild(span("vs-why", r.reason));
+    row.onclick = () => { open ? vsOpen.delete(r.id) : vsOpen.add(r.id); drawVs(); };
+    box.appendChild(row);
+  });
+  const more = $("vs-more"), left = vsRows.length - vsShown;
+  more.hidden = left <= 0; more.textContent = `더 보기 (${left}건 더)`;
+}
+$("vs-more").onclick = () => { vsShown += 20; drawVs(); };
 
 /* ---------- 급등 전조 목록 ---------- */
 let preData = null, preFilter = "all", preShown = 24;
@@ -1149,8 +1186,8 @@ function drawPre() {
     // 1줄: 티커 · 이름 · 점수
     const top = document.createElement("div"); top.className = "pre-top";
     top.append(span("pre-sym", x.symbol), span("pre-name", x.name || ""),
-               ...(x.tier ? [span("pre-score s-hi", "🎯" + "★".repeat(x.tier))] : []),
-               span("pre-score " + (x.score >= 8 ? "s-hi" : x.score >= 5 ? "s-mid" : "s-lo"), x.score + "점"));
+               span("pre-score " + (x.tier || x.score >= 8 ? "s-hi" : x.score >= 5 ? "s-mid" : "s-lo"),
+                    (x.tier ? "🎯" + "★".repeat(x.tier) + " · " : "") + x.score + "점"));
     c.appendChild(top);
     // 2줄: 지금 가격 · 등락 · 세션
     const now = x.now || {}, m = x.live_m || {};
@@ -1166,10 +1203,11 @@ function drawPre() {
     // 5줄: 숫자 3개
     const mt = x.metrics || {};
     const k3 = document.createElement("div"); k3.className = "pre-k3";
-    [["고점", mt.dd60 != null ? fmtPct(mt.dd60, 0) : "-"], ["전날 거래량", vr(mt.vol_ratio) || "-"], ["회전율", turn(x.turnover_d0) || "-"]]
+    [["고점 대비", mt.dd60 != null ? fmtPct(mt.dd60, 0) : "-"], ["거래량", vr(mt.vol_ratio) || "-"], ["회전율", turn(x.turnover_d0) || "-"]]
       .forEach(([k, v]) => { const d = document.createElement("div"); d.append(span("k", k), span("v", v)); k3.appendChild(d); });
-    c.appendChild(k3);
-    if (x.bars && x.bars.length > 5) { const mc = document.createElement("div"); mc.className = "chart pre-chart"; c.appendChild(mc); requestAnimationFrame(() => candleChart(mc, x.bars, { height: 64, ma: [5, 20], labels: false })); }
+    const row = document.createElement("div"); row.className = "pre-row"; row.appendChild(k3);
+    if (x.bars && x.bars.length > 5) { const mc = document.createElement("div"); mc.className = "chart pre-chart"; row.appendChild(mc); requestAnimationFrame(() => candleChart(mc, x.bars, { height: 58, ma: [5, 20], labels: false })); }
+    c.appendChild(row);
     // 자세히 (펼치면)
     if (open) {
       const more = document.createElement("div"); more.className = "pre-more";
@@ -1191,8 +1229,7 @@ function drawPre() {
       more.appendChild(go);
       c.appendChild(more);
     }
-    const tg = span("pre-toggle", open ? "접기 ▴" : "자세히 ▾");
-    c.appendChild(tg);
+    pr.appendChild(span("pre-toggle inline", open ? "접기 ▴" : "자세히 ▾"));
     c.onclick = () => { open ? preOpen.delete(x.symbol) : preOpen.add(x.symbol); drawPre(); };
     box.appendChild(c);
   });
