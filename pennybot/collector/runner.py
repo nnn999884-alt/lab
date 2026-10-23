@@ -348,10 +348,10 @@ class Collector:
             from ..filing_detail import EVENT_KO, FORM_KO
             for r in rows:
                 if r["events"] or r["direction"]:
-                    tag = "▲ 호재" if r["direction"] > 0 else "▼ 악재" if r["direction"] < 0 else "·"
+                    tag = "▲호재" if r["direction"] > 0 else "▼악재" if r["direction"] < 0 else ""
                     evs = ", ".join(EVENT_KO.get(k, k) for k in (r["events"] or "").split(",") if k)
                     self._event(now, r["symbol"], "filing",
-                                f"📰 {r['symbol']} {FORM_KO.get(r['form'], r['form'])} {tag}" + (f" · {evs}" if evs else ""), r["direction"])
+                                f"📰 {r['symbol']} {evs or FORM_KO.get(r['form'], r['form'])} {tag}".strip(), r["direction"])
             log.info("새 공시 %d건 (유니버스 종목)", len(rows))
 
     def poll_news(self, now: datetime) -> None:

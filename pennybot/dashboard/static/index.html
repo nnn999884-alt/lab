@@ -205,6 +205,7 @@ body.readonly .readonly-note { display: inline; }
 .pre-facts { margin-top: 6px; font-size: 12.5px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
 .chip { border: 1px solid var(--border); background: transparent; color: var(--text-secondary); }
 .chip.live { background: var(--critical); border-color: var(--critical); color: #fff; font-weight: 600; }
+.chip.vol { border-color: var(--warning); color: var(--text-primary); background: rgba(250, 178, 25, .16); font-weight: 600; }
 .more-btn { width: 100%; margin-top: 10px; padding: 9px; }
 
 .feed { list-style: none; margin: 6px 0 0; padding: 0; max-height: 300px; overflow: auto; }
@@ -217,6 +218,10 @@ body.readonly .readonly-note { display: inline; }
 .pre-chart { margin-top: 6px; }
 .pre-judge { margin-top: 4px; font-size: 13px; font-weight: 650; }
 #lookup-chart { margin: 6px 0 10px; }
+
+.pre-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 3px 10px; }
+.pre-facts .k { color: var(--text-muted); }
+.pre-facts b { font-weight: 650; color: var(--text-primary); }
 </style>
 </head>
 <body>
@@ -273,9 +278,9 @@ body.readonly .readonly-note { display: inline; }
       <div class="pre-list" id="pre-list"></div>
       <button id="pre-more" class="more-btn" hidden>더 보기</button>
       <details class="sub" style="margin-top:8px"><summary>점수·증상 설명</summary>
-        과거 +500% 급등 직전에 비교군보다 훨씬 흔했던 증상. 크게 빠짐(60일 고점 −50%↓) 2점 · 튄 이력(60일 안 하루 +30%) 2점 ·
-        거래량 급증(전날 3배+) +2점 · 거래량 늘기 시작(1.5배+)·흔들림 큼·조용히 흘러내림·$2 미만 각 1점 (최대 10). 60일 고점 근처는 0점.
-        🔥 장중(1분마다, 5점 이상 종목): 거래 깨어남 = 최근 1시간 분당 거래량 3배+, 슬금슬금 상승 = 1시간 +3%·15분 +1.5%. 둘 다 켜지면 텔레그램 알림.</details>
+        과거 +500% 급등 직전에 비교군보다 훨씬 흔했던 증상. 낙폭과대(60일 고점 −50%↓) 2점 · 급등 이력(60일 안 하루 +30%) 2점 ·
+        거래량 폭발(전날 평소의 3배+) +2점 · 거래량 상승(1.5배+)·고변동(변동폭 10%+·갭 하락·폭락)·거래 마름(10일 −10% + 거래량 절반↓)·동전주($2 미만) 각 1점 (최대 10).
+        60일 고점 근처는 0점. 🔥 장중(1분마다, 5점 이상): 거래 급증 = 최근 1시간 분당 거래량 3배+, 매수세 유입 = 1시간 +3%·15분 +1.5%, +10% 돌파. 거래 급증+매수세 유입이면 텔레그램 알림.</details>
     </section>
     <div class="grid tiles">
       <div class="card tile"><div class="label">계좌 평가액</div><div class="value" id="t-equity">-</div><div class="note" id="t-cash"></div></div>
@@ -477,6 +482,16 @@ const ago = s => { if (!s) return null; return Math.round((Date.now() - new Date
 const SVGNS = "http://www.w3.org/2000/svg";
 function el(tag, attrs = {}, parent) { const e = document.createElementNS(SVGNS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; }
 function txt(tag, text, attrs = {}, parent) { const e = el(tag, attrs, parent); e.textContent = text; return e; }
+
+// 10초마다 새로 받아도, 내용이 같으면 화면을 건드리지 않는다 (깜빡임·스크롤 튐·펼친 목록 접힘 방지)
+const _seen = {};
+function unchanged(key, data) {
+  const s = JSON.stringify(data);
+  if (_seen[key] === s) return true;
+  _seen[key] = s;
+  return false;
+}
+function redrawAll() { for (const k in _seen) delete _seen[k]; refresh(); }
 
 async function api(path, opts) {
   const r = await fetch(path, opts);
@@ -686,11 +701,13 @@ async function loadOverview() {
 
 async function loadEquity() {
   const rows = await api(`/api/equity?days=${days}`);
+  if (unchanged("equity", rows)) return;
   lineChart($("equity-chart"), rows.map(r => ({ t: +new Date(r.ts), v: r.equity })), { valueFmt: v => "$" + Math.round(v).toLocaleString() });
 }
 
 async function loadStrategies() {
   const rows = await api("/api/strategies");
+  if (unchanged("strategies", rows)) return;
   barChart($("strat-chart"), rows.map(r => ({ label: STRAT[r.strategy] || r.strategy, v: r.trades ? r.pnl : null, color: STRAT_COLOR[r.strategy],
     tip: [["", fmtUsd(r.pnl, true), css(STRAT_COLOR[r.strategy])], ["", STRAT[r.strategy]], ["거래", `${r.trades}회`], ["승률", r.win_rate == null ? "-" : Math.round(r.win_rate * 100) + "%"]] })),
     { valueFmt: v => fmtUsd(v, true), empty: "아직 청산된 매매가 없습니다." });
@@ -718,6 +735,7 @@ async function loadStrategies() {
 
 async function loadTables() {
   const [pos, orders, trades, sigs] = await Promise.all([api("/api/positions"), api("/api/orders?limit=60"), api("/api/trades?limit=60"), api("/api/signals?limit=300")]);
+  if (unchanged("tables", [pos, orders, trades, sigs, $("only-ok").checked])) return;
   table($("positions"), [
     { h: "종목", f: r => r.symbol }, { h: "전략", f: r => STRAT[r.strategy] || r.strategy }, { h: "상태", f: r => ({ PENDING: "매수 주문 중", OPEN: "보유", EXITING: "매도 주문 중" })[r.status] || r.status },
     { h: "수량", num: 1, f: r => r.remaining || r.planned_qty }, { h: "매수가", num: 1, f: r => fmtPx(r.entry_price) }, { h: "현재가", num: 1, f: r => fmtPx(r.last) },
@@ -745,6 +763,7 @@ async function loadTables() {
 
 async function loadCollector() {
   const c = await api("/api/collector");
+  if (unchanged("collector", c)) return;
   $("coll-sub").textContent = `감시 종목 호가 스냅샷 중 매수·매도 호가가 모두 있던 비율${c.trade_date ? ` · 영업일 ${c.trade_date}` : ""}`;
   barChart($("quote-chart"), c.sessions.map(s => ({ label: SESS[s.session], v: s.quotes ? (1 - s.quotes_empty / s.quotes) * 100 : null,
     tip: [["", s.quotes ? fmtPct((1 - s.quotes_empty / s.quotes) * 100, 0).replace("+", "") : "-", css("--series-1")], ["", SESS[s.session]], ["스냅샷", s.quotes + "회"], ["호가 있던 종목", s.symbols_quoted + "개"], ["스프레드 중앙값", s.spread_med_pct == null ? "-" : s.spread_med_pct.toFixed(2) + "%"]] })),
@@ -760,6 +779,7 @@ async function loadCollector() {
 
 async function loadResearch() {
   const rows = await api("/api/research?days=20");
+  if (unchanged("research", rows)) return;
   barChart($("research-chart"), rows.map(r => ({ label: r.trade_date.slice(5), v: r.attention.mean == null ? null : r.attention.mean * 100,
     tip: [["", r.attention.mean == null ? "-" : fmtPct(r.attention.mean * 100, 2), css("--series-1")], ["", `${r.trade_date} 주목 종목 평균`], ["종목 수", r.attention.n], ["중앙값", r.attention.median == null ? "-" : fmtPct(r.attention.median * 100, 2)], ["상승 비율", r.attention.hit == null ? "-" : Math.round(r.attention.hit * 100) + "%"], ["나머지 평균", r.others.mean == null ? "-" : fmtPct(r.others.mean * 100, 2)]] })),
     { valueFmt: v => fmtPct(v, 1), empty: "세션 요약이 쌓이면 표시됩니다 (애프터마켓 종료 후 생성)." });
@@ -772,6 +792,7 @@ async function loadResearch() {
 
 async function loadRunners() {
   const [r, ev] = await Promise.all([api("/api/runners?days=10"), api("/api/dilution?limit=60")]);
+  if (unchanged("runners", [r, ev])) return;
   const order = ["low", "mid", "high", "unknown"];
   const bs = r.by_bucket.filter(b => b.n || b.bucket !== "unknown");
   barChart($("runner-chart"), bs.map(b => ({ label: BUCKET[b.bucket], v: b.mean == null ? null : b.mean * 100,
@@ -809,6 +830,7 @@ async function loadRunners() {
 let reportSel = null;
 async function loadReports() {
   const rows = await api("/api/reports?limit=30");
+  if (unchanged("reports", rows)) return;
   if (!rows.length) return;
   if (!reportSel || !rows.some(r => r.trade_date === reportSel)) reportSel = rows[0].trade_date;
   table($("reports"), [
@@ -825,6 +847,7 @@ async function loadReports() {
 
 async function loadBacktests() {
   const runs = await api("/api/backtests?limit=10");
+  if (unchanged("backtests", runs)) return;
   const wr = s => s && s.trades ? Math.round(s.win_rate * 100) + "%" : "-";
   table($("backtests"), [
     { h: "실행", f: r => r.run }, { h: "기간", f: r => `${r.start} ~ ${r.end}` }, { h: "일수", num: 1, f: r => r.days },
@@ -857,6 +880,7 @@ const ratio = v => v == null ? null : Math.round(v * 100) + "%";
 
 async function loadShorts() {
   const rows = await api("/api/shorts");
+  if (unchanged("shorts", rows)) return;
   table($("shorts"), [
     { h: "종목", f: r => r.symbol + (r.held ? " (보유)" : "") },
     { h: "공매도 비율", num: 1, f: r => ratio(r.short_ratio) }, { h: "5일 평균", num: 1, f: r => ratio(r.short_ratio_5d) },
@@ -1002,6 +1026,8 @@ function beep() {
 }
 async function loadFeed() {
   const rows = await api("/api/events?limit=60");
+  const minute = Math.floor(Date.now() / 60000);          // '몇 분 전' 표시는 1분에 한 번만 갱신
+  if (unchanged("feed", [rows, feedFilter, minute])) return;
   const list = rows.filter(e => feedFilter === "all" || HOT(e.kind));
   const box = $("feed"); box.replaceChildren();
   if (!list.length) { const li = document.createElement("li"); li.className = "empty"; li.textContent = "아직 없음 — 장중에 랭킹 진입·1분새 급등·전조 발동·거래정지·공시가 여기 뜹니다"; box.appendChild(li); }
@@ -1023,7 +1049,7 @@ async function loadFeed() {
 document.querySelectorAll("#feed-filter button").forEach(b => b.onclick = () => {
   feedFilter = b.dataset.f;
   document.querySelectorAll("#feed-filter button").forEach(x => x.setAttribute("aria-pressed", x === b));
-  loadFeed();
+  delete _seen.feed; loadFeed();
 });
 try { $("feed-sound").checked = localStorage.getItem("feedSound") === "1"; } catch (e) {}
 $("feed-sound").onchange = () => { try { localStorage.setItem("feedSound", $("feed-sound").checked ? "1" : "0"); } catch (e) {} if ($("feed-sound").checked) beep(); };
@@ -1031,7 +1057,9 @@ $("feed-sound").onchange = () => { try { localStorage.setItem("feedSound", $("fe
 /* ---------- 급등 전조 목록 ---------- */
 let preData = null, preFilter = "all", preShown = 24;
 async function loadPre() {
-  preData = await api("/api/precursor?limit=200");
+  const fresh = await api("/api/precursor?limit=200");
+  if (unchanged("pre", fresh)) return;
+  preData = fresh;
   const r = preData;
   const live = (r.rows || []).filter(x => x.live.includes("wake") && x.live.includes("creep")).length;
   $("pre-sub").textContent = r.d0 ? `${r.d0} 종가 기준 · ${r.n}종목 · 🔥 지금 움직이는 종목 ${live}개 · 장중 1분마다 갱신` : "아직 없음 — 수집기가 장 마감 뒤 전 종목을 계산합니다";
@@ -1064,16 +1092,22 @@ function drawPre() {
     if (x.bars && x.bars.length > 5) { const mc = document.createElement("div"); mc.className = "chart pre-chart"; c.appendChild(mc); requestAnimationFrame(() => candleChart(mc, x.bars, { height: 86, ma: [5, 20], labels: false })); }
     const chips = document.createElement("div"); chips.className = "chips";
     x.live_labels.forEach(l => { const s = document.createElement("span"); s.className = "chip live"; s.textContent = l; chips.appendChild(s); });
-    x.labels.forEach(l => { const s = document.createElement("span"); s.className = "chip"; s.textContent = l; chips.appendChild(s); });
+    x.labels.forEach(l => { const s = document.createElement("span"); s.className = "chip" + (l.startsWith("거래량") ? " vol" : ""); s.textContent = l; chips.appendChild(s); });
     c.appendChild(chips);
     const mt = x.metrics || {};
+    const vr = v => v == null ? null : (v >= 100 ? Math.round(v) : v.toFixed(1)) + "배";
     const facts = [
-      mt.dd60 != null ? `고점 대비 ${fmtPct(mt.dd60, 0)}` : null,
-      mt.vol_ratio != null ? `전날 거래량 ${mt.vol_ratio >= 100 ? Math.round(mt.vol_ratio) : mt.vol_ratio.toFixed(1)}배` : null,
-      mt.dollar20 != null ? `거래대금 $${fmtQty(mt.dollar20)}` : null,
-      m.vol_x != null ? `1시간 거래량 ${m.vol_x.toFixed(1)}배` : null,
-    ].filter(Boolean);
-    const f = document.createElement("div"); f.className = "pre-facts"; f.textContent = facts.join(" · "); c.appendChild(f);
+      ["고점 대비", mt.dd60 != null ? fmtPct(mt.dd60, 0) : null],
+      ["10일", mt.ret10 != null ? fmtPct(mt.ret10, 0) : null],
+      ["60일 급등", mt.spikes60 != null ? mt.spikes60 + "회" : null],
+      ["전날 거래량", vr(mt.vol_ratio)],
+      ["거래대금", mt.dollar20 != null ? "$" + fmtQty(mt.dollar20) : null],
+      ["1시간 거래량", m.vol_x != null ? vr(m.vol_x) : null],
+    ].filter(f => f[1]);
+    const f = document.createElement("div"); f.className = "pre-facts";
+    facts.forEach(([k, v]) => { const s = document.createElement("span"); const a = document.createElement("span"); a.className = "k"; a.textContent = k + " ";
+      const b = document.createElement("b"); b.textContent = v; s.append(a, b); f.appendChild(s); });
+    c.appendChild(f);
     c.onclick = c.onkeydown = e => { if (e.type === "click" || e.key === "Enter") { lookup(x.symbol); showTab("symbol"); } };
     box.appendChild(c);
   });
@@ -1111,6 +1145,7 @@ function pathChart(box, days, series, { height = 170, fmt = v => v.toFixed(0), l
 }
 async function loadC30() {
   const r = await api("/api/chart30");
+  if (unchanged("c30", r)) return;
   if (!r) { table($("c30-conds"), [{ h: "조건", f: x => x }], [], "아직 없음 — 봇 컴퓨터에서 python -m pennybot chart30 실행"); return; }
   const b = r.base;
   $("c30-sub").textContent = `${r.start} ~ ${r.end} · 매일 $0.1~$10 약 ${Math.round(r.per_day)}종목 · 그날까지 30일 일봉만 보고, 이후 20거래일 안에 고가 2배(+100%)·6배(+500%) 갔는지. ` +
@@ -1170,6 +1205,7 @@ let bigShown = 12, bigData = null;
 const FIRST = { DAY: "데이마켓", PRE: "프리마켓", REGULAR: "정규장" };
 async function loadBig() {
   const r = bigData = await api("/api/bigruns");
+  if (unchanged("big", r)) return;
   if (!r) { table($("big-compare"), [{ h: "조건", f: x => x }], [], "아직 없음 — 봇 컴퓨터에서 python -m pennybot research 후 bigruns 실행"); return; }
   $("big-sub").textContent = `${r.win}거래일 안에 고가가 급등 전날 종가의 ${r.mult}배 이상 · ${r.n_cases}건 · 비교군 ${r.n_controls}건 (같은 시기·비슷한 가격대, 안 오른 종목) · ${kst(r.created)}`;
   const fm = Object.entries(r.first_move || {});
@@ -1221,6 +1257,7 @@ $("big-more").onclick = () => { bigShown += 12; drawBig(); };
 let histKey = "ret_open";
 async function loadHist() {
   const r = await api("/api/research_hist");
+  if (unchanged("hist", r)) return;
   if (!r) { table($("hist"), [{ h: "요인", f: x => x }], [], "아직 없음 — 봇 컴퓨터에서 python -m pennybot research 를 실행하세요 (처음 30분~1시간)"); return; }
   $("hist-sub").textContent = `${r.start} ~ ${r.end} · 급등일 ${r.runners}건 (+${r.min_pct}% 이상, $0.2~$10) · 데이마켓 VWAP 에 사서 판다고 가정 · ${kst(r.created)} 실행`;
   const s = f => f[histKey];
@@ -1245,7 +1282,7 @@ async function loadHist() {
 document.querySelectorAll("#hist-exit button").forEach(b => b.onclick = () => {
   histKey = b.dataset.k;
   document.querySelectorAll("#hist-exit button").forEach(x => x.setAttribute("aria-pressed", x === b));
-  loadHist();
+  delete _seen.hist; loadHist();
 });
 
 async function control(body) {
@@ -1255,17 +1292,17 @@ async function control(body) {
 }
 $("kill-btn").onclick = () => control({ kill: !(ov && ov.kill) });
 $("flatten-btn").onclick = () => { if (confirm("보유 종목을 지금 전량 청산할까요? (지정가로 매도하고, 정규장에서 안 팔리면 시장가)")) control({ flatten: true }); };
-$("only-ok").onchange = () => loadTables();
+$("only-ok").onchange = () => { delete _seen.tables; loadTables(); };
 document.querySelectorAll("#range button").forEach(b => b.onclick = () => {
   days = +b.dataset.days;
   document.querySelectorAll("#range button").forEach(x => x.setAttribute("aria-pressed", x === b));
-  loadEquity();
+  delete _seen.equity; loadEquity();
 });
 $("theme-btn").onclick = () => {
   const cur = document.documentElement.dataset.theme || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
   document.documentElement.dataset.theme = cur === "dark" ? "light" : "dark";
   try { localStorage.setItem("theme", document.documentElement.dataset.theme); } catch (e) {}
-  refresh();
+  redrawAll();
 };
 try { const t = localStorage.getItem("theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
 
@@ -1278,10 +1315,8 @@ const TAB_JOBS = {
 };
 let tab = "home";
 async function refresh() {
-  document.querySelector("main").classList.add("loading");
   const res = await Promise.allSettled([loadOverview(), ...TAB_JOBS[tab]()]);
   res.filter(r => r.status === "rejected").forEach(r => console.warn(r.reason));
-  document.querySelector("main").classList.remove("loading");
 }
 function showTab(t, keepScroll) {
   if (!TAB_JOBS[t]) t = "home";
@@ -1292,7 +1327,7 @@ function showTab(t, keepScroll) {
   try { localStorage.setItem("tab", t); } catch (e) {}
   if (location.hash !== "#" + t) history.replaceState(null, "", location.pathname + location.search + "#" + t);
   if (!keepScroll) window.scrollTo(0, 0);
-  refresh();
+  redrawAll();
 }
 document.querySelectorAll("#tabs button").forEach(b => b.onclick = () => showTab(b.dataset.tab));
 { let t = location.hash.slice(1); try { t = t || localStorage.getItem("tab"); } catch (e) {}
@@ -1306,7 +1341,7 @@ let rt, lastW = innerWidth;
 addEventListener("resize", () => {
   // 휴대폰은 스크롤할 때 주소창이 숨으며 높이만 바뀐다 → 너비가 바뀔 때만 다시 그림
   if (innerWidth === lastW) return;
-  lastW = innerWidth; clearTimeout(rt); rt = setTimeout(refresh, 200);
+  lastW = innerWidth; clearTimeout(rt); rt = setTimeout(redrawAll, 200);
 });
 document.addEventListener("pointerdown", e => { if (!e.target.closest(".chart")) hideTip(); });
 </script>

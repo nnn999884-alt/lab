@@ -22,10 +22,10 @@ from datetime import datetime, timedelta
 # 과거 +500% 사례에서 비교군보다 훨씬 흔했던 증상일수록 무겁게 (최대 10점)
 WEIGHT = {"crashed": 2, "spiked": 2, "vol_up_strong": 2, "vol_up": 1, "volatile": 1, "bleed": 1, "cheap": 1}
 DAILY_LABELS = {
-    "crashed": "크게 빠짐", "volatile": "흔들림 큼", "spiked": "튄 이력", "cheap": "싼 소외주",
-    "bleed": "조용히 흘러내림", "vol_up": "거래량 늘기 시작", "vol_up_strong": "거래량 급증",
+    "vol_up_strong": "거래량 폭발", "vol_up": "거래량 상승", "crashed": "낙폭과대", "spiked": "급등 이력",
+    "volatile": "고변동", "bleed": "거래 마름", "cheap": "동전주",
 }
-LIVE_LABELS = {"wake": "거래 깨어남", "creep": "슬금슬금 상승", "up10": "이미 +10%"}
+LIVE_LABELS = {"wake": "거래 급증", "creep": "매수세 유입", "up10": "+10% 돌파"}
 
 
 def daily(bars: list[tuple]) -> dict | None:
@@ -126,7 +126,8 @@ def alert_text(sym: str, name: str | None, day: dict, lv: dict, session_ko: str,
     from .trading.messages import money_s, pct, px
     m, dm = lv["metrics"], day["metrics"]
     j = judge(m, dm)
-    on_d = [DAILY_LABELS[k] for k in day["signals"] if not (k == "vol_up" and "vol_up_strong" in day["signals"])]
+    on = set(day["signals"]) - ({"vol_up"} if "vol_up_strong" in day["signals"] else set())
+    on_d = [lab for k, lab in DAILY_LABELS.items() if k in on]
     t = (now or datetime.now(timezone.utc)).astimezone(KST)
     return "\n".join([
         f"⚡ 급등 전조 ({sym}" + (f" · {name}" if name else "") + ")",
@@ -179,8 +180,8 @@ def ranked(db_path: str, limit: int = 50) -> dict:
         r["metrics"] = json.loads(r["metrics"] or "{}")
         r["live"] = json.loads(r["live"] or "[]")
         r["live_m"] = json.loads(r["live_m"] or "{}")
-        r["labels"] = [DAILY_LABELS[k] for k in r["signals"] if k != "vol_up"] if "vol_up_strong" in r["signals"] else \
-            [DAILY_LABELS[k] for k in r["signals"]]
+        on = set(r["signals"]) - ({"vol_up"} if "vol_up_strong" in r["signals"] else set())
+        r["labels"] = [lab for k, lab in DAILY_LABELS.items() if k in on]
         r["live_labels"] = [LIVE_LABELS[k] for k in r["live"]]
     rows.sort(key=lambda r: (-len(set(r["live"]) & {"wake", "creep"}), -r["score"], -(r["metrics"].get("vol_ratio") or 0)))
     total = len(rows)
