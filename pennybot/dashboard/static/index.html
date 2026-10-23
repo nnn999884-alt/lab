@@ -339,7 +339,7 @@ body.readonly .readonly-note { display: inline; }
     </section>
     <section class="card">
       <div class="pre-head"><h2>🧪 가상 매매</h2><span class="sub" id="vs-sum" style="margin:0"></span></div>
-      <p class="sub" id="vs-rule">전조 알림과 따로, 첫 턴에 −20% 털린 뒤 고점을 다시 넘을 때(2차·3차 파동) 가상 매수 → 익절 +20% · 손절 −35% · 정규장 마감 정리. 실제 주문 없음</p>
+      <p class="sub" id="vs-rule">1분 회전율 0.5%+ 또는 1분 거래대금 $5만+ 가 터지면 그 가격 −20% 에 지정가(60분) → 체결되면 익절 +15% · 손절 −35% · 정규장 마감 정리. 추격 안 함, 실제 주문 없음</p>
       <div class="vs-list" id="vs"></div>
       <button id="vs-more" class="more-btn" hidden>더 보기</button>
     </section>
@@ -1129,7 +1129,8 @@ async function loadVs() {
   const ret = r => ((r.status === "CLOSED" ? r.exit_price : r.last) / r.entry - 1) * 100;
   const wins = done.filter(r => ret(r) > 0).length;
   $("vs-sum").textContent = done.length ? `끝난 ${done.length}건 · 승률 ${Math.round(wins / done.length * 100)}% · 평균 ${fmtPct(done.reduce((a, r) => a + ret(r), 0) / done.length)}` : "";
-  vsRows = [...rows].sort((x, y) => (x.status === "OPEN" ? 0 : 1) - (y.status === "OPEN" ? 0 : 1) || (y.opened > x.opened ? 1 : -1));
+  const rank = r => r.status === "OPEN" ? 0 : r.status === "ORDER" ? 1 : 2;
+  vsRows = [...rows].sort((x, y) => rank(x) - rank(y) || (y.opened > x.opened ? 1 : -1));
   drawVs();
 }
 let vsRows = [], vsShown = 8;
@@ -1141,12 +1142,13 @@ function drawVs() {
   const span = (cls, text) => { const e = document.createElement("span"); if (cls) e.className = cls; e.textContent = text; return e; };
   if (!vsRows.length) { const d = document.createElement("div"); d.className = "empty"; d.textContent = "아직 없음 — 장중에 전조가 발동하면 가상 매수가 기록됩니다"; box.appendChild(d); }
   vsRows.slice(0, vsShown).forEach(r => {
-    const v = ret(r), open = vsOpen.has(r.id);
+    const v = ret(r), open = vsOpen.has(r.id), wait = r.status === "ORDER";
     const row = document.createElement("div"); row.className = "vs-row";
     const l1 = document.createElement("div"); l1.className = "vs-l1";
-    l1.append(span("vs-st", r.status === "OPEN" ? "⏳" : v >= 0 ? "✅" : "❌"), span("vs-sym", r.symbol), span("vs-name", r.name || ""),
-              span("vs-ret " + (tone(v) || ""), fmtPct(v)));
-    const l2 = span("vs-l2", `${fmtPx(r.entry)} → ${r.status === "OPEN" ? fmtPx(r.last) + " 보유 중" : fmtPx(r.exit_price) + " " + r.exit_reason}`
+    l1.append(span("vs-st", wait ? "🧾" : r.status === "OPEN" ? "⏳" : v >= 0 ? "✅" : "❌"), span("vs-sym", r.symbol), span("vs-name", r.name || ""),
+              span("vs-ret " + (wait ? "muted" : tone(v) || ""), wait ? "지정가 대기" : fmtPct(v)));
+    const l2 = wait ? span("vs-l2", `지정가 ${fmtPx(r.entry)} · 지금 ${fmtPx(r.last)} · ${kst(r.opened)} 신호 (60분 유효)`)
+      : span("vs-l2", `${fmtPx(r.entry)} → ${r.status === "OPEN" ? fmtPx(r.last) + " 보유 중" : fmtPx(r.exit_price) + " " + r.exit_reason}`
       + ` · 최고 ${fmtPct((r.high / r.entry - 1) * 100, 0)}${r.high_at && r.high > r.entry ? ` (${untilS(r.opened, r.high_at)})` : ""}`
       + ` 최저 ${fmtPct((r.low / r.entry - 1) * 100, 0)} · ${kst(r.opened)} ${SESS_SHORT[r.session] || ""}`);
     row.append(l1, l2);

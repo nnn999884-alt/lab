@@ -398,7 +398,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/shorts": lambda: d.shorts(),
             "/api/events": lambda: d.events(n("limit", 40)),
             "/api/vsignals": lambda: d.m("SELECT v.*, (SELECT name FROM universe u WHERE u.symbol=v.symbol ORDER BY snapshot_date DESC LIMIT 1) AS name "
-                                        "FROM vsignals v ORDER BY (status='OPEN') DESC, opened DESC LIMIT ?", (n("limit", 100),)),
+                                        "FROM vsignals v WHERE status != 'EXPIRED' ORDER BY (status='OPEN') DESC, opened DESC LIMIT ?", (n("limit", 100),)),
             "/api/daily": lambda: d.daily(qs.get("s", "")[:12], n("n", 90)),
             "/api/precursor": lambda: __import__("pennybot.precursor", fromlist=["ranked"]).ranked(d.market_db, n("limit", 80)),
             "/api/symbol": lambda: d.symbol(qs.get("s", "")[:12]),

@@ -165,29 +165,26 @@ def money_at(bars: list[tuple], k: int, prev_close: float, shares: float | None)
     return (bars[k][4] / prev_close - 1) * 100 >= 5 and (d3 >= MONEY_3M or TURN_3M <= turn3 <= MAX_TURNOVER)
 
 
-def wave_breaks(bars: list[tuple], prev_close: float, shares: float | None, dip: float = 20.0) -> list[dict]:
-    """2차·3차 파동 매수 지점: 거래대금이 처음 터진 뒤 고점에서 dip% 이상 눌렸다가 그 고점을 다시 넘는 봉.
-    급등 후보 날 1,919일(결과 모르고 고름)로 매수 시점 12가지를 비교했을 때 앞·뒤 기간 모두 손해가 아니었던 유일한 방식
-    (터지자마자 사기·눌림 반등·10~30분 대기는 모두 손해). → [{k, high, low, depth}] 시간순."""
+def limit_plan(bars: list[tuple], prev_close: float, shares: float | None, dip: float = 20.0, minutes: int = 60) -> dict | None:
+    """1분 거래가 처음 터진 분(전날 대비 +5%↑ 이고 1분 회전율 0.5%+ 또는 1분 거래대금 $5만+) → 그 종가 −dip% 지정가,
+    minutes 분 안에 저가가 닿으면 체결 (지정가, 그 분 시가가 더 낮으면 시가).
+    급등 후보 날 1,919일(결과 모르고 고름)에서 지정가보다 2% 더 내려가야 체결로 치는 엄격한 가정으로도
+    −20% 지정가 · 익절 +15% · 손절 −35% 가 앞·뒤 기간 모두 1건당 +3.4% (승률 65%, 신호 476번 중 62번 체결).
+    추격(터지자마자·2차 파동 돌파·10~30분 대기)은 모두 손해이거나 거의 본전. 체결 직전 거래대금 유지 조건은 도움 안 됨.
+    → {trig_k, trig_px, limit, until_k, fill_k, fill_px} 또는 신호 없으면 None."""
     if not bars or not prev_close:
-        return []
-    trig = next((k for k in range(len(bars)) if money_at(bars, k, prev_close, shares)), None)
-    if trig is None:
-        return []
-    out, hi, lo, dipped = [], bars[trig][2], None, False
-    for k in range(trig + 1, len(bars)):
-        h, l = bars[k][2], bars[k][3]
-        if not dipped:
-            if h > hi:
-                hi = h
-            elif l <= hi * (1 - dip / 100):
-                dipped, lo = True, l
-        else:
-            lo = min(lo, l)
-            if h > hi:                                   # 눌렸던 고점을 다시 넘음 → 매수 지점, 새 파동 시작
-                out.append({"k": k, "high": hi, "low": lo, "depth": (lo / hi - 1) * 100})
-                hi, dipped = h, False
-    return out
+        return None
+    t = next((k for k, b in enumerate(bars) if (b[4] / prev_close - 1) * 100 >= 5
+              and (b[4] * b[5] >= 5e4 or (shares and 0.5 <= b[5] / shares * 100 <= MAX_TURNOVER))), None)
+    if t is None:
+        return None
+    lim = bars[t][4] * (1 - dip / 100)
+    p = {"trig_k": t, "trig_px": bars[t][4], "limit": lim, "until_k": t + minutes, "fill_k": None, "fill_px": None}
+    for k in range(t + 1, min(len(bars), t + minutes + 1)):
+        if bars[k][3] <= lim:
+            p["fill_k"], p["fill_px"] = k, min(bars[k][1], lim)
+            break
+    return p
 
 
 def ask_depth(ob: dict, price: float, pct: float = 10.0) -> float | None:
@@ -395,16 +392,25 @@ def vsignal_text(kind: str, sym: str, name: str | None, v: dict, cfg, session_ko
     from datetime import datetime
     from .trading.messages import pct, px
     head = f"({sym}" + (f" · {name}" if name else "") + ")"
+    if kind == "order":
+        e = v["entry"]
+        return "\n".join([
+            f"🧪 가상 지정가 주문 {head}",
+            "──────────────",
+            f"🧾 {px(e)} 에 매수 대기 (신호가 −{cfg.vsignal_dip:g}%) · {cfg.vsignal_order_minutes}분 유효 · {session_ko} · 실제 주문 아님",
+            f"근거: {v['reason']}",
+            "한줄 판단: 거래가 터졌습니다. 첫 턴은 털리는 경우가 많아 추격하지 않고 눌림에 겁니다.",
+        ])
     if kind == "buy":
         e = v["entry"]
         return "\n".join([
-            f"🧪 가상 매수 {head}",
+            f"🧪 가상 매수 체결 {head}",
             "──────────────",
             f"💵 {px(e)} · {session_ko} · 실제 주문 아님",
             f"🎯 익절 {px(e * (1 + cfg.vsignal_take_profit / 100))} (+{cfg.vsignal_take_profit:g}%)"
             f" · 🛑 손절 {px(e * (1 - cfg.vsignal_stop / 100))} (−{cfg.vsignal_stop:g}%) · 정규장 마감에 정리",
             f"근거: {v['reason']}",
-            "한줄 판단: 첫 턴에 털린 뒤 고점을 다시 넘었습니다 (2차 파동). 다시 −40% 넘게 빠지면 끝난 경우가 많습니다.",
+            "한줄 판단: 신호가에서 크게 눌린 자리에 체결됐습니다. 손절은 넓게(−35%), 익절은 짧게 잡습니다.",
         ])
     ret = (v["exit_price"] / v["entry"] - 1) * 100
     held = datetime.fromisoformat(v["closed"]) - datetime.fromisoformat(v["opened"])

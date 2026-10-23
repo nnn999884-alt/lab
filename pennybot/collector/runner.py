@@ -596,7 +596,7 @@ class Collector:
 
     def poll_precursor_live(self, now: datetime, trade_date, session: str) -> None:
         """일봉 점수 높은 종목의 오늘 1분봉 → 거래 깨어남·슬금슬금 상승. 둘 다 켜지면 알림 (종목당 하루 한 번)."""
-        from ..precursor import TIER_LABEL, alert_buttons, alert_text, ask_depth, live, tier, wave_breaks
+        from ..precursor import TIER_LABEL, alert_buttons, alert_text, ask_depth, live, tier
         from ..trading.strategies import SESSION_KO
         d0 = self.store.query("SELECT MAX(d0) FROM precursor_daily")
         if not d0 or not d0[0][0]:
@@ -667,42 +667,58 @@ class Collector:
                                               + (json.loads(tg[0][0]) if tg else []) + pats),
                                    buttons=alert_buttons(sym, link))
                 log.info("급등 전조 알림 %s (%s)", sym, ", ".join(lv["signals"]))
-            if self.cfg.vsignal and session != AFTER:      # 가상 매수는 알림과 따로: 2차·3차 파동 돌파 순간만
-                brk = wave_breaks(today, close, shares.get(sym), self.cfg.vsignal_dip)
-                if brk and brk[-1]["k"] >= len(today) - 2:  # 방금(최근 2분 안) 돌파한 것만
-                    self._vbuy(now, d0, sym, score, close, lv, session, len(brk), brk[-1])
+            if self.cfg.vsignal and session != AFTER:      # 가상 매매는 알림과 따로: 1분 거래 터짐 → 아래 지정가
+                self._vlimit(now, d0, sym, score, close, today, shares.get(sym), session)
             if fire:
                 self._event(now, sym, "precursor", f"🔥 {sym} 급등 전조 발동 ({score}점 · 1시간 거래량 "
                             f"{lv['metrics'].get('vol_x', 0):.1f}배 · {lv['metrics'].get('chg', 0):+.1f}%)", lv["metrics"].get("chg"))
         self.store.put_precursor_live(out)
 
     # ---------- 가상 매수·매도 (알림만, 실제 주문 없음) ----------
-    def _vbuy(self, now, d0, sym, score, prev_close, lv, session, wave: int, brk: dict) -> None:
-        """wave 번째 돌파(1 = 2차 파동). 같은 날 같은 종목은 파동마다 한 번, 보유 중이면 안 삼."""
+    def _vlimit(self, now, d0, sym, score, prev_close, today, shares, session) -> None:
+        """종목당 하루 한 번: 신호 → 가상 지정가 주문(ORDER) → 닿으면 체결(OPEN). 방금(최근 3분) 일어난 것만 처리."""
+        from ..precursor import limit_plan
+        p = limit_plan(today, prev_close, shares, self.cfg.vsignal_dip, self.cfg.vsignal_order_minutes)
+        if not p:
+            return
+        fresh = lambda k: k is not None and k >= len(today) - 3
+        cur = self.store.query("SELECT id, status FROM vsignals WHERE symbol=? AND d0=? ORDER BY id DESC LIMIT 1", (sym, d0))
+        if not cur:
+            if not fresh(p["trig_k"]) and not fresh(p["fill_k"]):
+                return                                   # 수집기가 늦게 켜져 이미 지난 신호
+            if self.store.query("SELECT 1 FROM vsignals WHERE symbol=? AND status IN ('OPEN','ORDER')", (sym,)):
+                return
+            b = today[p["trig_k"]]
+            turn = f" · 1분 회전율 {b[5] / shares * 100:.1f}%" if shares else ""
+            reason = (f"1분 거래대금 ${b[4] * b[5] / 1e3:.0f}K{turn} · 신호가 {b[4]:.4g} (전날 대비 {(b[4] / prev_close - 1) * 100:+.0f}%)"
+                      f" → −{self.cfg.vsignal_dip:g}% 지정가 · 전조 {score}점")
+            with self.store.db:
+                c = self.store.db.execute(
+                    "INSERT INTO vsignals (symbol, d0, opened, session, entry, score, reason, status, high, low, last) "
+                    "VALUES (?,?,?,?,?,?,?, 'ORDER', ?, ?, ?)", (sym, d0, b[0], session, p["limit"], score, reason,
+                                                               p["limit"], p["limit"], b[4]))
+            self._vnotify("order", c.lastrowid, session)
+            cur = [(c.lastrowid, "ORDER")]
+        vid, status = cur[0]
+        if status == "ORDER" and p["fill_k"] is not None:
+            f = today[p["fill_k"]]
+            with self.store.db:
+                self.store.db.execute("UPDATE vsignals SET status='OPEN', opened=?, entry=?, high=?, low=?, last=? WHERE id=?",
+                                      (f[0], p["fill_px"], p["fill_px"], min(f[3], p["fill_px"]), f[4], vid))
+            self._vnotify("buy", vid, session)
+
+    def _vnotify(self, kind: str, vid: int, session: str) -> None:
         from ..precursor import vsignal_text
         from ..trading.strategies import SESSION_KO
-        m = lv["metrics"]
-        price, chg = m.get("price"), m.get("chg") or 0
-        if not price:
+        v = self._vrow(self.store.query("SELECT * FROM vsignals WHERE id=?", (vid,))[0])
+        log.info("가상 %s %s $%.4g (%s)", "지정가 주문" if kind == "order" else "매수 체결", v["symbol"], v["entry"], v["reason"])
+        if not self.notifier:
             return
-        if self.store.query("SELECT 1 FROM vsignals WHERE symbol=? AND status='OPEN'", (sym,)):
-            return                                       # 보유 중
-        if self.store.query("SELECT COUNT(*) FROM vsignals WHERE symbol=? AND d0=?", (sym, d0))[0][0] >= wave:
-            return                                       # 이 파동은 이미 삼
-        reason = (f"{wave + 1}차 파동: 고점 {brk['high']:.4g}에서 {brk['depth']:.0f}% 눌린 뒤 다시 돌파 · 전날 대비 {chg:+.1f}%"
-                  f" · 3분 거래대금 ${m.get('dollar_3m', 0) / 1e3:.0f}K · 전조 {score}점")
-        with self.store.db:
-            cur = self.store.db.execute(
-                "INSERT INTO vsignals (symbol, d0, opened, session, entry, score, reason, status, high, low, last) "
-                "VALUES (?,?,?,?,?,?,?, 'OPEN', ?, ?, ?)", (sym, d0, iso(now), session, price, score, reason, price, price, price))
-        row = self.store.query("SELECT * FROM vsignals WHERE id=?", (cur.lastrowid,))
-        if self.notifier:
-            link = self.link() if self.link else None
-            name = (self.universe.get(sym) or {}).get("name")
-            self.notifier.send(vsignal_text("buy", sym, name, self._vrow(row[0]), self.cfg, SESSION_KO.get(session, session)),
-                               buttons=[[*([{"text": "📊 대시보드", "url": f"{link}/?s={sym}"}] if link else []),
-                                         {"text": f"📋 {sym} 복사", "copy_text": {"text": sym}}]])
-        log.info("가상 매수 %s $%.4g (%s)", sym, price, reason)
+        link = self.link() if self.link else None
+        name = (self.universe.get(v["symbol"]) or {}).get("name")
+        self.notifier.send(vsignal_text(kind, v["symbol"], name, v, self.cfg, SESSION_KO.get(session, session)),
+                           buttons=[[*([{"text": "📊 대시보드", "url": f"{link}/?s={v['symbol']}"}] if link else []),
+                                     {"text": f"📋 {v['symbol']} 복사", "copy_text": {"text": v["symbol"]}}]])
 
     @staticmethod
     def _vrow(r) -> dict:
@@ -714,6 +730,10 @@ class Collector:
         """보유 중 가상 포지션: 1분 현재가로 익절·손절·기간 만료 → 가상 매도 알림."""
         from ..precursor import vsignal_text
         from ..trading.strategies import SESSION_KO
+        with self.store.db:                              # 안 닿은 지정가 주문은 유효 시간이 지나면 취소
+            for vid, opened in self.store.query("SELECT id, opened FROM vsignals WHERE status='ORDER'"):
+                if now - datetime.fromisoformat(opened) >= timedelta(minutes=self.cfg.vsignal_order_minutes) or session == AFTER:
+                    self.store.db.execute("UPDATE vsignals SET status='EXPIRED', closed=? WHERE id=?", (iso(now), vid))
         rows = [self._vrow(r) for r in self.store.query("SELECT * FROM vsignals WHERE status='OPEN'")]
         for v in rows:
             last = (self.universe.get(v["symbol"]) or {}).get("last")

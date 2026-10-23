@@ -24,53 +24,66 @@ def make(tmp_path):
     return col, st, sent
 
 
-BRK = {"k": 80, "high": 1.0, "low": 0.75, "depth": -25.0}
+T0 = datetime(2026, 10, 23, 8, 0, tzinfo=timezone.utc)
 
 
-def test_virtual_buy_then_take_profit(tmp_path):
+def bars_of(px, vol=100000.0):
+    return [((T0 + timedelta(minutes=k)).isoformat(), p, p, p, p, vol) for k, p in enumerate(px)]
+
+
+def test_limit_plan():
+    from pennybot.precursor import limit_plan
+    px = [0.9] * 3 + [1.0, 1.10, 0.95, 0.85, 0.79, 0.9]                  # 전날 0.9 → 1.0 (+11%, 1분 $10만) 신호
+    p = limit_plan(bars_of(px), 0.9, None, 20, 60)
+    assert p["trig_k"] == 3 and round(p["limit"], 2) == 0.80 and p["fill_k"] == 7 and round(p["fill_px"], 2) == 0.79
+    assert limit_plan(bars_of(px, vol=1000.0), 0.9, None) is None          # 1분 $1천 → 신호 없음
+    assert limit_plan(bars_of(px, vol=1000.0), 0.9, 1e5)["trig_k"] == 3   # 1분 회전율 1% → 신호
+    assert limit_plan(bars_of(px[:7]), 0.9, None)["fill_k"] is None         # 아직 안 닿음
+
+
+def test_virtual_limit_order_fill_and_take_profit(tmp_path):
     col, st, sent = make(tmp_path)
-    now = datetime(2026, 10, 23, 1, 0, tzinfo=timezone.utc)
-    lv = {"metrics": {"price": 1.0, "chg": 25.0, "vol_x": 6.0, "ret60": 4.0, "dollar_3m": 8e4}}
-    col._vbuy(now, "2026-10-22", "PENX", 9, 0.8, lv, "DAY", 1, BRK)
-    col._vbuy(now, "2026-10-22", "PENX", 9, 0.8, lv, "DAY", 1, BRK)      # 보유 중 → 중복 안 함
-    assert st.query("SELECT COUNT(*) FROM vsignals")[0][0] == 1
-    assert sent.msgs[0][0].startswith("🧪 가상 매수 (PENX · 펜엑스)") and "익절 $1.20" in sent.msgs[0][0]
-    assert "2차 파동: 고점 1에서 -25% 눌린 뒤 다시 돌파" in sent.msgs[0][0]
-    col.universe["PENX"]["last"] = 0.8                                    # −20%: 아직 보유 (손절 −35%)
-    col.check_vsignals(now + timedelta(minutes=1), "DAY")
-    assert st.query("SELECT status, low FROM vsignals")[0] == ("OPEN", 0.8)
-    col.universe["PENX"]["last"] = 1.21                                   # +21% → 익절
-    col.check_vsignals(now + timedelta(hours=5), "PRE")
-    status, reason, hi = st.query("SELECT status, exit_reason, high FROM vsignals")[0]
-    assert status == "CLOSED" and reason == "익절 +20%" and hi == 1.21
+    px = [0.9] * 3 + [1.0, 1.10]
+    col._vlimit(T0, "2026-10-22", "PENX", 9, 0.9, bars_of(px), None, "PRE")
+    assert st.query("SELECT status, round(entry, 2) FROM vsignals")[0] == ("ORDER", 0.8)
+    assert sent.msgs[-1][0].startswith("🧪 가상 지정가 주문 (PENX · 펜엑스)") and "$0.8000 에 매수 대기" in sent.msgs[-1][0]
+    col._vlimit(T0, "2026-10-22", "PENX", 9, 0.9, bars_of(px + [0.95]), None, "PRE")   # 안 닿음 → 그대로
+    assert st.query("SELECT status FROM vsignals")[0][0] == "ORDER" and len(sent.msgs) == 1
+    px += [0.95, 0.85, 0.78]
+    col._vlimit(T0, "2026-10-22", "PENX", 9, 0.9, bars_of(px), None, "PRE")             # 0.78 → 지정가 0.80 체결 (시가 0.78)
+    assert st.query("SELECT status, round(entry, 2) FROM vsignals")[0] == ("OPEN", 0.78)
+    assert sent.msgs[-1][0].startswith("🧪 가상 매수 체결 (PENX · 펜엑스)") and "익절 $0.8970" in sent.msgs[-1][0]
+    col.universe["PENX"]["last"] = 0.6                                    # −23%: 아직 보유 (손절 −35%)
+    col.check_vsignals(T0 + timedelta(minutes=10), "PRE")
+    assert st.query("SELECT status FROM vsignals")[0][0] == "OPEN"
+    col.universe["PENX"]["last"] = 0.90                                   # +15.4% → 익절
+    col.check_vsignals(T0 + timedelta(hours=2), "PRE")
+    status, reason = st.query("SELECT status, exit_reason FROM vsignals")[0]
+    assert status == "CLOSED" and reason == "익절 +15%"
     text = sent.msgs[-1][0]
-    assert text.startswith("🔵 가상 매도 (PENX · 펜엑스) · 익절 +20%") and "최저 −20.0%" in text
-    assert "최고 +21.0% (매수 5시간 0분 뒤)" in text
-    col._vbuy(now, "2026-10-22", "PENX", 9, 0.8, lv, "PRE", 1, BRK)      # 같은 파동 → 다시 안 삼
+    assert text.startswith("🔵 가상 매도 (PENX · 펜엑스) · 익절 +15%") and "최고 +15.4% (매수 1시간 53분 뒤)" in text
+    col._vlimit(T0, "2026-10-22", "PENX", 9, 0.9, bars_of(px), None, "PRE")             # 하루 한 번
     assert st.query("SELECT COUNT(*) FROM vsignals")[0][0] == 1
-    col._vbuy(now, "2026-10-22", "PENX", 9, 0.8, lv, "PRE", 2, BRK)      # 3차 파동 → 다시 삼
-    assert st.query("SELECT COUNT(*) FROM vsignals")[0][0] == 2
+
+
+def test_virtual_order_expires_and_late_signal_ignored(tmp_path):
+    col, st, sent = make(tmp_path)
+    px = [0.9] * 3 + [1.0, 1.10]
+    col._vlimit(T0, "2026-10-22", "PENX", 9, 0.9, bars_of(px), None, "PRE")
+    col.check_vsignals(T0 + timedelta(minutes=64), "PRE")                # 신호(08:03) + 60분 지남
+    assert st.query("SELECT status FROM vsignals")[0][0] == "EXPIRED"
+    col2, st2, _ = make(tmp_path / "b")
+    col2._vlimit(T0, "2026-10-22", "PENX", 9, 0.9, bars_of(px + [1.1] * 10), None, "PRE")   # 신호가 10분 전 → 무시
+    assert st2.query("SELECT COUNT(*) FROM vsignals")[0][0] == 0
 
 
 def test_virtual_position_closes_after_regular(tmp_path):
     col, st, sent = make(tmp_path)
-    now = datetime(2026, 10, 23, 14, 0, tzinfo=timezone.utc)
-    col._vbuy(now, "2026-10-22", "PENX", 9, 0.8, {"metrics": {"price": 1.0, "chg": 25.0}}, "REGULAR", 1, BRK)
-    col.universe["PENX"]["last"] = 1.05
-    col.check_vsignals(now + timedelta(hours=6), "AFTER")
+    px = [0.9] * 3 + [1.0, 1.10, 0.95, 0.78]
+    col._vlimit(T0, "2026-10-22", "PENX", 9, 0.9, bars_of(px), None, "REGULAR")
+    col.universe["PENX"]["last"] = 0.82
+    col.check_vsignals(T0 + timedelta(hours=6), "AFTER")
     assert st.query("SELECT status, exit_reason FROM vsignals")[0] == ("CLOSED", "정규장 마감 정리")
-
-
-def test_wave_breaks():
-    from pennybot.precursor import wave_breaks
-    t = lambda k: f"2026-10-23T08:{k:02d}:00+00:00"
-    px = [1.0] * 5 + [1.06, 1.10, 1.30, 1.40] + [1.25, 1.10, 1.05] + [1.20, 1.38] + [1.45, 1.50] + [1.10] + [1.55]
-    bars = [(t(k), p, p, p, p, 100000.0) for k, p in enumerate(px)]
-    br = wave_breaks(bars, 1.0, None, 20)
-    # 1.40 고점 → 1.05 (−25%) → 1.45 에서 돌파 / 1.50 고점 → 1.10 (−27%) → 1.55 에서 돌파
-    assert [(b["k"], b["high"]) for b in br] == [(14, 1.40), (17, 1.50)]
-    assert round(br[0]["depth"]) == -25
-    assert wave_breaks(bars[:14], 1.0, None, 20) == []                    # 아직 고점 못 넘음
 
 
 def test_daily_list_text(tmp_path):
