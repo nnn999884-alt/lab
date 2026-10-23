@@ -34,7 +34,11 @@ def times(v: float | None) -> str:
     if v is None:
         return "-"
     return "100배+" if v >= 100 else f"{v:.1f}배"
-LIVE_LABELS = {"wake": "거래 급증", "creep": "매수세 유입", "up10": "+10% 돌파"}
+LIVE_LABELS = {"wake": "거래 급증", "creep": "매수세 유입", "up10": "+10% 돌파", "money": "거래대금 터짐"}
+# '거래대금 터짐': 3분 거래대금 $5만+ 또는 3분 회전율 0.5%+ (전날 대비 +5% 이상일 때). 캐시된 1분봉 3,951일 비교:
+#   +10% 돌파보다 헛알림이 적고(그날 +200% 비율 8.8% → 11.4%), 그날 +200% 300건 중 292건에 켜짐 (켜질 때 중앙값 +39%).
+MONEY_3M = 5e4
+TURN_3M = 0.5
 
 # 급등 후보 등급 — 최근 200일 일봉 검증 (다음 날 장중 +200% 간 비율, 아무것도 안 거르면 0.08%, +200% 전체 197건).
 # 특징 24개를 하나씩·조합으로 보고, 앞 70% 기간에서 고른 조합이 뒤 30% 기간에도 유지되는지 확인했다.
@@ -114,7 +118,7 @@ def daily(bars: list[tuple]) -> dict | None:
                         "box10": box10, "updown20": up_v / dn_v if dn_v else None}}
 
 
-def live(minute_bars: list[tuple], prev_close: float, now: datetime | None = None) -> dict:
+def live(minute_bars: list[tuple], prev_close: float, now: datetime | None = None, shares: float | None = None) -> dict:
     """minute_bars: [(ts_iso, o, h, l, c, v)] 시간순 (오늘 세션들). → {'signals': [...], 'metrics': {...}}"""
     out = {"signals": [], "metrics": {}}
     if not minute_bars or not prev_close:
@@ -146,8 +150,19 @@ def live(minute_bars: list[tuple], prev_close: float, now: datetime | None = Non
         out["signals"].append("creep")
     if m["chg"] >= 10:
         out["signals"].append("up10")
+    turn3 = m["vol_3m"] / shares * 100 if shares else 0
+    if m["chg"] >= 5 and (m["dollar_3m"] >= MONEY_3M or TURN_3M <= turn3 <= MAX_TURNOVER):
+        out["signals"].append("money")
     out["metrics"] = m
     return out
+
+
+def ask_depth(ob: dict, price: float, pct: float = 10.0) -> float | None:
+    """호가창 매도 쪽: 현재가 ~ +pct% 안에 걸린 물량의 달러 합 (작을수록 얇다 = 조금만 사도 잘 오른다)."""
+    asks = (ob or {}).get("asks") or []
+    if not asks or not price:
+        return None
+    return sum(float(a["price"]) * float(a["volume"]) for a in asks if float(a["price"]) <= price * (1 + pct / 100))
 
 
 def judge(m: dict, dm: dict) -> dict:
@@ -188,6 +203,10 @@ def alert_text(sym: str, name: str | None, day: dict, lv: dict, session_ko: str,
         f"거래 흐름: {j['flow']} (1시간 거래량 {m.get('vol_x', 0):.1f}배 · 오늘 {money_s(m.get('dollar_today'))})",
         *( [f"회전율: 오늘 {m.get('vol_today', 0) / shares * 100:.1f}% · 3분 {m.get('vol_3m', 0) / shares * 100:.2f}% (발행 {shares / 1e6:.1f}M주)"]
            if shares and m.get('vol_today', 0) / shares * 100 <= MAX_TURNOVER else [] ),
+        *( [f"호가: 매도 +10% 안 {money_s(m['ask10'])}"
+             + (f" · 3분 거래대금 {money_s(m.get('dollar_3m'))} → {'얇음 ✅' if m['ask10'] < (m.get('dollar_3m') or 0) else '두꺼움'}")]
+           if m.get("ask10") is not None else [] ),
+        f"3분 거래: {money_s(m.get('dollar_3m'))} · {m.get('vol_3m', 0):,.0f}주",
         f"변동성 위험: {j['risk']} (하루 변동폭 {dm.get('range30') or 0:.0f}%)",
         f"한줄 판단: {j['verdict']}",
         "",

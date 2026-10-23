@@ -596,7 +596,7 @@ class Collector:
 
     def poll_precursor_live(self, now: datetime, trade_date, session: str) -> None:
         """일봉 점수 높은 종목의 오늘 1분봉 → 거래 깨어남·슬금슬금 상승. 둘 다 켜지면 알림 (종목당 하루 한 번)."""
-        from ..precursor import TIER_LABEL, alert_buttons, alert_text, live, tier
+        from ..precursor import TIER_LABEL, alert_buttons, alert_text, ask_depth, live, tier
         from ..trading.strategies import SESSION_KO
         d0 = self.store.query("SELECT MAX(d0) FROM precursor_daily")
         if not d0 or not d0[0][0]:
@@ -631,16 +631,21 @@ class Collector:
             bars = sorted((iso(datetime.fromisoformat(cd["timestamp"].replace("Z", "+00:00"))), float(cd["openPrice"]),
                            float(cd["highPrice"]), float(cd["lowPrice"]), float(cd["closePrice"]), float(cd["volume"]))
                           for cd in cs)
-            lv = live([b for b in bars if b[0] >= start], close, now)
+            lv = live([b for b in bars if b[0] >= start], close, now, shares.get(sym))
             lv["metrics"]["session"] = session
             on = set(lv["signals"])
             if tiers[sym]:
-                cond = bool(on & {"wake", "up10"})       # 급등 후보: 하나만 켜져도
+                cond = bool(on & {"wake", "money"})      # 급등 후보: 거래 급증이나 거래대금 터짐 하나만 켜져도
             elif sym in ranked_in:
-                cond = {"wake", "up10"} <= on            # 랭킹 진입: 이미 움직이는 종목이라 거래 급증 + +10% 둘 다
+                cond = {"wake", "money"} <= on           # 랭킹 진입: 이미 움직이는 종목이라 둘 다
             else:
-                cond = {"wake", "creep"} <= on
+                cond = {"wake", "creep"} <= on or {"wake", "money"} <= on
             fire = cond and sym not in prev_alert
+            if fire:
+                try:                                     # 호가창 두께 (알림 때만 조회)
+                    lv["metrics"]["ask10"] = ask_depth(self.c.orderbook(sym), lv["metrics"].get("price"))
+                except Exception as e:
+                    log.debug("호가 실패 %s: %s", sym, e)
             out.append({"d0": d0, "symbol": sym, "ts": iso(now), "signals": json.dumps(lv["signals"]),
                         "metrics": json.dumps(lv["metrics"]), "alerted": iso(now) if fire else prev_alert.get(sym)})
             if fire and self.notifier:
@@ -657,6 +662,7 @@ class Collector:
                                               SESSION_KO.get(session, session), link, now,
                                               shares=sh[0][0] if sh and sh[0][0] else None,
                                               tags=([TIER_LABEL[tiers[sym]]] if tiers[sym] else []) + (["랭킹 진입"] if sym in ranked_in else [])
+                                              + (["호가 얇음"] if (lv["metrics"].get("ask10") or 9e18) < (lv["metrics"].get("dollar_3m") or 0) else [])
                                               + (json.loads(tg[0][0]) if tg else []) + pats),
                                    buttons=alert_buttons(sym, link))
                 log.info("급등 전조 알림 %s (%s)", sym, ", ".join(lv["signals"]))

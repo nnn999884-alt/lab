@@ -1142,7 +1142,7 @@ function drawPre() {
   const vr = v => v == null ? null : v >= 100 ? "100배+" : v.toFixed(1) + "배";
   const turn = v => v == null || v > 1000 ? null : (v >= 10 ? Math.round(v) : v >= 1 ? v.toFixed(1) : v.toFixed(2)) + "%";
   rows.slice(0, preShown).forEach(x => {
-    const hot = x.live.includes("wake") && x.live.includes("creep");
+    const hot = x.live.includes("wake") && (x.live.includes("creep") || x.live.includes("money"));
     const open = preOpen.has(x.symbol);
     const c = document.createElement("div");
     c.className = "pre-card" + (hot ? " hot" : x.live.length ? " warm" : "");

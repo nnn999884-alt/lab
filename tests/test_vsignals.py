@@ -85,3 +85,24 @@ def test_daily_list_puts_picks_first(tmp_path):
     text = daily_list_text(str(tmp_path / "m.db"), 5)
     assert "🎯 급등 후보 1종목 (★★★ 0 · ★★ 1)" in text
     assert text.index("1. PICK") < text.index("2. HIGH") and "PICK  · ★★" in text
+
+
+def test_live_money_signal_and_ask_depth():
+    from datetime import datetime, timedelta, timezone
+    from pennybot.precursor import alert_text, ask_depth, live
+    t0 = datetime(2026, 10, 23, 8, 0, tzinfo=timezone.utc)
+    bars = [((t0 + timedelta(minutes=k)).isoformat(), 1.0, 1.0, 1.0, 1.0, 100.0) for k in range(60)]
+    bars += [((t0 + timedelta(minutes=60 + k)).isoformat(), 1.06, 1.08, 1.05, 1.07, 20000.0) for k in range(3)]
+    now = t0 + timedelta(minutes=62)
+    assert "money" in live(bars, 1.0, now)["signals"]                       # 3분 $6.4만 · +7%
+    small = [b[:5] + (2000.0,) for b in bars]
+    assert "money" not in live(small, 1.0, now)["signals"]                  # $6.4천
+    assert "money" in live(small, 1.0, now, shares=1e6)["signals"]          # 3분 회전율 0.6%
+    assert "money" not in live(bars, 1.06, now)["signals"]                  # +1% → 안 켜짐
+    ob = {"asks": [{"price": "1.08", "volume": "10000"}, {"price": "1.30", "volume": "99999"}]}
+    assert ask_depth(ob, 1.07) == 10800.0                                   # +10% 밖 호가는 뺀다
+    lv = live(bars, 1.0, now)
+    lv["metrics"]["ask10"] = 10800.0
+    text = alert_text("PENX", None, {"score": 7, "signals": [], "metrics": {"dd60": -80, "spikes60": 1, "vol_ratio": 5}},
+                      lv, "프리마켓")
+    assert "호가: 매도 +10% 안" in text and "얇음 ✅" in text
