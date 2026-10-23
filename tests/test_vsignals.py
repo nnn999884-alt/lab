@@ -223,9 +223,9 @@ def test_hold_strategies():
     assert plan(thin, 0.9, None, STRATEGIES["S5"]) is None
     s6 = plan(bars, 0.9, None, STRATEGIES["S6"])                          # 4분 뒤(k=7) 1.12 지정가 → 다음 분 1.10 체결
     assert s6["fill_k"] == 8 and abs(s6["fill_px"] - 1.10) < 1e-9
-    up = bars_of(px[:8] + [1.35])                                         # 그 다음 분 고점 1.30 돌파 → 시장가
+    up = bars_of(px[:8] + [1.35])                                         # 그 다음 분 고점 1.30 돌파 → 시장가 (시가 1.35)
     s6b = plan(up, 0.9, None, STRATEGIES["S6"])
-    assert s6b["fill_k"] == 8 and abs(s6b["fill_px"] - 1.30 * 1.005) < 1e-9
+    assert s6b["fill_k"] == 8 and abs(s6b["fill_px"] - 1.35 * 1.005) < 1e-9
     flat = bars_of(px[:8] + [1.15, 1.16, 1.15])                           # 3분 동안 안 닿음 → 취소
     assert plan(flat, 0.9, None, STRATEGIES["S6"]) is None
 
