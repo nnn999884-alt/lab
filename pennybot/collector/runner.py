@@ -92,8 +92,13 @@ class Collector:
             fn(*args)
         except TossApiError as e:
             log.warning("%s 실패: %s", name, e)
-        except Exception:
-            log.exception("%s 실패", name)
+        except (ConnectionError, TimeoutError, OSError) as e:      # SEC·FINRA 등 일시적인 네트워크 오류: 다음 주기에 다시
+            log.warning("%s 실패 (네트워크): %s", name, str(e)[:160])
+        except Exception as e:
+            if type(e).__module__.startswith(("requests", "urllib3")):
+                log.warning("%s 실패 (네트워크): %s", name, str(e)[:160])
+            else:
+                log.exception("%s 실패", name)
 
     def tick(self) -> None:
         now = self.clock()
@@ -116,6 +121,8 @@ class Collector:
                 self._run("summary", self.summarize, prev_date.isoformat())
             if prev_session == REGULAR and session == AFTER and c.archive_1m:
                 self._run("archive", self.start_archive, trade_date)
+            if prev_session == AFTER and c.vsignal:              # 애프터장이 끝나면 남은 가상 포지션 정리
+                self._run("vsignals_eod", self.check_vsignals, now, session, True)
         self._last_session = cur
 
         if self.edgar and self._due("edgar", now, timedelta(minutes=c.edgar_poll_minutes)):
@@ -633,7 +640,8 @@ class Collector:
 
     def poll_precursor_live(self, now: datetime, trade_date, session: str) -> None:
         """일봉 점수 높은 종목의 오늘 1분봉 → 거래 깨어남·슬금슬금 상승. 둘 다 켜지면 알림 (종목당 하루 한 번)."""
-        from ..precursor import TIER_LABEL, alert_buttons, alert_text, ask_depth, live, tier
+        from ..precursor import TIER_LABEL, alert_buttons, alert_grade, alert_text, ask_depth, live, tier
+        from ..vstrat import in_hours, signal_k
         from ..trading.strategies import SESSION_KO
         d0 = self.store.query("SELECT MAX(d0) FROM precursor_daily")
         if not d0 or not d0[0][0]:
@@ -671,14 +679,15 @@ class Collector:
             today = [b for b in bars if b[0] >= start]
             lv = live(today, close, now, shares.get(sym))
             lv["metrics"]["session"] = session
-            on = set(lv["signals"])
-            if tiers[sym]:
-                cond = bool(on & {"wake", "money"})      # 급등 후보: 거래 급증이나 거래대금 터짐 하나만 켜져도
-            elif sym in ranked_in:
-                cond = {"wake", "money"} <= on           # 랭킹 진입: 이미 움직이는 종목이라 둘 다
-            else:
-                cond = {"wake", "creep"} <= on or {"wake", "money"} <= on
-            fire = cond and sym not in prev_alert
+            # 알림 = 1분 거래(회전율 0.5%+ 또는 $5만+, +5%↑)가 처음 터진 그 분 (최근 3분 안 — 재시작 직후 지난 신호로 몰려 오지 않게).
+            # 정규장에 처음 터진 건 거의 안 이어져서(10/23 정규장 알림 65건 중 의미 있게 움직인 것 2건) 알림 없이 기록만.
+            k = signal_k(today, close, shares.get(sym))
+            burst = k is not None and k >= len(today) - 3
+            if burst:
+                lv["signals"].append("burst")
+                lv["metrics"]["grade"], lv["metrics"]["grade_why"] = alert_grade(
+                    today[k][0], tiers[sym], close, json.loads(met or "{}").get("vol_ratio"))
+            fire = burst and in_hours(today[k][0], "pre") and sym not in prev_alert
             if fire:
                 try:                                     # 호가창 두께 (알림 때만 조회)
                     lv["metrics"]["ask10"] = ask_depth(self.c.orderbook(sym), lv["metrics"].get("price"))
@@ -699,7 +708,9 @@ class Collector:
                 self.notifier.send(alert_text(sym, (self.universe.get(sym) or {}).get("name"), day, lv,
                                               SESSION_KO.get(session, session), link, now,
                                               shares=sh[0][0] if sh and sh[0][0] else None,
-                                              tags=([TIER_LABEL[tiers[sym]]] if tiers[sym] else []) + (["랭킹 진입"] if sym in ranked_in else [])
+                                              tags=[f"{lv['metrics']['grade']}급" + (f" ({' · '.join(lv['metrics']['grade_why'])})"
+                                                                                       if lv["metrics"]["grade_why"] else "")]
+                                              + ([TIER_LABEL[tiers[sym]]] if tiers[sym] else []) + (["랭킹 진입"] if sym in ranked_in else [])
                                               + (["호가 얇음"] if (lv["metrics"].get("ask10") or 9e18) < (lv["metrics"].get("dollar_3m") or 0) else [])
                                               + (json.loads(tg[0][0]) if tg else []) + pats),
                                    buttons=alert_buttons(sym, link))
@@ -707,8 +718,8 @@ class Collector:
             if self.cfg.vsignal and session != AFTER:      # 가상 매매는 알림과 따로: 1분 거래 터짐 → 아래 지정가
                 self._vtrade(now, d0, sym, score, close, today, shares.get(sym), session, start)
             if fire:
-                self._event(now, sym, "precursor", f"🔥 {sym} 급등 전조 발동 ({score}점 · 1시간 거래량 "
-                            f"{lv['metrics'].get('vol_x', 0):.1f}배 · {lv['metrics'].get('chg', 0):+.1f}%)", lv["metrics"].get("chg"))
+                self._event(now, sym, "precursor", f"🔥 {sym} 급등 전조 {lv['metrics']['grade']}급 (1분 거래 터짐 · "
+                            f"{lv['metrics'].get('chg', 0):+.1f}% · 3분 ${lv['metrics'].get('dollar_3m', 0) / 1e3:.0f}K)", lv["metrics"].get("chg"))
         self.store.put_precursor_live(out)
 
     # ---------- 가상 매수·매도 (알림만, 실제 주문 없음) ----------
@@ -806,19 +817,27 @@ class Collector:
                 "exit_reason", "high", "low", "last", "high_at", "tp", "strat", "sl"]
         return dict(zip(keys, r))
 
-    def check_vsignals(self, now: datetime, session: str) -> None:
-        """보유 중 가상 포지션: 1분 현재가로 익절·손절·기간 만료 → 가상 매도 알림."""
+    def _last_price(self, sym: str, fallback: float | None) -> float | None:
+        """현재가: 유니버스(수집기 1분 현재가) → 없으면(가격이 범위 밖으로 나가 유니버스에서 빠진 경우) prices 표의 마지막 값."""
+        last = (self.universe.get(sym) or {}).get("last")
+        if last:
+            return last
+        r = self.store.query("SELECT last FROM prices WHERE symbol=? ORDER BY ts DESC LIMIT 1", (sym,))
+        return r[0][0] if r and r[0][0] else fallback
+
+    def check_vsignals(self, now: datetime, session: str, eod: bool = False) -> None:
+        """보유 중 가상 포지션: 1분 현재가로 익절·손절 → 가상 매도 알림. eod=True(애프터장 마감)면 남은 것 모두 정리."""
         from ..precursor import vsignal_text
         from ..trading.strategies import SESSION_KO
         from ..vstrat import STRATEGIES
         with self.store.db:                              # 안 닿은 지정가 주문은 유효 시간이 지나면 취소
             for vid, opened, strat in self.store.query("SELECT id, opened, strat FROM vsignals WHERE status='ORDER'"):
                 mins = STRATEGIES.get(strat or "", {}).get("minutes", 60)
-                if now - datetime.fromisoformat(opened) >= timedelta(minutes=mins) or session == AFTER:
+                if now - datetime.fromisoformat(opened) >= timedelta(minutes=mins) or session == AFTER or eod:
                     self.store.db.execute("UPDATE vsignals SET status='EXPIRED', closed=? WHERE id=?", (iso(now), vid))
         rows = [self._vrow(r) for r in self.store.query("SELECT * FROM vsignals WHERE status='OPEN'")]
         for v in rows:
-            last = (self.universe.get(v["symbol"]) or {}).get("last")
+            last = self._last_price(v["symbol"], v.get("last") if eod else None)
             if not last:
                 continue
             hi, lo = max(v["high"] or last, last), min(v["low"] or last, last)
@@ -830,8 +849,8 @@ class Collector:
                 why = f"익절 +{tp:g}%"
             elif ret <= -sl:
                 why = f"손절 −{sl:g}%"
-            elif session == AFTER or now - datetime.fromisoformat(v["opened"]) >= timedelta(hours=24):
-                why = "정규장 마감 정리"                     # 보유 안 함: 그날 안에 판다
+            elif eod or now - datetime.fromisoformat(v["opened"]) >= timedelta(hours=24):
+                why = "애프터장 마감 정리"                   # 보유 안 함: 그날(애프터장까지) 안에 판다
             with self.store.db:
                 if why:
                     self.store.db.execute("UPDATE vsignals SET status='CLOSED', closed=?, exit_price=?, exit_reason=?, high=?, low=?, last=?, "

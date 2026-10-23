@@ -121,15 +121,28 @@ def test_virtual_order_expires_and_late_signal_ignored(tmp_path):
     assert st2.query("SELECT COUNT(*) FROM vsignals")[0][0] == 0
 
 
-def test_virtual_position_closes_after_regular(tmp_path):
+def test_virtual_position_closes_at_after_hours_end(tmp_path):
     col, st, sent = make(tmp_path)
     only(col, "S1")
     px = [0.9] * 3 + [1.0, 1.10, 0.95, 0.80]
     col._vtrade(T0, "2026-10-22", "PENX", 9, 0.9, bars_of(px), None, "PRE")
     assert st.query("SELECT status FROM vsignals")[0][0] == "OPEN"
     col.universe["PENX"]["last"] = 0.82
-    col.check_vsignals(T0 + timedelta(hours=10), "AFTER")
-    assert st.query("SELECT status, exit_reason FROM vsignals")[0] == ("CLOSED", "정규장 마감 정리")
+    col.check_vsignals(T0 + timedelta(hours=10), "AFTER")                # 애프터장 중엔 그대로
+    assert st.query("SELECT status FROM vsignals")[0][0] == "OPEN"
+    del col.universe["PENX"]                                              # $0.20 아래로 빠져 유니버스에서 사라져도
+    st.put_prices([{"symbol": "PENX", "ts": "2026-10-23T23:59:00+00:00", "trade_date": "2026-10-23", "session": "AFTER",
+                    "last": 0.81, "price_ts": None}])
+    col.check_vsignals(T0 + timedelta(hours=16), "CLOSED", True)         # 애프터장 마감 → 마지막 가격으로 정리
+    assert st.query("SELECT status, exit_reason, exit_price FROM vsignals")[0] == ("CLOSED", "애프터장 마감 정리", 0.81)
+
+
+def test_alert_grade():
+    from pennybot.precursor import alert_grade
+    t7 = "2026-10-23T11:10:00+00:00"                                      # 07:10 ET
+    assert alert_grade(t7, 3, 1.5, 80) == ("A", ["프리 06~09시", "★★★", "$2 미만", "전날 거래량 50배+"])
+    assert alert_grade("2026-10-23T08:10:00+00:00", 2, 3.0, 10)[0] == "C"   # 04:10 ET, $3, 10배
+    assert alert_grade("2026-10-23T08:10:00+00:00", 2, 1.0, 10) == ("B", ["$2 미만"])
 
 
 def test_daily_list_text(tmp_path):

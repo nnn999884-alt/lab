@@ -34,7 +34,7 @@ def times(v: float | None) -> str:
     if v is None:
         return "-"
     return "100배+" if v >= 100 else f"{v:.1f}배"
-LIVE_LABELS = {"wake": "거래 급증", "creep": "매수세 유입", "up10": "+10% 돌파", "money": "거래대금 터짐"}
+LIVE_LABELS = {"wake": "거래 급증", "creep": "매수세 유입", "up10": "+10% 돌파", "money": "거래대금 터짐", "burst": "⚡ 1분 거래 터짐"}
 # '거래대금 터짐': 3분 거래대금 $5만+ 또는 3분 회전율 0.5%+ (전날 대비 +5% 이상일 때). 캐시된 1분봉 3,951일 비교:
 #   +10% 돌파보다 헛알림이 적고(그날 +200% 비율 8.8% → 11.4%), 그날 +200% 300건 중 292건에 켜짐 (켜질 때 중앙값 +39%).
 MONEY_3M = 5e4
@@ -165,6 +165,23 @@ def money_at(bars: list[tuple], k: int, prev_close: float, shares: float | None)
     return (bars[k][4] / prev_close - 1) * 100 >= 5 and (d3 >= MONEY_3M or TURN_3M <= turn3 <= MAX_TURNOVER)
 
 
+def alert_grade(ts: str, tier_: int, price: float | None, vol_ratio: float | None) -> tuple[str, list[str]]:
+    """급등 전조 알림 등급 (장중 재학습 결과, 첫 1분 터짐 476건): 프리 06~09시 터짐(+30% 먼저 41% vs 정규장 8%),
+    ★★★, $2 미만, 전날 거래량 50배+ 일수록 이어지는 경우가 많았다. 둘 이상이면 A, 하나면 B, 없으면 C."""
+    from .sessions import ET
+    t = datetime.fromisoformat(ts).astimezone(ET)
+    why = []
+    if 6 <= t.hour < 9:
+        why.append("프리 06~09시")
+    if tier_ == 3:
+        why.append("★★★")
+    if price and price < 2:
+        why.append("$2 미만")
+    if (vol_ratio or 0) >= 50:
+        why.append("전날 거래량 50배+")
+    return ("A" if len(why) >= 2 else "B" if why else "C"), why
+
+
 def ask_depth(ob: dict, price: float, pct: float = 10.0) -> float | None:
     """호가창 매도 쪽: 현재가 ~ +pct% 안에 걸린 물량의 달러 합 (작을수록 얇다 = 조금만 사도 잘 오른다)."""
     asks = (ob or {}).get("asks") or []
@@ -202,8 +219,9 @@ def alert_text(sym: str, name: str | None, day: dict, lv: dict, session_ko: str,
     on = set(day["signals"]) - ({"vol_up"} if "vol_up_strong" in day["signals"] else set())
     on_d = [lab for k, lab in DAILY_LABELS.items() if k in on]
     t = (now or datetime.now(timezone.utc)).astimezone(KST)
+    g = m.get("grade")
     return "\n".join([
-        f"⚡ 급등 전조 ({sym}" + (f" · {name}" if name else "") + ")",
+        (f"{ {'A': '🅰', 'B': '🅱', 'C': '©'}.get(g, '')} {g}급 " if g else "") + f"⚡ 급등 전조 ({sym}" + (f" · {name}" if name else "") + ")",
         "──────────────",
         f"💵 현재 {px(m['price'])} ({pct(m['chg'])}) · {session_ko}",
         f"현재 상태: {j['state']}",
@@ -388,7 +406,7 @@ def vsignal_text(kind: str, sym: str, name: str | None, v: dict, cfg, session_ko
             f"🧪 {tag}가상 매수 체결 {head}",
             "──────────────",
             f"💵 {px(e)} · {session_ko} · 실제 주문 아님",
-            f"🎯 익절 {px(e * (1 + tp / 100))} (+{tp:g}%) · 🛑 손절 {px(e * (1 - sl / 100))} (−{sl:g}%) · 정규장 마감에 정리",
+            f"🎯 익절 {px(e * (1 + tp / 100))} (+{tp:g}%) · 🛑 손절 {px(e * (1 - sl / 100))} (−{sl:g}%) · 애프터장 마감에 정리",
             f"근거: {v['reason']}",
             f"한줄 판단: {st.get('why', '')}" + (f" (과거 검증 {st['test']})" if st.get("test") else ""),
         ])
