@@ -32,7 +32,8 @@ def test_search_keeps_only_conditions_confirmed_out_of_sample():
         hot = k % 10 == 0
         f = {n: (k % 7) * 1.0 for n in NAMES}
         f["up_ratio"] = 0.9 if hot else 0.3 + (k % 5) * 0.01
-        rows.append({"symbol": f"S{k}", "d": d, "f": f, "y100": hot, "y500": hot and k % 20 == 0})
+        rows.append({"symbol": f"S{k}", "d": d, "f": f, "y100": hot, "y500": hot and k % 20 == 0,
+                     "down50": False, "ret20": 50.0 if hot else -5.0, "ret5": 0.0})
     res = search(rows, 70, 30, (date(2026, 1, 1) + timedelta(days=70)).isoformat(), min_per_day=0.1)
     best = res["singles"][0]
     assert best["conditions"][0].startswith(NAMES["up_ratio"]) and best["lift100_test"] > 5
