@@ -215,10 +215,13 @@ class Collector:
                     cs = (self.c.candles(r["symbol"], "1m", 3) or {}).get("candles", [])
                     v = sum(float(cd["volume"]) for cd in cs[:2])
                     d = sum(float(cd["volume"]) * float(cd["closePrice"]) for cd in cs[:2])
-                    from ..trading.messages import money_s, qty_s
-                    vol = f" · 2분 거래량 {qty_s(v)}주 ({money_s(d)})"
                 except Exception:
-                    pass
+                    continue
+                if d < self.cfg.spike_min_dollar:
+                    self._ev_last[(r["symbol"], kind)] = now      # 얇은 체결로 튄 것 → 10분 동안 다시 안 봄
+                    continue
+                from ..trading.messages import money_s, qty_s
+                vol = f" · 2분 거래량 {qty_s(v)}주 ({money_s(d)})"
                 word = "급등" if kind == "spike_up" else "급락"
                 name = (self.universe.get(r["symbol"]) or {}).get("name") or ""
                 self._event(now, r["symbol"], kind,
@@ -387,6 +390,8 @@ class Collector:
                 insider = r["form"] == "4" and (r["insider_buy_usd"] or 0) >= 10000
                 if not key and not insider:
                     continue                      # 등록 효력·S-3 제출·일반 8-K 같은 형식적인 공시는 피드에 안 띄운다
+                if now - datetime.fromisoformat(r["accepted"]) > timedelta(hours=3):
+                    continue                      # 재시작 직후 몰려 들어오는 지난 공시는 저장만
                 tag = "▲호재" if r["direction"] > 0 else "▼악재" if r["direction"] < 0 else ""
                 what = "내부자 장내 매수" if insider and not key else ", ".join(EVENT_KO.get(k, k) for k in key)
                 info = json.loads(r["detail"]) if r.get("detail") else {}

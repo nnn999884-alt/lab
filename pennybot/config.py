@@ -93,6 +93,7 @@ class CollectorConfig:
     precursor: bool = True           # 급등 전조 점수 (일봉: 장 마감 후 전 종목, 장중: 점수 높은 종목 1분마다)
     precursor_min_score: int = 5     # 장중 감시·알림 대상 일봉 점수 (최대 10)
     precursor_live_max: int = 60     # 장중 감시 종목 수 상한 (1분에 이만큼 1분봉 조회)
+    spike_min_dollar: float = 5000.0  # 1분 급등·급락 이벤트: 그 2분 거래대금이 이만큼은 돼야 (얇은 체결 소음 제외)
     precursor_daily_alert: int = 10  # 장 마감 뒤 점수 계산이 끝나면 상위 N종목 목록 알림 (0 = 끔)
     vsignal: bool = True             # 가상 매수·매도 알림 (실제 주문 없음): 전조 발동 + 과열 전 → 가상 매수
     vsignal_max_chg: float = 15.0    # 전날 종가 대비 이만큼 넘게 오른 뒤면 가상 매수 안 함 (추격 금지)
