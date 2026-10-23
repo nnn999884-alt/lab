@@ -61,3 +61,25 @@ def test_daily_list_text(tmp_path):
     assert text.startswith("📋 오늘 급등 전 감시 목록 (2026-10-22 종가 기준)")
     assert "1. PENX" in text and "9점" in text and "회전율 10.0%" in text and "최근 급등 10-01" in text
     assert "🏷 거래량 폭발 · ATM 진행 · 매집 의심" in text
+
+
+def test_tier():
+    from pennybot.precursor import tier
+    assert tier({"vol_ratio": 12, "dd60": -70}, 4e6) == 2
+    assert tier({"vol_ratio": 12, "dd60": -10}, 4e6) == 1
+    assert tier({"vol_ratio": 6, "dd60": -60}, 4e6) == 1
+    assert tier({"vol_ratio": 6, "dd60": -10}, 4e6) == 0
+    assert tier({"vol_ratio": 50, "dd60": -80}, 2e7) == 0      # 발행주식 많음
+    assert tier({"vol_ratio": 50, "dd60": -80}, None) == 0     # 발행주식 모름
+
+
+def test_daily_list_puts_picks_first(tmp_path):
+    st = Store(str(tmp_path / "m.db"))
+    met = lambda vr, dd: json.dumps({"dd60": dd, "vol_ratio": vr, "volume": 1e5})
+    st.put_precursor_daily([
+        {"d0": "2026-10-22", "symbol": "HIGH", "score": 10, "close": 1, "created": "x", "signals": "[]", "metrics": met(2, -60)},
+        {"d0": "2026-10-22", "symbol": "PICK", "score": 4, "close": 1, "created": "x", "signals": "[]", "metrics": met(15, -70)}])
+    st.put_stock_info([{"symbol": s, "name": None, "shares": 3e6, "list_date": None, "updated": "x"} for s in ("HIGH", "PICK")])
+    text = daily_list_text(str(tmp_path / "m.db"), 5)
+    assert "🎯 급등 후보 1종목 (★★ 1)" in text
+    assert text.index("1. PICK") < text.index("2. HIGH") and "PICK  · ★★" in text

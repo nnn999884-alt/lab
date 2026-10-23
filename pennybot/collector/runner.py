@@ -556,15 +556,21 @@ class Collector:
 
     def poll_precursor_live(self, now: datetime, trade_date, session: str) -> None:
         """일봉 점수 높은 종목의 오늘 1분봉 → 거래 깨어남·슬금슬금 상승. 둘 다 켜지면 알림 (종목당 하루 한 번)."""
-        from ..precursor import alert_buttons, alert_text, live
+        from ..precursor import TIER_LABEL, alert_buttons, alert_text, live, tier
         from ..trading.strategies import SESSION_KO
         d0 = self.store.query("SELECT MAX(d0) FROM precursor_daily")
         if not d0 or not d0[0][0]:
             return
         d0 = d0[0][0]
-        rows = self.store.query("SELECT symbol, score, signals, metrics, close FROM precursor_daily WHERE d0=? AND score>=? "
-                                "ORDER BY score DESC, json_extract(metrics, '$.vol_ratio') DESC LIMIT ?",
-                                (d0, self.cfg.precursor_min_score, self.cfg.precursor_live_max))
+        shares = dict(self.store.query("SELECT symbol, shares FROM stock_info WHERE shares > 0"))
+        tiers = {}
+        rows = []
+        for r in self.store.query("SELECT symbol, score, signals, metrics, close FROM precursor_daily WHERE d0=?", (d0,)):
+            tiers[r[0]] = tier(json.loads(r[3] or "{}"), shares.get(r[0]))
+            if tiers[r[0]] or r[1] >= self.cfg.precursor_min_score:
+                rows.append(r)
+        rows.sort(key=lambda r: (-tiers[r[0]], -r[1], -(json.loads(r[3] or "{}").get("vol_ratio") or 0)))
+        rows = rows[:self.cfg.precursor_live_max]
         day_start = self.cal.bounds(trade_date, DAY)
         start = iso(day_start[0]) if day_start else iso(now - timedelta(hours=12))
         prev_alert = dict(self.store.query("SELECT symbol, alerted FROM precursor_live WHERE d0=? AND alerted IS NOT NULL", (d0,)))
@@ -580,7 +586,8 @@ class Collector:
                           for cd in cs)
             lv = live([b for b in bars if b[0] >= start], close, now)
             lv["metrics"]["session"] = session
-            fire = {"wake", "creep"} <= set(lv["signals"]) and sym not in prev_alert
+            on = set(lv["signals"])
+            fire = ({"wake", "creep"} <= on or (tiers[sym] and on & {"wake", "up10"})) and sym not in prev_alert
             out.append({"d0": d0, "symbol": sym, "ts": iso(now), "signals": json.dumps(lv["signals"]),
                         "metrics": json.dumps(lv["metrics"]), "alerted": iso(now) if fire else prev_alert.get(sym)})
             if fire and self.notifier:
@@ -596,7 +603,7 @@ class Collector:
                 self.notifier.send(alert_text(sym, (self.universe.get(sym) or {}).get("name"), day, lv,
                                               SESSION_KO.get(session, session), link, now,
                                               shares=sh[0][0] if sh and sh[0][0] else None,
-                                              tags=(json.loads(tg[0][0]) if tg else []) + pats),
+                                              tags=([TIER_LABEL[tiers[sym]]] if tiers[sym] else []) + (json.loads(tg[0][0]) if tg else []) + pats),
                                    buttons=alert_buttons(sym, link))
                 log.info("급등 전조 알림 %s (%s)", sym, ", ".join(lv["signals"]))
             if fire and self.cfg.vsignal:

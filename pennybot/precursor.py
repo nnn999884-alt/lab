@@ -36,6 +36,20 @@ def times(v: float | None) -> str:
     return "100배+" if v >= 100 else f"{v:.1f}배"
 LIVE_LABELS = {"wake": "거래 급증", "creep": "매수세 유입", "up10": "+10% 돌파"}
 
+# 급등 후보 등급 — 최근 200일 일봉 검증 (다음 날 장중 +200% 간 비율, 아무것도 안 거르면 0.08%):
+#   2 (★★) 발행 1천만 주 미만 + 전날 거래량 10배+ + 60일 고점 −50% 이하 → 하루 ~17종목, 1.8% (23배), +200% 197건 중 42건
+#   1 (★)  발행 1천만 주 미만 + (거래량 10배+ 또는 거래량 5배+ & −50% 이하) → 하루 ~21종목, 0.7%, 20건 더
+TIER_LABEL = {2: "급등 후보 ★★", 1: "급등 후보 ★"}
+
+
+def tier(metrics: dict, shares: float | None) -> int:
+    if not shares or shares >= 1e7:
+        return 0
+    vr, dd = metrics.get("vol_ratio") or 0, metrics.get("dd60") or 0
+    if vr >= 10 and dd <= -50:
+        return 2
+    return 1 if vr >= 10 or (vr >= 5 and dd <= -50) else 0
+
 
 def daily(bars: list[tuple]) -> dict | None:
     """bars: [(d, o, h, l, c, v)] 오래된 → 최신, 마지막 = 전날(D0). 61개 이상 필요."""
@@ -202,6 +216,10 @@ def ranked(db_path: str, limit: int = 50) -> dict:
                       (SELECT name FROM universe u WHERE u.symbol=d.symbol ORDER BY snapshot_date DESC LIMIT 1) AS name
                FROM precursor_daily d LEFT JOIN precursor_live l ON l.d0=d.d0 AND l.symbol=d.symbol
                WHERE d.d0=? ORDER BY d.score DESC, d.symbol""", (d0,))]
+        try:
+            shares = dict(con.execute("SELECT symbol, shares FROM stock_info WHERE shares > 0").fetchall())
+        except sqlite3.OperationalError:
+            shares = {}
     except sqlite3.OperationalError:
         return {"d0": None, "rows": []}
     finally:
@@ -215,7 +233,8 @@ def ranked(db_path: str, limit: int = 50) -> dict:
         r["labels"] = [lab for k, lab in DAILY_LABELS.items() if k in on]
         r["live_labels"] = [LIVE_LABELS[k] for k in r["live"]]
         r["patterns"] = [PATTERN_LABELS[k] for k in PATTERN_LABELS if k in r["signals"]]
-    rows.sort(key=lambda r: (-len(set(r["live"]) & {"wake", "creep"}), -r["score"], -(r["metrics"].get("vol_ratio") or 0)))
+        r["tier"] = tier(r["metrics"], shares.get(r["symbol"]))
+    rows.sort(key=lambda r: (-len(set(r["live"]) & {"wake", "creep"}), -r["tier"], -r["score"], -(r["metrics"].get("vol_ratio") or 0)))
     total = len(rows)
     rows = rows[:limit]
     con = sqlite3.connect(ro_uri(db_path), uri=True)
@@ -278,17 +297,21 @@ def daily_list_text(db_path: str, n: int = 10, dashboard: str | None = None) -> 
     """장 마감 뒤 '오늘 급등 전 감시 목록' 알림."""
     from .trading.messages import pct, px
     r = ranked(db_path, 400)
-    rows = sorted(r["rows"], key=lambda x: (-x["score"], -(x["metrics"].get("vol_ratio") or 0)))[:n]
+    picks = [x for x in r["rows"] if x.get("tier")]
+    rows = sorted(r["rows"], key=lambda x: (-x.get("tier", 0), -x["score"], -(x["metrics"].get("vol_ratio") or 0)))[:min(max(n, len(picks)), 20)]          # 텔레그램 4096자 제한
     if not rows:
         return "급등 전 감시 목록이 비어 있습니다."
     L = [f"📋 오늘 급등 전 감시 목록 ({r['d0']} 종가 기준)",
-         f"전체 {r['n']}종목 중 점수 상위 {len(rows)} · 장중에 거래 급증+매수세 유입이 켜지면 따로 알림",
+         (f"🎯 급등 후보 {len(picks)}종목 (★★ {sum(x['tier'] == 2 for x in picks)}) — 발행 1천만 주↓ + 전날 거래량 폭발 + 많이 빠짐"
+          if picks else f"전체 {r['n']}종목 중 점수 상위 {len(rows)}"),
+         "장중에 거래가 터지면 따로 알림" + (f" · 나머지 {len(picks) - 20}종목은 대시보드" if len(picks) > 20 else ""),
          "──────────────"]
     for i, x in enumerate(rows, 1):
         m = x["metrics"]
         tags = (x.get("filing_tags") or [])[:2] + (x.get("patterns") or [])[:2]
         vol = [l for l in x["labels"] if l.startswith("거래량")]
-        L.append(f"{i}. {x['symbol']} {x.get('name') or ''} · {x['score']}점 · {px(x['close'])}")
+        star = f" · {'★★' if x['tier'] == 2 else '★'}" if x.get("tier") else ""
+        L.append(f"{i}. {x['symbol']} {x.get('name') or ''}{star} · {x['score']}점 · {px(x['close'])}")
         L.append(f"   고점 대비 {pct(m.get('dd60'))} · 전날 거래량 {times(m.get('vol_ratio'))}"
                  + (f" · 회전율 {x['turnover_d0']:.1f}%" if x.get("turnover_d0") is not None else "")
                  + (f" · 최근 급등 {m['last_spike_d'][5:]}" if m.get("last_spike_d") else ""))

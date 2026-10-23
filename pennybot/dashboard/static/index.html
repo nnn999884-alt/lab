@@ -317,7 +317,7 @@ body.readonly .readonly-note { display: inline; }
         <div class="seg" id="pre-filter" role="group" aria-label="보기">
           <button data-f="all" aria-pressed="true">전체</button>
           <button data-f="live" aria-pressed="false">🔥 지금 움직임</button>
-          <button data-f="top" aria-pressed="false">8점 이상</button>
+          <button data-f="top" aria-pressed="false">🎯 급등 후보</button>
         </div>
       </div>
       <p class="sub" id="pre-sub"></p>
@@ -1136,7 +1136,7 @@ const preOpen = new Set();               // '자세히' 펼친 종목 (새로고
 function drawPre() {
   const box = $("pre-list"); box.replaceChildren();
   const all = (preData && preData.rows) || [];
-  const rows = all.filter(x => preFilter === "live" ? x.live.length : preFilter === "top" ? x.score >= 8 : true);
+  const rows = all.filter(x => preFilter === "live" ? x.live.length : preFilter === "top" ? x.tier > 0 : true);
   if (!rows.length) { const d = document.createElement("div"); d.className = "empty"; d.textContent = preFilter === "live" ? "지금 장중 증상이 켜진 종목이 없습니다" : "없음"; box.appendChild(d); }
   const span = (cls, text) => { const s = document.createElement("span"); if (cls) s.className = cls; s.textContent = text; return s; };
   const vr = v => v == null ? null : v >= 100 ? "100배+" : v.toFixed(1) + "배";
@@ -1149,6 +1149,7 @@ function drawPre() {
     // 1줄: 티커 · 이름 · 점수
     const top = document.createElement("div"); top.className = "pre-top";
     top.append(span("pre-sym", x.symbol), span("pre-name", x.name || ""),
+               ...(x.tier ? [span("pre-score s-hi", x.tier === 2 ? "🎯★★" : "🎯★")] : []),
                span("pre-score " + (x.score >= 8 ? "s-hi" : x.score >= 5 ? "s-mid" : "s-lo"), x.score + "점"));
     c.appendChild(top);
     // 2줄: 지금 가격 · 등락 · 세션
