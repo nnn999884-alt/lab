@@ -922,6 +922,8 @@ async function loadC30() {
     { h: "조건", wide: 1, f: x => x.conditions.join(" + ") },
     { h: "+100% 적중", num: 1, f: x => `${(x.p100_test * 100).toFixed(1)}% (${x.lift100_test.toFixed(1)}배)`, tone: () => "pos" },
     { h: "+500% 적중", num: 1, f: x => `${(x.p500_test * 100).toFixed(2)}%` },
+    { h: "20일 안 반토막", num: 1, f: x => x.down50_test == null ? null : Math.round(x.down50_test * 100) + "%", tone: () => "neg" },
+    { h: "20일 뒤 (중앙값)", num: 1, f: x => x.ret20_med_test == null ? null : fmtPct(x.ret20_med_test, 0), tone: x => tone(x.ret20_med_test) },
     { h: "하루 몇 종목", num: 1, f: x => x.per_day_test.toFixed(1) },
     { h: "학습 기간", num: 1, minor: 1, f: x => `${(x.p100_train * 100).toFixed(1)}% (${x.lift100_train.toFixed(1)}배)` },
   ], rows, "검증 기간에서도 2배 이상인 조건이 없습니다");
