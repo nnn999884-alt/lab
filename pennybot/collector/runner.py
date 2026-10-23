@@ -21,7 +21,7 @@ from datetime import datetime, timedelta, timezone
 from ..config import CollectorConfig
 from ..dilution import classify
 from ..screener import edgar as ed
-from ..sessions import AFTER, CLOSED, SessionCalendar
+from ..sessions import AFTER, CLOSED, DAY, PRE, REGULAR, SessionCalendar
 from ..toss_api import TossApiError
 from .store import Store
 
@@ -47,13 +47,17 @@ class Collector:
     def __init__(self, client, store: Store, calendar: SessionCalendar, cfg: CollectorConfig,
                  edgar_client: ed.EdgarClient | None = None,
                  clock=lambda: datetime.now(timezone.utc), dilution=None, fundamentals=None, news=None,
-                 short=None):
+                 short=None, notifier=None, link=None):
         self.c, self.store, self.cal, self.cfg = client, store, calendar, cfg
         self.edgar = edgar_client
         self.dilution = dilution          # DilutionService: 공시 본문으로 희석 이벤트 판정
         self.fund = fundamentals          # Fundamentals: 급등주 희석 프로필·펌프 신호
         self.news = news                  # NewsClient: 보도자료 피드
         self.short = short                # ShortData: 공매도·대차·SSR·Reg SHO·거래정지
+        self.notifier = notifier          # 급등 전조 알림 (텔레그램·웹훅)
+        self.link = link                  # () -> 대시보드 외부 주소
+        self._pre_thread = None
+        self._pre_tried = None
         self._short_done: set[tuple[str, str]] = set()   # (종류, 날짜) 이미 받은 일별 파일
         self._seen_news: set[str] = set()
         self.clock = clock
@@ -112,6 +116,10 @@ class Collector:
                 self._run("borrow", self.poll_borrow, now)
             if self._due("halts", now, timedelta(minutes=c.halts_poll_minutes)):
                 self._run("halts", self.poll_halts)
+        if c.precursor:
+            self._run("precursor_daily", self.ensure_precursor_daily, trade_date, session)
+            if session in (DAY, PRE, REGULAR) and self._due("precursor_live", now, timedelta(seconds=60)):
+                self._run("precursor_live", self.poll_precursor_live, now, trade_date, session)
         if session == CLOSED:
             return
         every = timedelta(seconds=c.ranking_poll_live_seconds) if session != AFTER else timedelta(minutes=c.ranking_poll_minutes)
@@ -326,6 +334,100 @@ class Collector:
         if rows:
             self.store.put_news(rows)
             log.info("새 보도자료 %d건 (유니버스 종목)", len(rows))
+
+    # ---------- 급등 전조 ----------
+    def _expected_d0(self, trade_date, session):
+        """전조 일봉 점수의 기준일: 장 마감 전(데이·프리·정규)이면 전 영업일, 마감 뒤면 그날."""
+        if trade_date is None:
+            return None
+        if session in (DAY, PRE, REGULAR):
+            days = [d for d, day in self.cal.days.items() if d < trade_date and REGULAR in day.sessions]
+            if days:
+                return max(days)
+            d = trade_date - timedelta(days=1)
+            while d.weekday() >= 5:
+                d -= timedelta(days=1)
+            return d
+        return trade_date
+
+    def ensure_precursor_daily(self, trade_date, session) -> None:
+        """기준일 점수가 없으면 백그라운드로 전 종목 계산 (약 2,000번 일봉 조회 → 몇 분, 그동안 수집은 계속)."""
+        exp = self._expected_d0(trade_date, session)
+        if not exp or not self.universe or (self._pre_thread and self._pre_thread.is_alive()):
+            return
+        have = self.store.query("SELECT MAX(d0) FROM precursor_daily")
+        if have and have[0][0] and have[0][0] >= exp.isoformat():
+            return
+        if self._pre_tried and self._pre_tried[0] == exp and self.clock() - self._pre_tried[1] < timedelta(minutes=30):
+            return                                   # 방금 시도했는데 비었으면 30분 뒤 다시
+        self._pre_tried = (exp, self.clock())
+        import threading
+        self._pre_thread = threading.Thread(target=self.build_precursor_daily, args=(exp, sorted(self.universe)),
+                                            name="precursor", daemon=True)
+        self._pre_thread.start()
+
+    def build_precursor_daily(self, d0, symbols: list[str]) -> int:
+        from ..precursor import daily
+        store = Store(self.cfg.db_path)                # 스레드 전용 연결
+        rows, n = [], 0
+        for sym in symbols:
+            try:
+                cs = (self.c.candles(sym, "1d", 70) or {}).get("candles", [])
+            except Exception as e:
+                log.debug("전조 일봉 실패 %s: %s", sym, e)
+                continue
+            bars = sorted((cd["timestamp"][:10], float(cd["openPrice"]), float(cd["highPrice"]), float(cd["lowPrice"]),
+                           float(cd["closePrice"]), float(cd["volume"])) for cd in cs)
+            bars = [b for b in bars if b[0] <= d0.isoformat()]     # 기준일 뒤(진행 중인 봉)는 뺀다
+            r = daily(bars)
+            if r and r["d0"] == d0.isoformat() and r["score"] >= 2:
+                rows.append({"d0": r["d0"], "symbol": sym, "score": r["score"], "signals": json.dumps(r["signals"]),
+                             "metrics": json.dumps(r["metrics"]), "close": r["close"], "created": iso(self.clock())})
+            n += 1
+        store.put_precursor_daily(rows)
+        log.info("급등 전조 일봉 점수 %s: %d종목 계산, 2점 이상 %d, %d점 이상 %d", d0, n, len(rows),
+                 self.cfg.precursor_min_score, sum(1 for r in rows if r["score"] >= self.cfg.precursor_min_score))
+        return len(rows)
+
+    def poll_precursor_live(self, now: datetime, trade_date, session: str) -> None:
+        """일봉 점수 높은 종목의 오늘 1분봉 → 거래 깨어남·슬금슬금 상승. 둘 다 켜지면 알림 (종목당 하루 한 번)."""
+        from ..precursor import alert_text, live
+        from ..trading.strategies import SESSION_KO
+        d0 = self.store.query("SELECT MAX(d0) FROM precursor_daily")
+        if not d0 or not d0[0][0]:
+            return
+        d0 = d0[0][0]
+        rows = self.store.query("SELECT symbol, score, signals, metrics, close FROM precursor_daily WHERE d0=? AND score>=? "
+                                "ORDER BY score DESC, json_extract(metrics, '$.vol_ratio') DESC LIMIT ?",
+                                (d0, self.cfg.precursor_min_score, self.cfg.precursor_live_max))
+        day_start = self.cal.bounds(trade_date, DAY)
+        start = iso(day_start[0]) if day_start else iso(now - timedelta(hours=12))
+        prev_alert = dict(self.store.query("SELECT symbol, alerted FROM precursor_live WHERE d0=? AND alerted IS NOT NULL", (d0,)))
+        out = []
+        for sym, score, sig, met, close in rows:
+            try:
+                cs = (self.c.candles(sym, "1m", 200) or {}).get("candles", [])
+            except Exception as e:
+                log.debug("전조 1분봉 실패 %s: %s", sym, e)
+                continue
+            bars = sorted((iso(datetime.fromisoformat(cd["timestamp"].replace("Z", "+00:00"))), float(cd["openPrice"]),
+                           float(cd["highPrice"]), float(cd["lowPrice"]), float(cd["closePrice"]), float(cd["volume"]))
+                          for cd in cs)
+            lv = live([b for b in bars if b[0] >= start], close, now)
+            fire = {"wake", "creep"} <= set(lv["signals"]) and sym not in prev_alert
+            out.append({"d0": d0, "symbol": sym, "ts": iso(now), "signals": json.dumps(lv["signals"]),
+                        "metrics": json.dumps(lv["metrics"]), "alerted": iso(now) if fire else prev_alert.get(sym)})
+            if fire and self.notifier:
+                day = {"score": score, "signals": json.loads(sig), "metrics": json.loads(met)}
+                link = None
+                try:
+                    link = self.link() if self.link else None
+                except Exception:
+                    pass
+                self.notifier.send(alert_text(sym, (self.universe.get(sym) or {}).get("name"), day, lv,
+                                              SESSION_KO.get(session, session), link))
+                log.info("급등 전조 알림 %s (%s)", sym, ", ".join(lv["signals"]))
+        self.store.put_precursor_live(out)
 
     # ---------- 공매도·대차 ----------
     def poll_short_daily(self, now: datetime) -> None:

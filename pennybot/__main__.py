@@ -106,11 +106,19 @@ def cmd_collect(cfg: Config, once: bool) -> None:
     col = Collector(client, Store(cfg.collector.db_path), SessionCalendar(client), cfg.collector,
                     dil.edgar if dil else None, dilution=dil, fundamentals=fund,
                     news=NewsClient(cfg.collector.news_feeds or None, ua),
-                    short=ShortData(ua) if cfg.collector.short_data else None)
+                    short=ShortData(ua) if cfg.collector.short_data else None,
+                    notifier=_notifier(cfg), link=lambda: tunnel_url(cfg))
     if once:
         col.tick()
     else:
         col.run()
+
+
+def _notifier(cfg: Config):
+    """수집기용 알림 (급등 전조). 텔레그램·웹훅 설정이 없으면 None."""
+    from .trading.notify import Notifier
+    t = cfg.trading
+    return Notifier(t.notify_webhook, t.telegram_token, t.telegram_chat) if (t.notify_webhook or t.telegram_token) else None
 
 
 def cmd_summarize(cfg: Config, date: str) -> None:
@@ -304,6 +312,13 @@ def cmd_trigger(cfg: Config) -> None:
     print(format_report(run(cfg)))
 
 
+def cmd_anatomy(cfg: Config) -> None:
+    """장중 +20% 이상 찍은 날 전체의 1분봉 해부 (결과로 고르지 않음): 하루 흐름·개미털기·VWAP·다음 날·진입/청산 규칙."""
+    from .anatomy import format_report, run
+    setup_file_log(cfg, "research")
+    print(format_report(run(cfg)))
+
+
 def cmd_backtest(cfg: Config, args) -> None:
     """수집기 DB 를 재생해 매매 엔진을 그대로 돌린다 (토스 API 접속 없음)."""
     from datetime import date, datetime
@@ -385,7 +400,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="미국 페니주 자동매매 (토스증권)")
     ap.add_argument("command", nargs="?", default="collect",
                     choices=["check", "accounts", "collect", "summarize", "trade", "dashboard", "probe-orders",
-                             "backtest", "research", "bigruns", "chart30", "trigger", "telegram-setup", "tunnel", "screen", "run"])
+                             "backtest", "research", "bigruns", "chart30", "trigger", "anatomy", "telegram-setup", "tunnel", "screen", "run"])
     ap.add_argument("--config", default="config.yaml")
     ap.add_argument("--once", action="store_true", help="collect/run: 한 번만 실행")
     ap.add_argument("--date", help="summarize: 미국 영업일 YYYY-MM-DD")
@@ -458,6 +473,7 @@ def _dispatch(cfg, args) -> None:
         "bigruns": lambda: cmd_bigruns(cfg, args),
         "chart30": lambda: cmd_chart30(cfg),
         "trigger": lambda: cmd_trigger(cfg),
+        "anatomy": lambda: cmd_anatomy(cfg),
         "screen": lambda: cmd_screen(cfg),
         "run": lambda: cmd_run(cfg, args.once),
     }[args.command]()

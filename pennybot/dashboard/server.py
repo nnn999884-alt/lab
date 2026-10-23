@@ -383,6 +383,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/backtests": lambda: _backtests(d.cfg.state_dir, n("limit", 10)),
             "/api/reports": lambda: _reports(d.cfg.state_dir, n("limit", 30)),
             "/api/shorts": lambda: d.shorts(),
+            "/api/precursor": lambda: __import__("pennybot.precursor", fromlist=["ranked"]).ranked(d.market_db, n("limit", 80)),
             "/api/symbol": lambda: d.symbol(qs.get("s", "")[:12]),
             "/api/research_hist": lambda: d.research_hist(),
             "/api/bigruns": lambda: d.bigruns(),

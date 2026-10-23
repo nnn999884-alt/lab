@@ -248,6 +248,15 @@ body.readonly .readonly-note { display: inline; }
 
   <!-- ===== 종목: 조회 + 공매도·대차 ===== -->
   <div class="tab" data-tab="symbol" hidden>
+    <section class="card">
+      <h2>⚡ 급등 전조 목록</h2>
+      <p class="sub" id="pre-sub">과거 +500% 급등 직전에 공통으로 보인 증상이 켜진 종목. 🔥 = 지금 장중에 거래가 깨어나고 슬금슬금 오르는 중</p>
+      <details class="sub"><summary>증상 설명</summary>
+        크게 빠짐: 60일 고점 대비 −50% 이하 · 흔들림 큼: 변동폭 10%+ 또는 갭 하락·폭락 이력 · 튄 이력: 60일 안 하루 +30% ·
+        싼 소외주: $2 미만 · 조용히 흘러내림: 10일 −10% + 거래량 절반 이하 · 거래량 늘기 시작/급증: 전날 1.5배/3배+ ·
+        60일 고점 근처는 0점. 장중(1분마다): 거래 깨어남 = 최근 1시간 분당 거래량 3배+, 슬금슬금 상승 = 1시간 +3%·15분 +1.5%</details>
+      <div class="tablewrap" style="max-height:70vh"><table id="pre"></table></div>
+    </section>
     <section class="card" id="lookup-card">
       <h2>종목 조회</h2>
       <p class="sub long">시세 흐름·호가·공매도 비율·대차·SSR·거래정지·공시를 한눈에. 아래 표의 종목을 눌러도 됩니다</p>
@@ -883,6 +892,29 @@ async function lookup(sym) {
 }
 $("lookup-form").onsubmit = e => { e.preventDefault(); lookup($("lookup-sym").value).catch(err => alert(err.message)); };
 
+/* ---------- 급등 전조 목록 ---------- */
+async function loadPre() {
+  const r = await api("/api/precursor?limit=80");
+  $("pre-sub").textContent = r.d0 ? `${r.d0} 종가 기준 · 2점 이상 ${r.n}종목 · 장중 증상은 1분마다 갱신 (3점 이상 종목)` : "아직 없음 — 수집기가 장 마감 뒤 전 종목을 계산합니다";
+  table($("pre"), [
+    { h: "종목", f: x => `${x.live.includes("wake") && x.live.includes("creep") ? "🔥 " : ""}${x.symbol} · ${x.score}점`, tone: x => x.live.length ? "pos" : null },
+    { h: "전날 종가", num: 1, f: x => fmtPx(x.close) },
+    { h: "지금", num: 1, f: x => x.live_m && x.live_m.chg != null ? `${fmtPx(x.live_m.price)} (${fmtPct(x.live_m.chg)})` : null, tone: x => x.live_m && tone(x.live_m.chg) },
+    { h: "장중 증상", f: x => x.live_labels.join(", ") || null },
+    { h: "1시간 거래량", num: 1, f: x => x.live_m && x.live_m.vol_x != null ? x.live_m.vol_x.toFixed(1) + "배" : null },
+    { h: "차트 증상", wide: 1, f: x => x.labels.join(" · ") },
+    { h: "60일 고점 대비", num: 1, minor: 1, f: x => fmtPct(x.metrics.dd60, 0) },
+    { h: "전날 거래량", num: 1, minor: 1, f: x => x.metrics.vol_ratio != null ? x.metrics.vol_ratio.toFixed(1) + "배" : null },
+    { h: "20일 거래대금", num: 1, minor: 1, f: x => fmtQty(x.metrics.dollar20).replace(/^/, "$") },
+    { h: "이름", minor: 1, f: x => x.name },
+  ], r.rows || [], "아직 없음");
+  $("pre").querySelectorAll("tbody tr").forEach((tr, i) => {
+    const x = (r.rows || [])[i]; if (!x) return;
+    tr.style.cursor = "pointer";
+    tr.onclick = () => lookup(x.symbol).then(() => $("lookup-card").scrollIntoView({ behavior: "smooth" }));
+  });
+}
+
 /* ---------- 급등 전 30일 차트 조건 ---------- */
 function pathChart(box, days, series, { height = 170, fmt = v => v.toFixed(0), label = "" } = {}) {
   // series: [{name, values, color}] · x = 급등 전날 기준 일수, 0 에 세로선
@@ -1068,7 +1100,7 @@ try { const t = localStorage.getItem("theme"); if (t) document.documentElement.d
 // 보이는 탭의 데이터만 받는다 (휴대폰 데이터·배터리 절약)
 const TAB_JOBS = {
   home: () => [loadEquity(), loadStrategies(), loadTables()],
-  symbol: () => [loadShorts()],
+  symbol: () => [loadPre(), loadShorts()],
   trade: () => [loadTables(), loadReports()],
   analysis: () => [loadC30(), loadBig(), loadHist(), loadRunners(), loadCollector(), loadResearch(), loadBacktests()],
 };

@@ -111,7 +111,7 @@ def _desc(r) -> str:
 HELP = ("📖 명령\n"
         "/상태 — 세션·보유 종목\n"
         "/리포트 [영업일] — 일일 리포트 (예: /리포트 2026-10-21)\n"
-        "/종목 PENX — 시세·공매도·대차·SSR·거래정지·공시 한눈에\n"
+        "/종목 PENX — 시세·공매도·대차·SSR·거래정지·공시 한눈에\n"        "/전조 — 급등 전조 목록 (점수·켜진 증상·지금 등락)\n"
         "/대시보드 — 대시보드 외부 주소\n"
         "/정지 — 신규 매수 중단 · /재개 — 다시 켜기\n"
         "/청산 확인 — 보유 종목 전량 청산\n"
@@ -192,6 +192,10 @@ class TelegramCommands:
                 b["stats"] = mv.day_stats(b["symbol"])          # 오늘 등락·거래량·거래대금 (토스 일봉)
             url = self.trader.dashboard_url() if hasattr(self.trader, "dashboard_url") else None
             return render(b) + (f"\n\n📊 {url}/?s={b['symbol']}" if url and b["found"] else "")
+        if cmd in ("/전조", "/precursor", "/watch"):
+            from ..precursor import top_text
+            url = self.trader.dashboard_url() if hasattr(self.trader, "dashboard_url") else None
+            return top_text(self.market_db, dashboard=url) if self.market_db else "수집기 DB 가 없습니다."
         if cmd in ("/대시보드", "/dashboard"):
             url = self.trader.dashboard_url()
             return f"📊 대시보드: {url}" if url else "외부 주소가 꺼져 있습니다. 봇 컴퓨터에서 tunnel.bat 을 실행하세요."

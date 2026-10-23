@@ -90,6 +90,9 @@ class CollectorConfig:
     edgar_poll_minutes: int = 5
     runner_min_pct: float = 30.0     # 정규장 종가 기준 이만큼 오른 종목을 급등주로 기록
     news_poll_minutes: int = 2
+    precursor: bool = True           # 급등 전조 점수 (일봉: 장 마감 후 전 종목, 장중: 점수 높은 종목 1분마다)
+    precursor_min_score: int = 5     # 장중 감시·알림 대상 일봉 점수 (최대 10)
+    precursor_live_max: int = 60     # 장중 감시 종목 수 상한 (1분에 이만큼 1분봉 조회)
     short_data: bool = True          # 공매도(FINRA)·대차(IBKR)·SSR·Reg SHO·거래정지 수집
     borrow_poll_minutes: int = 30    # IBKR 대차 파일은 15분마다 갱신
     halts_poll_minutes: int = 2

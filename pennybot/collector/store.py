@@ -56,6 +56,12 @@ CREATE TABLE IF NOT EXISTS reg_sho (trade_date TEXT, symbol TEXT, PRIMARY KEY (t
 CREATE TABLE IF NOT EXISTS halts (
     symbol TEXT, halt_ts TEXT, reason TEXT, reason_ko TEXT, resume_ts TEXT,
     PRIMARY KEY (symbol, halt_ts));
+CREATE TABLE IF NOT EXISTS precursor_daily (
+    d0 TEXT, symbol TEXT, score INTEGER, signals TEXT, metrics TEXT, close REAL, created TEXT,
+    PRIMARY KEY (d0, symbol));
+CREATE TABLE IF NOT EXISTS precursor_live (
+    d0 TEXT, symbol TEXT, ts TEXT, signals TEXT, metrics TEXT, alerted TEXT,
+    PRIMARY KEY (d0, symbol));
 CREATE INDEX IF NOT EXISTS ix_news_sym ON news (symbol, published);
 CREATE INDEX IF NOT EXISTS ix_borrow_sym ON borrow (symbol, ts);
 CREATE INDEX IF NOT EXISTS ix_shortvol_sym ON short_volume (symbol, trade_date);
@@ -113,6 +119,8 @@ class Store:
     def put_ssr(self, rows): return self._put("ssr", rows)
     def put_reg_sho(self, rows): return self._put("reg_sho", rows)
     def put_halts(self, rows): return self._put("halts", rows)
+    def put_precursor_daily(self, rows): return self._put("precursor_daily", rows)
+    def put_precursor_live(self, rows): return self._put("precursor_live", rows)
 
     def runner_candidates(self, trade_date: str, prev_date: str, min_pct: float) -> list[tuple]:
         """정규장 마지막 현재가 기준으로 전 영업일 대비 min_pct% 이상 오른 종목 → (symbol, prev_close, close)."""

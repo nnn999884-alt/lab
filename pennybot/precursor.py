@@ -1,0 +1,172 @@
+"""급등 전조 점수: 과거 +500% 급등 사례에서 찾은 증상을 종목마다 켜졌는지 본다.
+
+일봉 (전날 종가까지, 하루 한 번):
+  ① 크게 빠짐     60일 고점 대비 −50% 이하
+  ② 흔들림 큼     30일 하루 변동폭 평균 10%+ 또는 갭 하락(−10%) 2회+ 또는 하루 −20% 폭락 이력
+  ③ 튄 이력       60일 안에 하루 +30% (고가 기준)
+  ④ 싼 소외주     $2 미만
+  ⑤ 조용히 흘러내림  10일 −10% 이하 + 최근 10일 거래량이 60일 평균의 절반 이하
+  ⑥ 거래량 늘기 시작 전날 거래량이 20일 평균의 1.5배+ (3배+ 면 2점)
+  ⑦ 고점 근처(60일 고점 대비 −20% 이내)는 0점 — 이런 데서는 거의 안 터졌다
+  점수: 크게 빠짐 2 · 튄 이력 2 · 거래량 급증 +2 · 나머지 1 (최대 10). 평소 거래량 = 중앙값
+장중 (1분봉, 데이·프리·정규장):
+  ⑧ 거래 깨어남   최근 60분 분당 거래량이 그 이전(같은 날)의 3배 이상, 최근 60분 거래 있던 분 5분 이상
+  ⑨ 슬금슬금 상승  최근 60분 +3% 이상, 최근 15분 +1.5% 이상
+  ⑩ 이미 +10%    전날 종가 대비 +10% 이상 (늦었을 수 있음 — 참고)
+"""
+from __future__ import annotations
+
+import statistics
+from datetime import datetime, timedelta
+
+# 과거 +500% 사례에서 비교군보다 훨씬 흔했던 증상일수록 무겁게 (최대 10점)
+WEIGHT = {"crashed": 2, "spiked": 2, "vol_up_strong": 2, "vol_up": 1, "volatile": 1, "bleed": 1, "cheap": 1}
+DAILY_LABELS = {
+    "crashed": "크게 빠짐", "volatile": "흔들림 큼", "spiked": "튄 이력", "cheap": "싼 소외주",
+    "bleed": "조용히 흘러내림", "vol_up": "거래량 늘기 시작", "vol_up_strong": "거래량 급증",
+}
+LIVE_LABELS = {"wake": "거래 깨어남", "creep": "슬금슬금 상승", "up10": "이미 +10%"}
+
+
+def daily(bars: list[tuple]) -> dict | None:
+    """bars: [(d, o, h, l, c, v)] 오래된 → 최신, 마지막 = 전날(D0). 61개 이상 필요."""
+    if len(bars) < 61:
+        return None
+    d, o, h, l, c, v = bars[-1]
+    if c <= 0:
+        return None
+    cl = [x[4] for x in bars]
+    w60, w30 = bars[-60:], bars[-30:]
+    hi60 = max(x[2] for x in w60)
+    dd60 = (c / hi60 - 1) * 100
+    prev = cl[-31:-1]
+    rng = [(x[2] - x[3]) / p * 100 for x, p in zip(w30, prev) if p]
+    gaps_dn = sum(1 for x, p in zip(w30, prev) if p and x[1] / p <= 0.9)
+    max_dn = min((x[4] / p - 1) * 100 for x, p in zip(w30, prev) if p)
+    spikes = sum(1 for k in range(len(bars) - 60, len(bars)) if cl[k - 1] and bars[k][2] / cl[k - 1] >= 1.3)
+    # 평소 거래량은 중앙값 (펌핑 날 하루가 평균을 부풀리지 않게)
+    v20 = statistics.median(x[5] for x in bars[-21:-1]) or 0
+    v60 = statistics.median(x[5] for x in w60) or 0
+    v10 = statistics.median(x[5] for x in bars[-10:])
+    ret10 = (c / cl[-11] - 1) * 100 if cl[-11] else 0
+    vol_ratio = v / v20 if v20 else 0
+    sig = {
+        "crashed": dd60 <= -50,
+        "volatile": (statistics.mean(rng) if rng else 0) >= 10 or gaps_dn >= 2 or max_dn <= -20,
+        "spiked": spikes >= 1,
+        "cheap": c < 2,
+        "bleed": ret10 <= -10 and v60 > 0 and v10 / v60 <= 0.5,
+        "vol_up": vol_ratio >= 1.5,
+        "vol_up_strong": vol_ratio >= 3,
+    }
+    near_high = dd60 > -20
+    score = 0 if near_high else sum(WEIGHT[k] for k, on in sig.items() if on)
+    return {"d0": d, "close": c, "score": score, "near_high": near_high,
+            "signals": [k for k, on in sig.items() if on],
+            "metrics": {"dd60": dd60, "range30": statistics.mean(rng) if rng else None, "gaps_dn": gaps_dn, "max_dn": max_dn,
+                        "spikes60": spikes, "ret10": ret10, "vol_ratio": vol_ratio, "vol10_60": v10 / v60 if v60 else None,
+                        "dollar20": statistics.mean(x[4] * x[5] for x in bars[-20:])}}
+
+
+def live(minute_bars: list[tuple], prev_close: float, now: datetime | None = None) -> dict:
+    """minute_bars: [(ts_iso, o, h, l, c, v)] 시간순 (오늘 세션들). → {'signals': [...], 'metrics': {...}}"""
+    out = {"signals": [], "metrics": {}}
+    if not minute_bars or not prev_close:
+        return out
+    now = now or datetime.fromisoformat(minute_bars[-1][0])
+    t60, t15 = now - timedelta(minutes=60), now - timedelta(minutes=15)
+    ts = lambda b: datetime.fromisoformat(b[0])
+    last60 = [b for b in minute_bars if ts(b) > t60]
+    last15 = [b for b in minute_bars if ts(b) > t15]
+    before = [b for b in minute_bars if ts(b) <= t60]
+    price = minute_bars[-1][4]
+    m = {"price": price, "chg": (price / prev_close - 1) * 100,
+         "active_min_60": len([b for b in last60 if b[5] > 0])}
+    if before:
+        span = max(1.0, (t60 - ts(before[0])).total_seconds() / 60)
+        vb = sum(b[5] for b in before) / span
+        va = sum(b[5] for b in last60) / 60
+        m["vol_x"] = va / vb if vb else (99.0 if va else 0.0)
+    m["ret60"] = (price / last60[0][1] - 1) * 100 if last60 else None
+    m["ret15"] = (price / last15[0][1] - 1) * 100 if last15 else None
+    m["dollar_today"] = sum(b[4] * b[5] for b in minute_bars)
+    if (m.get("vol_x") or 0) >= 3 and m["active_min_60"] >= 5:
+        out["signals"].append("wake")
+    if (m["ret60"] or 0) >= 3 and (m["ret15"] or 0) >= 1.5:
+        out["signals"].append("creep")
+    if m["chg"] >= 10:
+        out["signals"].append("up10")
+    out["metrics"] = m
+    return out
+
+
+def alert_text(sym: str, name: str | None, day: dict, lv: dict, session_ko: str, dashboard: str | None = None) -> str:
+    """텔레그램 알림 (가독성: 첫 줄에 무슨 일·종목, 그다음 켜진 증상, 숫자)."""
+    from .trading.messages import money_s, pct, px, qty_s
+    m, dm = lv["metrics"], day["metrics"]
+    on_d = [DAILY_LABELS[k] for k in day["signals"] if k != "vol_up_strong"] + (["거래량 급증"] if "vol_up_strong" in day["signals"] else [])
+    on_l = [LIVE_LABELS[k] for k in lv["signals"]]
+    L = [f"⚡ 급등 전조 · {sym}" + (f" ({name})" if name else ""),
+         f"{px(m['price'])} ({pct(m['chg'])}) · {session_ko} · 전조 점수 {day['score']}점",
+         "",
+         "🔥 지금: " + ", ".join(on_l),
+         f"   최근 1시간 거래량 {m.get('vol_x', 0):.1f}배 · 1시간 {pct(m.get('ret60'))} · 15분 {pct(m.get('ret15'))} · 오늘 거래대금 {money_s(m.get('dollar_today'))}",
+         "📉 차트: " + ", ".join(on_d),
+         f"   60일 고점 대비 {pct(dm['dd60'])} · 10일 {pct(dm['ret10'])} · 변동폭 {dm['range30'] or 0:.0f}% · 60일 급등 {dm['spikes60']}회"
+         f" · 전날 거래량 {dm['vol_ratio']:.1f}배 · 20일 거래대금 {money_s(dm['dollar20'])}"]
+    if dashboard:
+        L += ["", f"📊 {dashboard}/?s={sym}"]
+    return "\n".join(L)
+
+
+def ranked(db_path: str, limit: int = 50) -> dict:
+    """최신 기준일의 전조 목록 (일봉 점수 + 장중 증상), 장중 증상 켜진 것 → 점수 순."""
+    import json
+    import sqlite3
+    from pathlib import Path
+    from .collector.store import ro_uri
+    if not Path(db_path).exists():
+        return {"d0": None, "rows": []}
+    con = sqlite3.connect(ro_uri(db_path), uri=True)
+    con.row_factory = sqlite3.Row
+    try:
+        d0 = con.execute("SELECT MAX(d0) FROM precursor_daily").fetchone()[0]
+        if not d0:
+            return {"d0": None, "rows": []}
+        rows = [dict(r) for r in con.execute(
+            """SELECT d.symbol, d.score, d.signals, d.metrics, d.close, l.signals AS live, l.metrics AS live_m, l.ts, l.alerted,
+                      (SELECT name FROM universe u WHERE u.symbol=d.symbol ORDER BY snapshot_date DESC LIMIT 1) AS name
+               FROM precursor_daily d LEFT JOIN precursor_live l ON l.d0=d.d0 AND l.symbol=d.symbol
+               WHERE d.d0=? ORDER BY d.score DESC, d.symbol""", (d0,))]
+    except sqlite3.OperationalError:
+        return {"d0": None, "rows": []}
+    finally:
+        con.close()
+    for r in rows:
+        r["signals"] = json.loads(r["signals"] or "[]")
+        r["metrics"] = json.loads(r["metrics"] or "{}")
+        r["live"] = json.loads(r["live"] or "[]")
+        r["live_m"] = json.loads(r["live_m"] or "{}")
+        r["labels"] = [DAILY_LABELS[k] for k in r["signals"] if k != "vol_up"] if "vol_up_strong" in r["signals"] else \
+            [DAILY_LABELS[k] for k in r["signals"]]
+        r["live_labels"] = [LIVE_LABELS[k] for k in r["live"]]
+    rows.sort(key=lambda r: (-len(set(r["live"]) & {"wake", "creep"}), -r["score"], -(r["metrics"].get("vol_ratio") or 0)))
+    return {"d0": d0, "rows": rows[:limit], "n": len(rows)}
+
+
+def top_text(db_path: str, limit: int = 15, dashboard: str | None = None) -> str:
+    """텔레그램 /전조."""
+    from .trading.messages import pct, px
+    r = ranked(db_path, limit)
+    if not r["rows"]:
+        return "급등 전조 목록이 아직 없습니다 (수집기가 장 마감 뒤 전 종목을 계산합니다)."
+    L = [f"⚡ 급등 전조 목록 · {r['d0']} 종가 기준 (전체 {r['n']}종목 중 상위 {len(r['rows'])})", ""]
+    for x in r["rows"]:
+        live = f" · 🔥 {', '.join(x['live_labels'])}" if x["live_labels"] else ""
+        chg = x["live_m"].get("chg")
+        now = f" → 지금 {pct(chg)}" if chg is not None else ""
+        L.append(f"{x['score']}점 {x['symbol']} {px(x['close'])}{now}{live}")
+        L.append(f"    {', '.join(x['labels'])}")
+    if dashboard:
+        L += ["", f"📊 {dashboard}/#symbol"]
+    return "\n".join(L)
