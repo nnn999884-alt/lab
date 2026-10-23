@@ -107,6 +107,13 @@ details summary { cursor: pointer; color: var(--text-secondary); font-size: 12.5
 .brief-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 14px; margin-bottom: 8px; }
 .brief-head .big { font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; }
 .brief-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(min(260px, 100%), 1fr)); }
+.flag.motive { border-color: var(--series-1); }
+.bigcases { grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); gap: 12px; }
+.bigcase { border: 1px solid var(--border); border-radius: 10px; padding: 10px; cursor: pointer; min-width: 0; }
+.bigcase:hover { background: var(--btn-hover); }
+.bigcase-head { margin-bottom: 4px; font-size: 14px; }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.chip { font-size: 11.5px; padding: 1px 7px; border-radius: 999px; background: rgba(127,127,127,.13); color: var(--text-secondary); }
 .flag { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; border: 1px solid var(--serious); color: var(--text-primary); margin-right: 6px; }
 .evlist { margin: 0; padding: 0; list-style: none; font-size: 12.5px; }
 .evlist li { padding: 5px 0; border-bottom: 1px solid var(--border); }
@@ -148,10 +155,24 @@ body.readonly .readonly-note { display: inline; }
   .report { max-height: 60vh; }
   table { font-size: 12px; }
   th, td { padding: 6px 6px; }
-  /* 넓은 표는 옆으로 밀어 보고, 첫 칸(시각·종목)은 고정 */
-  .tablewrap { -webkit-overflow-scrolling: touch; }
-  .tablewrap td:first-child, .tablewrap th:first-child { position: sticky; left: 0; background: var(--surface-1); z-index: 1; }
-  .tablewrap th:first-child { z-index: 2; }
+  /* 표 → 카드: 한 행 = 한 카드, "항목  값" 줄. 안쪽 스크롤 없이 페이지로 스크롤 */
+  .tablewrap { max-height: none !important; overflow: visible; }
+  table.cards thead { display: none; }
+  table.cards, table.cards tbody { display: block; }
+  table.cards tr { display: flex; flex-wrap: wrap; column-gap: 12px; padding: 9px 2px; border-bottom: 1px solid var(--border); }
+  table.cards td { display: flex; justify-content: space-between; gap: 8px; border: 0; padding: 1px 0; white-space: normal;
+    text-align: right; flex: 1 1 calc(50% - 6px); min-width: 0; font-size: 12.5px; }   /* 한 줄에 두 항목 */
+  table.cards td::before { content: attr(data-label); color: var(--text-muted); text-align: left; flex-shrink: 0; }
+  table.cards td.nil, table.cards td.minor { display: none !important; }
+  table.cards td:first-child { flex-basis: 100%; justify-content: flex-start; font-weight: 650; font-size: 14px; text-align: left; }
+  table.cards td:first-child::before { display: none; }
+  table.cards td.wide { display: block; text-align: left; color: var(--text-secondary); }
+  table.cards td.wide::before { display: none; }
+  table.cards td.empty, table.cards td.more { display: block; text-align: center; }
+  table.cards td.empty::before, table.cards td.more::before { display: none; }
+  table.cards td.more button { width: 100%; padding: 9px; }
+  #reports.cards tr[aria-selected="true"] td { background: transparent; }
+  #reports.cards tr[aria-selected="true"] { background: rgba(127,127,127,.12); border-radius: 8px; }
   .strat button { width: 100%; }
   .tip { white-space: normal; max-width: 80vw; }
 }
@@ -276,6 +297,40 @@ body.readonly .readonly-note { display: inline; }
   <!-- ===== 분석: 가설 검증·수집 상태 ===== -->
   <div class="tab" data-tab="analysis" hidden>
     <section class="card">
+      <h2>급등 전 30일 차트 조건</h2>
+      <p class="sub" id="c30-sub">python -m pennybot chart30 결과가 여기 나옵니다</p>
+      <h2 style="font-size:13px;margin-top:6px">평균 차트 모양: 대박(+500%) 직전 vs 전체 <span class="sub">(급등 전날 종가 = 100, 중앙값)</span></h2>
+      <div class="chart" id="c30-path"></div>
+      <div class="chart" id="c30-vol"></div>
+      <h2 style="font-size:13px;margin-top:12px">찾은 조건 <span class="sub">(앞 기간에서 찾고 뒤 기간에서 확인한 것만)</span></h2>
+      <div class="tablewrap"><table id="c30-conds"></table></div>
+      <details><summary>특징별 10분위 (왼쪽=낮음 → 오른쪽=높음, 막대 = 20일 안 +100% 적중률이 평균의 몇 배)</summary>
+        <div id="c30-dec"></div></details>
+    </section>
+    <section class="card">
+      <h2>대박 급등 사례 (+500%)</h2>
+      <p class="sub" id="big-sub">python -m pennybot bigruns 결과가 여기 나옵니다</p>
+      <div id="big-first" class="sub"></div>
+      <h2 style="font-size:13px;margin-top:10px">급등 전날(D0) 차트 조건: 대박 종목 vs 같은 시기 안 오른 종목</h2>
+      <div class="tablewrap"><table id="big-compare"></table></div>
+      <h2 style="font-size:13px;margin-top:14px">사례별 차트 <span class="sub">(급등 전 40일 → 고점 뒤 10일 · 세로선 = 급등 시작일)</span></h2>
+      <div class="grid bigcases" id="big-cases"></div>
+      <button id="big-more" hidden style="width:100%;margin-top:10px">더 보기</button>
+    </section>
+    <section class="card">
+      <h2>과거 검증: 급등주 다음 날</h2>
+      <p class="sub" id="hist-sub">python -m pennybot research 로 만든 결과가 여기 나옵니다</p>
+      <div class="seg" id="hist-exit" role="group" aria-label="파는 시점" style="margin-bottom:10px">
+        <button data-k="ret_pre" aria-pressed="false">프리 마지막</button>
+        <button data-k="ret_open" aria-pressed="true">정규장 시가</button>
+        <button data-k="ret_30m" aria-pressed="false">개장 30분</button>
+      </div>
+      <div class="tablewrap"><table id="hist"></table></div>
+      <details><summary>최근 급등일 (데이마켓 재현)</summary>
+        <div class="tablewrap" style="max-height:60vh;margin-top:8px"><table id="hist-runners"></table></div></details>
+      <details><summary>주의할 점</summary><ul class="evlist" id="hist-caveats"></ul></details>
+    </section>
+    <section class="card">
       <h2>급등주 추적</h2>
       <p class="sub long">정규장 종가 기준 +30% 이상 오른 종목과 다음 영업일 흐름 (급등일 종가 대비)</p>
       <div class="grid two">
@@ -333,6 +388,12 @@ const EVENT = { ATM_TERMINATED: "ATM 종료", OFFERING_TERMINATED: "공모 철�
   PUBLIC_OFFERING: "공모", PRIVATE_PLACEMENT: "사모", SECURITIES_PURCHASE_AGREEMENT: "증권매매계약", EQUITY_LINE: "주식 매수 약정",
   WARRANT_INDUCEMENT: "워런트 행사 유도", WARRANT_REPRICE: "워런트 행사가 인하", CONVERTIBLE: "전환사채", REVERSE_SPLIT: "액면병합",
   TAKEDOWN: "증자 실행", FDA_APPROVAL: "FDA 승인", MATERIAL_NEWS: "계약·수주", GOING_CONCERN: "계속기업 불확실", SHELF_FILED: "증자 등록(S-3)", OFFERING_FILED: "공모 신고(S-1)", REGISTRATION_EFFECTIVE: "등록 효력 발생", DELISTING_NOTICE: "상폐 통지" };
+// SEC 공시 양식을 무슨 공시인지 알 수 있게
+const FORM = { "8-K": "수시공시", "8-K/A": "수시공시 정정", "6-K": "해외 수시공시", "4": "내부자 거래", "424B1": "공모 확정", "424B3": "증권신고서",
+  "424B4": "공모 확정", "424B5": "증권 발행(공모)", "S-1": "공모 신고", "F-1": "공모 신고(해외)", "S-3": "증자 등록", "F-3": "증자 등록(해외)",
+  "RW": "등록 철회", "EFFECT": "등록 효력", "10-Q": "분기보고서", "10-K": "연간보고서", "NT 10-Q": "분기보고서 지연", "NT 10-K": "연간보고서 지연",
+  "DEF 14A": "주총 안건", "PRE 14A": "주총 안건(예비)", "NEWS": "보도자료" };
+const formKo = f => f ? (FORM[f] ? `${FORM[f]} (${f === "NEWS" ? "PR" : f})` : f) : null;
 const BUCKET = { low: "희석 위험 낮음", mid: "중간", high: "높음", unknown: "프로필 없음" };
 const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
 const $ = id => document.getElementById(id);
@@ -468,25 +529,41 @@ function barChart(box, items, { valueFmt = v => v, height = 200, empty = "데이
 }
 
 /* ---------- 표 ---------- */
+// 휴대폰: 표 → 카드 (첫 칸이 카드 제목, 빈 값은 숨김), 긴 목록은 20개 + 더 보기
+const MOBILE = matchMedia("(max-width: 640px)");
+const MOBILE_ROWS = 20;
+const expanded = new Set();
 function table(tbl, cols, rows, emptyText = "없음") {
   tbl.replaceChildren();
+  tbl.classList.add("cards");
   const thead = document.createElement("thead"), tr = document.createElement("tr");
   cols.forEach(c => { const th = document.createElement("th"); th.textContent = c.h; if (c.num) th.className = "num"; tr.appendChild(th); });
   thead.appendChild(tr); tbl.appendChild(thead);
   const tb = document.createElement("tbody");
   if (!rows.length) { const r = document.createElement("tr"), td = document.createElement("td"); td.colSpan = cols.length; td.className = "empty"; td.textContent = emptyText; r.appendChild(td); tb.appendChild(r); }
-  rows.forEach(row => {
+  const cut = MOBILE.matches && !expanded.has(tbl.id) && rows.length > MOBILE_ROWS;
+  (cut ? rows.slice(0, MOBILE_ROWS) : rows).forEach(row => {
     const r = document.createElement("tr");
     cols.forEach(c => {
       const td = document.createElement("td"); const v = c.f(row);
-      td.textContent = v == null ? "-" : v;
-      if (c.num) td.className = "num";
+      td.textContent = v == null || v === "" ? "-" : v;
+      td.dataset.label = c.h;
+      if (v == null || v === "" || v === "-") td.classList.add("nil");
+      if (c.num) td.classList.add("num");
+      if (c.wide) td.classList.add("wide");            // 휴대폰 카드에서 줄 전체 (제목·사유처럼 긴 글)
+      if (c.minor) td.classList.add("minor");          // 휴대폰에서는 숨김 (넓은 화면에서만)
       if (c.tone) { const t = c.tone(row); if (t) td.classList.add(t); }
       r.appendChild(td);
     });
     tb.appendChild(r);
   });
   tbl.appendChild(tb);
+  if (cut) {
+    const r = document.createElement("tr"), td = document.createElement("td"); td.colSpan = cols.length; td.className = "more";
+    const b = document.createElement("button"); b.textContent = `더 보기 (${rows.length - MOBILE_ROWS}개 더)`;
+    b.onclick = () => { expanded.add(tbl.id); table(tbl, cols, rows, emptyText); };
+    td.appendChild(b); r.appendChild(td); tb.appendChild(r);
+  }
 }
 const tone = v => v == null ? null : v > 0 ? "pos" : v < 0 ? "neg" : null;
 
@@ -573,24 +650,24 @@ async function loadTables() {
     { h: "종목", f: r => r.symbol }, { h: "전략", f: r => STRAT[r.strategy] || r.strategy }, { h: "상태", f: r => ({ PENDING: "매수 주문 중", OPEN: "보유", EXITING: "매도 주문 중" })[r.status] || r.status },
     { h: "수량", num: 1, f: r => r.remaining || r.planned_qty }, { h: "매수가", num: 1, f: r => fmtPx(r.entry_price) }, { h: "현재가", num: 1, f: r => fmtPx(r.last) },
     { h: "평가손익", num: 1, f: r => fmtUsd(r.unrealized, true), tone: r => tone(r.unrealized) }, { h: "수익률", num: 1, f: r => fmtPct(r.unrealized_pct), tone: r => tone(r.unrealized_pct) },
-    { h: "손절", num: 1, f: r => fmtPx(r.stop) }, { h: "익절", num: 1, f: r => r.scaled ? `분할 완료 · 트레일 ${fmtPx((r.high_water || 0) * (1 - (r.trail_pct || 0) / 100))}` : fmtPx(r.target) }, { h: "매도 시작", f: r => kst(r.sell_from) }, { h: "강제 청산", f: r => kst(r.deadline) },
+    { h: "손절", num: 1, f: r => fmtPx(r.stop) }, { h: "익절", num: 1, f: r => r.scaled ? `분할 완료 · 트레일 ${fmtPx((r.high_water || 0) * (1 - (r.trail_pct || 0) / 100))}` : fmtPx(r.target) }, { h: "매도 시작", minor: 1, f: r => kst(r.sell_from) }, { h: "강제 청산", f: r => kst(r.deadline) },
     { h: "서버 안전망", f: r => r.backstop_id ? `${fmtPx(r.backstop_trigger)} 감시` : (r.status === "OPEN" ? "없음" : "-"), tone: r => r.status === "OPEN" && !r.backstop_id ? "neg" : null },
   ], pos, "보유 종목 없음");
   table($("orders"), [
-    { h: "시각", f: r => kst(r.ts) }, { h: "종목", f: r => r.symbol }, { h: "구분", f: r => (r.side === "BUY" ? "매수" : "매도") + (r.type === "MARKET" ? "(시장가)" : "") },
+    { h: "주문", f: r => `${r.symbol} ${r.side === "BUY" ? "매수" : "매도"}${r.type === "MARKET" ? "(시장가)" : ""}` }, { h: "시각", f: r => kst(r.ts) },
     { h: "수량", num: 1, f: r => r.qty }, { h: "가격", num: 1, f: r => fmtPx(r.price) }, { h: "체결", num: 1, f: r => `${r.filled || 0}/${r.qty}` },
-    { h: "상태", f: r => ({ OPEN: "대기", FILLED: "체결", CANCELED: "취소", REJECTED: "거부", REPLACED: "정정됨" })[r.status] || r.status }, { h: "세션", f: r => SESS[r.session] || r.session }, { h: "메모", f: r => r.note },
+    { h: "상태", f: r => ({ OPEN: "대기", FILLED: "체결", CANCELED: "취소", REJECTED: "거부", REPLACED: "정정됨" })[r.status] || r.status }, { h: "세션", minor: 1, f: r => SESS[r.session] || r.session }, { h: "메모", minor: 1, f: r => r.note },
   ], orders);
   table($("trades"), [
     { h: "종목", f: r => r.symbol }, { h: "전략", f: r => STRAT[r.strategy] || r.strategy }, { h: "청산", f: r => r.status === "CANCELED" ? "매수 미체결" : r.exit_reason },
     { h: "손익", num: 1, f: r => fmtUsd(r.pnl, true), tone: r => tone(r.pnl) }, { h: "수익률", num: 1, f: r => fmtPct(r.pnl_pct), tone: r => tone(r.pnl_pct) },
-    { h: "매수→매도 세션", f: r => r.entry_session ? `${SESS[r.entry_session] || r.entry_session} → ${SESS[r.exit_session] || r.exit_session || "-"}` : "-" }, { h: "영업일", f: r => r.trade_date },
+    { h: "매수→매도 세션", minor: 1, f: r => r.entry_session ? `${SESS[r.entry_session] || r.entry_session} → ${SESS[r.exit_session] || r.exit_session || "-"}` : "-" }, { h: "영업일", minor: 1, f: r => r.trade_date },
   ], trades);
   const onlyOk = $("only-ok").checked;
   const latest = sigs.length ? sigs[0].ts : null;
   table($("signals"), [
-    { h: "시각", f: r => kst(r.ts) }, { h: "전략", f: r => STRAT[r.strategy] || r.strategy }, { h: "종목", f: r => r.symbol },
-    { h: "결과", f: r => r.ok ? "통과" : "탈락" }, { h: "가격", num: 1, f: r => fmtPx(r.price) }, { h: "사유", f: r => r.reason },
+    { h: "종목", f: r => `${r.symbol} · ${r.ok ? "✅ 통과" : "탈락"}`, tone: r => r.ok ? "pos" : null }, { h: "전략", f: r => STRAT[r.strategy] || r.strategy },
+    { h: "시각", minor: 1, f: r => kst(r.ts) }, { h: "가격", num: 1, f: r => fmtPx(r.price) }, { h: "사유", wide: 1, f: r => r.reason },
   ], sigs.filter(r => (!onlyOk || r.ok) && (!latest || r.ts >= new Date(new Date(latest) - 3600e3).toISOString().slice(0, 19))), "후보 없음 (데이마켓 시간에 스캔합니다)");
 }
 
@@ -637,7 +714,7 @@ async function loadRunners() {
   ], r.by_bucket.slice().sort((a, b) => order.indexOf(a.bucket) - order.indexOf(b.bucket)));
   const rp = (row, k) => row.ret[k] == null ? null : row.ret[k] * 100;
   table($("runners"), [
-    { h: "급등일", f: x => x.trade_date }, { h: "종목", f: x => x.symbol }, { h: "상승률", num: 1, f: x => fmtPct(x.change_pct, 0) },
+    { h: "종목", f: x => `${x.symbol} ${fmtPct(x.change_pct, 0)}` }, { h: "급등일", f: x => x.trade_date },
     { h: "마감 위치", num: 1, f: x => x.close_loc == null ? null : Math.round(x.close_loc * 100) + "%" },
     { h: "회전", num: 1, f: x => x.rotation == null ? null : x.rotation.toFixed(1) + "회" },
     { h: "희석 점수", num: 1, f: x => x.dilution_score == null ? null : Math.round(x.dilution_score) },
@@ -648,11 +725,12 @@ async function loadRunners() {
     { h: "정규장 첫", num: 1, f: x => fmtPct(rp(x, "open")), tone: x => tone(rp(x, "open")) },
   ], r.rows, "급등주 기록 없음");
   table($("dilution"), [
-    { h: "접수", f: x => kst(x.accepted) }, { h: "종목", f: x => x.symbol }, { h: "양식", f: x => x.form === "NEWS" ? "보도자료" : x.form },
-    { h: "방향", f: x => x.direction > 0 ? "▲ 호재" : x.direction < 0 ? "▼ 악재" : "–", tone: x => tone(x.direction) },
-    { h: "이벤트", f: x => (x.events || "").split(",").filter(Boolean).map(k => EVENT[k] || k).join(", ") || (x.insider_buy_usd ? `내부자 매수 ${fmtUsd(x.insider_buy_usd)}` : null) },
-    { h: "금액", num: 1, f: x => x.amount ? "$" + (x.amount / 1e6).toFixed(1) + "M" : null },
-    { h: "공개 세션", f: x => SESS[x.session] || x.session }, { h: "제목", f: x => x.title },
+    { h: "종목", f: x => `${x.symbol} ${x.direction > 0 ? "▲ 호재" : x.direction < 0 ? "▼ 악재" : "· 중립"}`, tone: x => tone(x.direction) },
+    { h: "판정", f: x => (x.events || "").split(",").filter(Boolean).map(k => EVENT[k] || k).join(", ") || (x.insider_buy_usd ? `내부자 매수 ${fmtUsd(x.insider_buy_usd)}` : null) },
+    { h: "공시", f: x => formKo(x.form) }, { h: "접수", f: x => `${kst(x.accepted)} · ${SESS[x.session] || x.session || "-"}` },
+    { h: "세부", wide: 1, f: x => x.summary || (x.amount ? "$" + (x.amount / 1e6).toFixed(1) + "M" : null) },
+    { h: "항목", wide: 1, f: x => x.items_ko && x.items_ko.length ? "8-K 항목: " + x.items_ko.join(", ") : null },
+    { h: "제목", wide: 1, f: x => x.title || x.headline },
   ], ev, "희석 이벤트 없음 (SEC_USER_AGENT 를 설정하면 공시 본문까지 판정합니다)");
 }
 
@@ -749,7 +827,14 @@ async function lookup(sym) {
   if (b.ssr) { const f = document.createElement("span"); f.className = "flag"; f.textContent = "SSR 공매도 호가 제한"; flags.appendChild(f); }
   if (b.reg_sho) { const f = document.createElement("span"); f.className = "flag"; f.textContent = `Reg SHO 결제불이행 (${b.reg_sho_days}일 기록)`; flags.appendChild(f); }
   if (b.halts.length) { const f = document.createElement("span"); f.className = "flag"; f.textContent = `최근 7일 거래정지 ${b.halts.length}회`; flags.appendChild(f); }
+  const fl = b.filings;
+  (fl && fl.motives || []).forEach(m => { const f = document.createElement("span"); f.className = "flag motive"; f.textContent = "🎯 " + m.label; f.title = m.detail; flags.appendChild(f); });
   if (flags.childNodes.length) { flags.style.marginBottom = "10px"; box.appendChild(flags); }
+  if (fl && fl.motives && fl.motives.length) {
+    const ul = document.createElement("ul"); ul.className = "evlist"; ul.style.marginBottom = "10px";
+    fl.motives.forEach(m => { const li = document.createElement("li"); li.textContent = `${m.label} — ${m.detail}`; ul.appendChild(li); });
+    box.appendChild(ul);
+  }
   const grid = document.createElement("div"); grid.className = "brief-grid";
   const q = b.quote, sh = b.short, bo = b.borrow;
   grid.appendChild(kvBox("시세", [
@@ -771,7 +856,8 @@ async function lookup(sym) {
   grid.appendChild(kvBox("기타", [
     ["24시간 최고 랭킹", b.rank ? `${b.rank.rank}위 (${{ MARKET_TRADING_AMOUNT: "거래대금", TOSS_SECURITIES_TRADING_AMOUNT: "토스 거래대금", TOP_GAINERS: "급등", TOP_LOSERS: "급락" }[b.rank.type] || b.rank.type})` : "-"],
     ["최근 급등 기록", r ? `${r.trade_date} ${fmtPct(r.change_pct, 0)}` : "-"],
-    ["희석 위험", r && r.dilution_score != null ? Math.round(r.dilution_score) + "점" : "-"],
+    ["희석 위험", fl ? `${Math.round(fl.dilution_score)}점` : r && r.dilution_score != null ? Math.round(r.dilution_score) + "점" : "-", fl && fl.dilution_score >= 60 ? "neg" : null],
+    ...(fl && fl.dilution_reasons && fl.dilution_reasons.length ? [["희석 사유", fl.dilution_reasons.slice(0, 3).join(", ")]] : []),
     ["펌프 신호", r && r.pump_flags ? r.pump_flags : "-"],
     ...b.halts.slice(0, 3).map(h => ["정지 " + h.halt_ts.slice(5, 16).replace("T", " "), h.reason_ko + (h.resume_ts ? ` → ${h.resume_ts.slice(11, 16)} 재개` : "")]),
   ]));
@@ -783,8 +869,12 @@ async function lookup(sym) {
       const li = document.createElement("li");
       const arrow = e.direction > 0 ? "▲ " : e.direction < 0 ? "▼ " : "";
       const evs = (e.events || "").split(",").filter(Boolean).map(k => EVENT[k] || k).join(", ");
-      li.textContent = `${arrow}${kst(e.ts)} · ${e.form === "NEWS" ? "보도자료" : e.form} · ${e.title || evs || (e.insider_buy_usd ? "내부자 매수 " + fmtUsd(e.insider_buy_usd) : "")}`;
-      if (e.direction) li.className = tone(e.direction);
+      const head = document.createElement("div");
+      head.textContent = `${arrow}${kst(e.ts)} · ${formKo(e.form)}${evs ? " · " + evs : ""}`;
+      if (e.direction) head.className = tone(e.direction);
+      li.appendChild(head);
+      const more = [e.summary, e.items_ko && e.items_ko.length ? "항목: " + e.items_ko.join(", ") : null, e.title || e.headline].filter(Boolean);
+      more.forEach(m => { const d = document.createElement("div"); d.className = "sub"; d.style.margin = "2px 0 0"; d.textContent = m; li.appendChild(d); });
       ul.appendChild(li);
     });
     box.appendChild(ul);
@@ -792,6 +882,165 @@ async function lookup(sym) {
   try { localStorage.setItem("lookup", sym); } catch (e) {}
 }
 $("lookup-form").onsubmit = e => { e.preventDefault(); lookup($("lookup-sym").value).catch(err => alert(err.message)); };
+
+/* ---------- 급등 전 30일 차트 조건 ---------- */
+function pathChart(box, days, series, { height = 170, fmt = v => v.toFixed(0), label = "" } = {}) {
+  // series: [{name, values, color}] · x = 급등 전날 기준 일수, 0 에 세로선
+  box.replaceChildren();
+  const W = Math.max(box.clientWidth, 300), H = height, m = { l: 40, r: 10, t: 16, b: 20 };
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": label }, box);
+  const all = series.flatMap(s => s.values);
+  const ticks = niceTicks(Math.min(...all), Math.max(...all), 4);
+  const lo = ticks[0], hi = ticks[ticks.length - 1];
+  const X = k => m.l + (k / (days.length - 1)) * (W - m.l - m.r);
+  const Y = v => m.t + (1 - (v - lo) / (hi - lo || 1)) * (H - m.t - m.b);
+  ticks.forEach(v => { el("line", { x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v), stroke: css("--grid") }, svg); txt("text", fmt(v), { x: m.l - 4, y: Y(v) + 4, "text-anchor": "end" }, svg); });
+  const z = days.indexOf(0);
+  el("line", { x1: X(z), x2: X(z), y1: m.t, y2: H - m.b, stroke: css("--axis"), "stroke-dasharray": "3 3" }, svg);
+  [[0, days[0] + "일"], [z, "급등 전날"], [days.length - 1, "+" + days[days.length - 1] + "일"]].forEach(([k, s], j) =>
+    txt("text", s, { x: X(k), y: H - 4, "text-anchor": j === 0 ? "start" : j === 2 ? "end" : "middle" }, svg));
+  series.forEach((s, j) => {
+    el("path", { d: s.values.map((v, k) => (k ? "L" : "M") + X(k).toFixed(1) + " " + Y(v).toFixed(1)).join(""), fill: "none",
+      stroke: css(s.color), "stroke-width": 2 }, svg);
+    txt("text", s.name, { x: m.l + 4 + j * 110, y: 11, fill: css(s.color), "font-weight": 600 }, svg);
+  });
+}
+async function loadC30() {
+  const r = await api("/api/chart30");
+  if (!r) { table($("c30-conds"), [{ h: "조건", f: x => x }], [], "아직 없음 — 봇 컴퓨터에서 python -m pennybot chart30 실행"); return; }
+  const b = r.base;
+  $("c30-sub").textContent = `${r.start} ~ ${r.end} · 매일 $0.1~$10 약 ${Math.round(r.per_day)}종목 · 그날까지 30일 일봉만 보고, 이후 20거래일 안에 고가 2배(+100%)·6배(+500%) 갔는지. ` +
+    `아무 조건 없이: +100% ${(b.p100_test * 100).toFixed(1)}%, +500% ${(b.p500_test * 100).toFixed(2)}% (검증 기간 ${r.split}~)`;
+  const P = r.paths;
+  pathChart($("c30-path"), P.days, [{ name: "대박 직전", values: P.big.price, color: "--series-2" }, { name: "전체 평균", values: P.all.price, color: "--axis" }],
+    { label: "평균 가격 경로", fmt: v => v.toFixed(0) });
+  pathChart($("c30-vol"), P.days, [{ name: "대박 거래량", values: P.big.volume, color: "--series-2" }, { name: "전체 거래량", values: P.all.volume, color: "--axis" }],
+    { label: "평균 거래량 경로", height: 130, fmt: v => v.toFixed(0) });
+  const rows = [...r.triples.map(x => ({ ...x, k: 3 })), ...r.pairs.map(x => ({ ...x, k: 2 })), ...r.singles.filter(x => x.lift100_test >= 2).slice(0, 8).map(x => ({ ...x, k: 1 }))]
+    .sort((a, b2) => b2.lift100_test - a.lift100_test);
+  table($("c30-conds"), [
+    { h: "조건", wide: 1, f: x => x.conditions.join(" + ") },
+    { h: "+100% 적중", num: 1, f: x => `${(x.p100_test * 100).toFixed(1)}% (${x.lift100_test.toFixed(1)}배)`, tone: () => "pos" },
+    { h: "+500% 적중", num: 1, f: x => `${(x.p500_test * 100).toFixed(2)}%` },
+    { h: "하루 몇 종목", num: 1, f: x => x.per_day_test.toFixed(1) },
+    { h: "학습 기간", num: 1, minor: 1, f: x => `${(x.p100_train * 100).toFixed(1)}% (${x.lift100_train.toFixed(1)}배)` },
+  ], rows, "검증 기간에서도 2배 이상인 조건이 없습니다");
+  const box = $("c30-dec"); box.replaceChildren();
+  r.deciles.slice(0, 16).forEach(d => {
+    const wrap = document.createElement("div"); wrap.style.margin = "10px 0";
+    const h = document.createElement("div"); h.style.fontSize = "12.5px"; h.textContent = d.name; wrap.appendChild(h);
+    const c = document.createElement("div"); c.className = "chart"; wrap.appendChild(c); box.appendChild(wrap);
+    barChart(c, d.buckets.map((x, i) => ({ label: d.buckets.length > 2 ? String(i + 1) : (i ? "예" : "아니오"), v: x.lift100,
+      color: x.lift100 >= 2 ? "--series-2" : "--series-1",
+      tip: [["", x.lift100.toFixed(2) + "배", css("--series-1")], ["구간", `${x.lo.toPrecision(3)} ~ ${x.hi.toPrecision(3)}`], ["+100%", (x.p100 * 100).toFixed(1) + "%"], ["+500%", (x.p500 * 100).toFixed(2) + "%"], ["종목-일", x.n.toLocaleString()]] })),
+      { valueFmt: v => v.toFixed(1), height: 110 });
+  });
+}
+
+/* ---------- 대박 급등 사례 ---------- */
+function miniCandles(box, bars, markIdx) {
+  // bars: [d, o, h, l, c, v]. 위 70% 캔들, 아래 30% 거래량, markIdx 에 세로선 (급등 시작일)
+  box.replaceChildren();
+  const W = Math.max(box.clientWidth, 260), H = 150, top = 6, ch = 100, vh = 34;
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img" }, box);
+  const lo = Math.min(...bars.map(b => b[3])), hi = Math.max(...bars.map(b => b[2]));
+  const lg = v => Math.log(Math.max(v, 1e-6));                       // 몇 배씩 오르므로 로그 눈금
+  const Y = v => top + (1 - (lg(v) - lg(lo)) / ((lg(hi) - lg(lo)) || 1)) * ch;
+  const vmax = Math.max(...bars.map(b => b[5])) || 1;
+  const slot = W / bars.length, bw = Math.max(1, slot * 0.6);
+  const up = css("--good"), dn = css("--critical");
+  if (markIdx >= 0) el("line", { x1: slot * (markIdx + 0.5), x2: slot * (markIdx + 0.5), y1: 0, y2: H, stroke: css("--series-1"), "stroke-dasharray": "3 3" }, svg);
+  bars.forEach((b, i) => {
+    const x = slot * (i + 0.5), color = b[4] >= b[1] ? up : dn;
+    el("line", { x1: x, x2: x, y1: Y(b[2]), y2: Y(b[3]), stroke: color, "stroke-width": 1 }, svg);
+    el("rect", { x: x - bw / 2, y: Math.min(Y(b[1]), Y(b[4])), width: bw, height: Math.max(1, Math.abs(Y(b[1]) - Y(b[4]))), fill: color }, svg);
+    const h = b[5] / vmax * vh;
+    el("rect", { x: x - bw / 2, y: H - h, width: bw, height: h, fill: css("--axis") }, svg);
+  });
+  txt("text", fmtPx(hi), { x: 2, y: 12 }, svg);
+  txt("text", fmtPx(lo), { x: 2, y: top + ch }, svg);
+}
+let bigShown = 12, bigData = null;
+const FIRST = { DAY: "데이마켓", PRE: "프리마켓", REGULAR: "정규장" };
+async function loadBig() {
+  const r = bigData = await api("/api/bigruns");
+  if (!r) { table($("big-compare"), [{ h: "조건", f: x => x }], [], "아직 없음 — 봇 컴퓨터에서 python -m pennybot research 후 bigruns 실행"); return; }
+  $("big-sub").textContent = `${r.win}거래일 안에 고가가 급등 전날 종가의 ${r.mult}배 이상 · ${r.n_cases}건 · 비교군 ${r.n_controls}건 (같은 시기·비슷한 가격대, 안 오른 종목) · ${kst(r.created)}`;
+  const fm = Object.entries(r.first_move || {});
+  const tot = fm.reduce((a, [, v]) => a + v, 0);
+  $("big-first").textContent = tot ? "급등 첫날 처음 +20% 를 찍은 때: " + fm.sort((a, b) => b[1] - a[1]).map(([k, v]) => `${FIRST[k] || k} ${v}건 (${Math.round(v / tot * 100)}%)`).join(" · ") : "";
+  table($("big-compare"), [
+    { h: "조건", f: x => x.condition },
+    { h: "대박 종목", num: 1, f: x => Math.round(x.big * 100) + "%" },
+    { h: "비교군", num: 1, f: x => Math.round(x.control * 100) + "%" },
+    { h: "몇 배 흔한가", num: 1, f: x => x.lift == null ? "∞" : x.lift.toFixed(1) + "배", tone: x => x.lift >= 2 ? "pos" : x.lift != null && x.lift < 0.6 ? "neg" : null },
+  ], r.compare);
+  drawBig();
+}
+function drawBig() {
+  const box = $("big-cases"); box.replaceChildren();
+  (bigData.cases || []).slice(0, bigShown).forEach(c => {
+    const card = document.createElement("div"); card.className = "bigcase";
+    const h = document.createElement("div"); h.className = "bigcase-head";
+    h.innerHTML = "";
+    const name = document.createElement("strong"); name.textContent = `${c.symbol} ${fmtPct(c.run.peak, 0)}`; name.className = "pos";
+    const meta = document.createElement("span"); meta.className = "sub"; meta.style.margin = "0";
+    meta.textContent = ` 시작 ${c.d1} · ${c.run.days_to_peak}일 만에 고점 · 고점 뒤 ${fmtPct(c.run.giveback_10d, 0)}`;
+    h.append(name, meta); card.appendChild(h);
+    const chart = document.createElement("div"); chart.className = "chart"; card.appendChild(chart);
+    const f = c.f, chips = [
+      `전날 $${f.price < 1 ? f.price.toFixed(3) : f.price.toFixed(2)}`,
+      `60일 고점 대비 ${fmtPct(f.dd_60, 0)}`, `20일 ${fmtPct(f.ret_20, 0)}`,
+      f.spikes_60 ? `60일 안 급등 ${f.spikes_60}회` : "이전 급등 없음",
+      f.vol_d0 != null ? `전날 거래량 ${f.vol_d0.toFixed(1)}배` : null,
+      f.short_ratio != null ? `공매도 ${Math.round(f.short_ratio * 100)}%` : null,
+      f.day_last != null ? `데이마켓 ${fmtPct(f.day_last, 0)}` : null,
+      f.first20 ? `첫 +20%: ${FIRST[f.first20]}` : (f.day_dollar != null ? "10:30 전 +20% 없음" : null),
+      `첫날 ${fmtPct(c.run.d1_close, 0)} 마감`,
+    ].filter(Boolean);
+    const cs = document.createElement("div"); cs.className = "chips";
+    chips.forEach(x => { const s = document.createElement("span"); s.className = "chip"; s.textContent = x; cs.appendChild(s); });
+    card.appendChild(cs);
+    card.onclick = () => { lookup(c.symbol); showTab("symbol"); };
+    card.title = "누르면 종목 조회";
+    box.appendChild(card);
+    miniCandles(chart, c.bars, c.i0 - c.bars_start + 1);
+  });
+  const more = $("big-more");
+  const left = (bigData.cases || []).length - bigShown;
+  more.hidden = left <= 0; more.textContent = `더 보기 (${left}건 더)`;
+}
+$("big-more").onclick = () => { bigShown += 12; drawBig(); };
+
+let histKey = "ret_open";
+async function loadHist() {
+  const r = await api("/api/research_hist");
+  if (!r) { table($("hist"), [{ h: "요인", f: x => x }], [], "아직 없음 — 봇 컴퓨터에서 python -m pennybot research 를 실행하세요 (처음 30분~1시간)"); return; }
+  $("hist-sub").textContent = `${r.start} ~ ${r.end} · 급등일 ${r.runners}건 (+${r.min_pct}% 이상, $0.2~$10) · 데이마켓 VWAP 에 사서 판다고 가정 · ${kst(r.created)} 실행`;
+  const s = f => f[histKey];
+  table($("hist"), [
+    { h: "그룹", f: f => `${f.factor === "전체" ? "" : f.factor + " · "}${f.group}` },
+    { h: "평균 수익", num: 1, f: f => s(f) ? fmtPct(s(f).mean) : null, tone: f => s(f) && tone(s(f).mean) },
+    { h: "중앙값", num: 1, f: f => s(f) ? fmtPct(s(f).median) : null, tone: f => s(f) && tone(s(f).median) },
+    { h: "오른 비율", num: 1, f: f => s(f) ? Math.round(s(f).hit * 100) + "%" : null },
+    { h: "건수", num: 1, f: f => s(f) ? `${s(f).n}건` : `${f.n}건 (데이 거래 없음)` },
+  ], r.factors.filter(f => f.n > 0));
+  table($("hist-runners"), [
+    { h: "종목", f: x => `${x.symbol} ${fmtPct(x.change_pct, 0)}` }, { h: "급등일", f: x => x.d },
+    { h: "데이마켓 매수가", num: 1, f: x => x.day_vwap ? `${fmtPx(x.day_vwap)} (${fmtPct(x.day_gap)})` : "거래 없음" },
+    { h: "→프리", num: 1, f: x => fmtPct(x.ret_pre), tone: x => tone(x.ret_pre) },
+    { h: "→시가", num: 1, f: x => fmtPct(x.ret_open), tone: x => tone(x.ret_open) },
+    { h: "→30분", num: 1, f: x => fmtPct(x.ret_30m), tone: x => tone(x.ret_30m) },
+    { h: "공매도", num: 1, f: x => ratio(x.short_ratio) }, { h: "희석", num: 1, f: x => x.dilution_score == null ? null : Math.round(x.dilution_score) + "점" },
+    { h: "부양 동기", wide: 1, f: x => x.motive_detail || null },
+  ], r.top || []);
+  $("hist-caveats").replaceChildren(...(r.caveats || []).map(c => { const li = document.createElement("li"); li.textContent = c; return li; }));
+}
+document.querySelectorAll("#hist-exit button").forEach(b => b.onclick = () => {
+  histKey = b.dataset.k;
+  document.querySelectorAll("#hist-exit button").forEach(x => x.setAttribute("aria-pressed", x === b));
+  loadHist();
+});
 
 async function control(body) {
   try { await api("/api/control", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); }
@@ -819,7 +1068,7 @@ const TAB_JOBS = {
   home: () => [loadEquity(), loadStrategies(), loadTables()],
   symbol: () => [loadShorts()],
   trade: () => [loadTables(), loadReports()],
-  analysis: () => [loadRunners(), loadCollector(), loadResearch(), loadBacktests()],
+  analysis: () => [loadC30(), loadBig(), loadHist(), loadRunners(), loadCollector(), loadResearch(), loadBacktests()],
 };
 let tab = "home";
 async function refresh() {

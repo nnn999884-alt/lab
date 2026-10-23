@@ -85,11 +85,18 @@ def brief(db_path: str, symbol: str, now: datetime | None = None) -> dict:
     week = (now - timedelta(days=7)).isoformat(timespec="seconds")
     out["halts"] = db.q("SELECT halt_ts, reason, reason_ko, resume_ts FROM halts WHERE symbol=? AND halt_ts >= ? "
                         "ORDER BY halt_ts DESC LIMIT 5", (s, week))
-    out["events"] = db.q("""SELECT accepted AS ts, form, events, direction, insider_buy_usd, amount, NULL AS title, session
+    out["events"] = db.q("""SELECT accepted AS ts, form, events, direction, insider_buy_usd, amount, NULL AS title, session, detail
                             FROM filings WHERE symbol=?
                             UNION ALL
-                            SELECT published AS ts, 'NEWS' AS form, events, direction, NULL, NULL, title, session
+                            SELECT published AS ts, 'NEWS' AS form, events, direction, NULL, NULL, title, session, NULL
                             FROM news WHERE symbol=? ORDER BY ts DESC LIMIT 8""", (s, s))
+    import json as _json
+    from .filing_detail import summary
+    for e in out["events"]:
+        d = _json.loads(e.pop("detail") or "{}")
+        e["summary"] = summary(e["form"], d, (last or {}).get("last"))
+        e["items_ko"] = d.get("items")
+        e["headline"] = d.get("headline")
     out["runner"] = db.one("SELECT * FROM runners WHERE symbol=? ORDER BY trade_date DESC LIMIT 1", (s,))
     rk = db.one("""SELECT type, MIN(rank) AS rank FROM rankings WHERE symbol=? AND ts >= ?
                    GROUP BY type ORDER BY MIN(rank) LIMIT 1""", (s, (now - timedelta(hours=24)).isoformat(timespec="seconds")))
@@ -164,9 +171,31 @@ def render(b: dict) -> str:
                      + (f" → 재개 {h['resume_ts'][11:16]}" if h.get("resume_ts") else ""))
     for e in b["events"][:4]:
         arrow = "▲" if (e["direction"] or 0) > 0 else "▼" if (e["direction"] or 0) < 0 else "·"
-        what = e["title"] or e["events"] or e["form"]
-        lines.append(f"{arrow} {e['ts'][5:10]} {'보도자료' if e['form'] == 'NEWS' else e['form']}: {what}"[:120])
-    r = b.get("runner")
-    if r and r.get("dilution_score") is not None:
-        lines.append(f"💧 희석 위험 {r['dilution_score']:.0f}점 ({r['trade_date']} 급등 기록)")
+        what = e["title"] or e.get("headline") or ", ".join(e.get("items_ko") or []) or e["events"] or e["form"]
+        lines.append(f"{arrow} {e['ts'][5:10]} {'보도자료' if e['form'] == 'NEWS' else e['form']}: {what}"[:140])
+        if e.get("summary"):
+            lines.append(f"   {e['summary']}"[:200])
+    f = b.get("filings")
+    if f:
+        if f.get("motives"):
+            lines.append("🎯 부양 동기: " + " · ".join(m["label"] for m in f["motives"]))
+        lines.append(f"💧 희석 위험 {f['dilution_score']:.0f}점" + (f" ({', '.join(f['dilution_reasons'][:3])})" if f["dilution_reasons"] else ""))
+    else:
+        r = b.get("runner")
+        if r and r.get("dilution_score") is not None:
+            lines.append(f"💧 희석 위험 {r['dilution_score']:.0f}점 ({r['trade_date']} 급등 기록)")
     return "\n".join(lines)
+
+
+def with_filings(b: dict, dil, research_db: str | None = None) -> dict:
+    """희석 점수·부양 동기를 붙인다 (EDGAR 조회, 실패해도 나머지는 그대로)."""
+    if not b.get("found") or dil is None:
+        return b
+    from .motive import daily_closes, live
+    try:
+        price = (b.get("price") or {}).get("last")
+        b["filings"] = live(dil, b["symbol"], price, closes=daily_closes(research_db, b["symbol"]) if research_db else None)
+    except Exception as e:                       # EDGAR 장애·미등록 종목
+        b["filings"] = None
+        b["filings_error"] = str(e)[:200]
+    return b

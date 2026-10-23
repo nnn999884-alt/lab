@@ -58,6 +58,7 @@ class Filing:
     primary_doc: str
     items: str = ""
     accepted: str = ""   # submissions API 의 acceptanceDateTime (원문 그대로)
+    report_date: str = ""   # 정기보고서(10-Q/10-K)의 대상 기간 말일
 
 
 class EdgarClient:
@@ -151,6 +152,7 @@ def parse_submissions(j: dict) -> list[Filing]:
             primary_doc=r.get("primaryDocument", [""] * (i + 1))[i],
             items=(r.get("items") or [""] * (i + 1))[i] or "",
             accepted=(r.get("acceptanceDateTime") or [""] * (i + 1))[i] or "",
+            report_date=(r.get("reportDate") or [""] * (i + 1))[i] or "",
         ))
     return out
 

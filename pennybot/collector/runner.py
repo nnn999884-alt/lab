@@ -13,6 +13,7 @@
 """
 from __future__ import annotations
 
+import json
 import logging
 import time
 from datetime import datetime, timedelta, timezone
@@ -87,6 +88,7 @@ class Collector:
 
         if self._last_session is None:
             self._run("catch_up", self.catch_up_summaries)
+            self._run("filing_details", self.backfill_details)
         # 세션이 바뀌면: 직전 세션의 1분봉을 마저 받고, 애프터마켓이 끝났으면 요약
         cur = (trade_date, session)
         if self._last_session and cur != self._last_session:
@@ -267,15 +269,23 @@ class Collector:
                 d, sess = self.cal.classify(f["accepted"])
                 # 피드에는 8-K 항목·Form 4 금액·본문이 없어서 submissions 와 원문에서 보충한다
                 detail = self._lookup(f["cik"], f["accession"])
-                buy = None
+                buy, info = None, {}
                 if f["form"] == "4" and detail:
-                    buy = self._safe(lambda: ed.insider_buy_usd(self.edgar.form4_xml(f["cik"], detail)))
+                    from ..filing_detail import form4
+                    xml = self._safe(lambda: self.edgar.form4_xml(f["cik"], detail))
+                    if xml:
+                        buy = ed.insider_buy_usd(xml)
+                        info = form4(xml)
                 evs = []
                 if detail and f["form"] != "4":
                     if self.dilution:
                         evs = self._safe(lambda: self.dilution._events_for(f["cik"], detail)) or []
+                        info = self.dilution.detail_for(f["accession"]) or {}
                     else:
                         evs = classify(detail.form, detail.items, "", detail.filed, detail.accession)
+                    if not info and detail.items:
+                        from ..filing_detail import extract
+                        info = extract(detail.form, detail.items, "")
                 direction = (1 if sum(e.direction for e in evs) > 0 else -1 if sum(e.direction for e in evs) < 0
                              else 0) if evs else (1 if buy and buy > 0 else 0)
                 rows.append({"accession": f["accession"], "cik": f["cik"], "symbol": sym, "form": f["form"],
@@ -283,7 +293,8 @@ class Collector:
                              "trade_date": d.isoformat() if d else None, "session": sess,
                              "insider_buy_usd": buy, "events": ",".join(sorted({e.kind for e in evs})),
                              "direction": direction,
-                             "amount": max((e.amount or 0 for e in evs), default=0) or None})
+                             "amount": max((e.amount or 0 for e in evs), default=0) or None,
+                             "detail": json.dumps(info, ensure_ascii=False) if info else None})
                 self.recent_filers[sym] = now
         if rows:
             self.store.put_filings(rows)
@@ -349,6 +360,38 @@ class Collector:
         if new:
             self.store.put_halts(new)
             log.info("거래정지 %d건: %s", len(new), ", ".join(f"{r['symbol']}({r['reason_ko']})" for r in new[:10]))
+
+    def backfill_details(self, days: int = 14, limit: int = 300) -> None:
+        """세부 숫자(가격·주식 수·워런트·Form 4 거래)가 없는 최근 공시를 채운다 (예전에 받은 공시용, 시작할 때 한 번)."""
+        if not self.edgar:
+            return
+        from ..filing_detail import extract, form4
+        since = iso(self.clock() - timedelta(days=days))
+        rows = self.store.query("SELECT accession, cik, form FROM filings WHERE detail IS NULL AND accepted >= ? "
+                                "ORDER BY accepted DESC LIMIT ?", (since, limit))
+        done = 0
+        for acc, cik, form in rows:
+            f = self._lookup(cik, acc)
+            if not f:
+                continue
+            info = {}
+            if form == "4":
+                xml = self._safe(lambda: self.edgar.form4_xml(cik, f))
+                info = form4(xml) if xml else {}
+            elif self.dilution:
+                info = self.dilution.detail_for(acc)
+                if info is None:                       # 예전 캐시(이벤트만) → 지우고 본문을 다시 읽어 세부까지
+                    (self.dilution.dir / f"{acc}.json").unlink(missing_ok=True)
+                    self._safe(lambda: self.dilution._events_for(cik, f))
+                    info = self.dilution.detail_for(acc) or {}
+            if not info and f.items:
+                info = extract(f.form, f.items, "")
+            self.store.db.execute("UPDATE filings SET detail=? WHERE accession=?",
+                                  (json.dumps(info, ensure_ascii=False) if info else "{}", acc))
+            done += 1
+        self.store.db.commit()
+        if done:
+            log.info("공시 세부 보충 %d건", done)
 
     def _lookup(self, cik: int, accession: str) -> ed.Filing | None:
         filings = self._safe(lambda: self.edgar.filings(cik)) or []

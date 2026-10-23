@@ -5,6 +5,7 @@
   python -m pennybot summarize --date D    # 영업일 D(미국 날짜)의 세션 요약 다시 만들기
   python -m pennybot trade [--once]        # 세션 매매 엔진 (mode: paper 기본, live 는 이중 확인)
   python -m pennybot dashboard [--demo]    # 로컬 대시보드 http://127.0.0.1:8050 (--demo: 예시 데이터)
+  python -m pennybot research [--days 180]  # 과거 데이터로 가설 검증 (데이마켓 재현, 공매도·희석·부양 동기별)
   python -m pennybot tunnel                # 대시보드 외부 주소 (cloudflared, 주소는 알림으로, 비밀번호 없으면 보기 전용)
   python -m pennybot probe-orders --symbol SYM --yes-real-order   # 토스 정정·취소 동작 실계좌 확인 (1주)
   python -m pennybot screen                # (구) Coil & Catalyst 스크리닝
@@ -275,6 +276,27 @@ def tunnel_url(cfg: Config) -> str | None:
         return None
 
 
+def cmd_research(cfg: Config, args) -> None:
+    """과거 데이터로 가설 검증 (토스 일봉·1분봉 + FINRA 공매도 + SEC 공시). 처음은 오래 걸리고, 받은 자료는 캐시."""
+    from .research import format_report, run
+    setup_file_log(cfg, "research")
+    print(format_report(run(cfg, days=args.days, edgar=not args.no_edgar, min_pct=args.min_pct)))
+
+
+def cmd_bigruns(cfg: Config, args) -> None:
+    """대박 급등(+500%) 사례의 급등 전 차트·데이마켓 분석 vs 비교군. 먼저 research 로 일봉을 받아 둬야 한다."""
+    from .bigruns import format_report, run
+    setup_file_log(cfg, "research")
+    print(format_report(run(cfg, with_intraday=not args.no_intraday)))
+
+
+def cmd_chart30(cfg: Config) -> None:
+    """급등 전 30일 일봉 차트 조건 찾기 (전 종목·전 기간, 학습/검증 분리). research 로 일봉을 받아 둬야 한다."""
+    from .chart30 import format_report, run
+    setup_file_log(cfg, "research")
+    print(format_report(run(cfg)))
+
+
 def cmd_backtest(cfg: Config, args) -> None:
     """수집기 DB 를 재생해 매매 엔진을 그대로 돌린다 (토스 API 접속 없음)."""
     from datetime import date, datetime
@@ -356,7 +378,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="미국 페니주 자동매매 (토스증권)")
     ap.add_argument("command", nargs="?", default="collect",
                     choices=["check", "accounts", "collect", "summarize", "trade", "dashboard", "probe-orders",
-                             "backtest", "telegram-setup", "tunnel", "screen", "run"])
+                             "backtest", "research", "bigruns", "chart30", "telegram-setup", "tunnel", "screen", "run"])
     ap.add_argument("--config", default="config.yaml")
     ap.add_argument("--once", action="store_true", help="collect/run: 한 번만 실행")
     ap.add_argument("--date", help="summarize: 미국 영업일 YYYY-MM-DD")
@@ -373,6 +395,10 @@ def main() -> None:
     ap.add_argument("--param", action="append", help="backtest: 설정 덮어쓰기 (예: runner_overnight.trail_pct=6)")
     ap.add_argument("--with-edgar", action="store_true", help="backtest: SEC 희석 프로필 사용 (네트워크 필요)")
     ap.add_argument("--out", help="backtest: 결과 폴더")
+    ap.add_argument("--days", type=int, default=180, help="research: 과거 며칠 (급등일 기준)")
+    ap.add_argument("--no-edgar", action="store_true", help="research: SEC 공시 판정 생략 (빠름)")
+    ap.add_argument("--no-intraday", action="store_true", help="bigruns: 1분봉(데이마켓) 분석 생략 (빠름)")
+    ap.add_argument("--min-pct", type=float, default=30.0, help="research: 급등 기준 %%")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
     for stream in (sys.stdout, sys.stderr):    # 윈도우 콘솔(cp949)에서 이모지 때문에 멈추지 않게
@@ -421,6 +447,9 @@ def _dispatch(cfg, args) -> None:
         "backtest": lambda: cmd_backtest(cfg, args),
         "telegram-setup": lambda: cmd_telegram_setup(cfg),
         "tunnel": lambda: cmd_tunnel(cfg, args.port),
+        "research": lambda: cmd_research(cfg, args),
+        "bigruns": lambda: cmd_bigruns(cfg, args),
+        "chart30": lambda: cmd_chart30(cfg),
         "screen": lambda: cmd_screen(cfg),
         "run": lambda: cmd_run(cfg, args.once),
     }[args.command]()

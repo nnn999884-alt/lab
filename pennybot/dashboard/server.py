@@ -84,8 +84,44 @@ class Data:
         }
 
     def symbol(self, sym: str) -> dict:
-        from ..brief import brief
-        return brief(self.market_db, sym)
+        from ..brief import brief, with_filings
+        return with_filings(brief(self.market_db, sym), self.dilution(), str(Path(self.cfg.state_dir) / "research.db"))
+
+    def dilution(self):
+        """SEC_USER_AGENT 가 있으면 공시 판정 (희석 점수·부양 동기). 처음 한 번만 만든다."""
+        if not hasattr(self, "_dil"):
+            self._dil = None
+            if self.cfg.sec_user_agent and not self.cfg.state_dir.startswith("state_demo"):
+                from ..dilution import DilutionService
+                from ..screener.edgar import EdgarClient
+                self._dil = DilutionService(EdgarClient(self.cfg.sec_user_agent), f"{self.cfg.state_dir}/edgar_cache")
+        return self._dil
+
+    def bigruns(self) -> dict | None:
+        """python -m pennybot bigruns 의 최신 결과 (대박 급등 사례·비교군)."""
+        runs = sorted(Path(self.cfg.state_dir, "research").glob("bigruns-*.json"), reverse=True)
+        try:
+            return json.loads(runs[0].read_text(encoding="utf-8")) if runs else None
+        except ValueError:
+            return None
+
+    def chart30(self) -> dict | None:
+        """python -m pennybot chart30 의 최신 결과 (급등 전 30일 차트 조건)."""
+        runs = sorted(Path(self.cfg.state_dir, "research").glob("chart30-*.json"), reverse=True)
+        try:
+            return json.loads(runs[0].read_text(encoding="utf-8")) if runs else None
+        except ValueError:
+            return None
+
+    def research_hist(self) -> dict | None:
+        """python -m pennybot research 의 최신 결과."""
+        runs = sorted(Path(self.cfg.state_dir, "research").glob("*/report.json"), reverse=True)
+        if not runs:
+            return None
+        try:
+            return json.loads(runs[0].read_text(encoding="utf-8"))
+        except ValueError:
+            return None
 
     def shorts(self) -> list[dict]:
         """감시 종목(최근 호가를 받는 종목) + 보유 종목의 공매도·대차, 대차 수수료 높은 순."""
@@ -210,8 +246,17 @@ class Data:
 
     def dilution_events(self, limit: int) -> list[dict]:
         rows = self.m("""SELECT symbol, form, items, events, direction, amount, accepted, session, trade_date,
-                         insider_buy_usd, NULL AS title FROM filings WHERE (events IS NOT NULL AND events != '')
-                            OR insider_buy_usd > 0 ORDER BY accepted DESC LIMIT ?""", (limit,))
+                         insider_buy_usd, NULL AS title, detail FROM filings
+                         WHERE (events IS NOT NULL AND events != '') OR insider_buy_usd > 0
+                            OR (detail IS NOT NULL AND detail NOT IN ('', '{}'))
+                         ORDER BY accepted DESC LIMIT ?""", (limit,))
+        from ..filing_detail import summary
+        for r in rows:
+            d = json.loads(r.pop("detail") or "{}")
+            px = self.m("SELECT last FROM prices WHERE symbol=? AND ts <= ? ORDER BY ts DESC LIMIT 1", (r["symbol"], r["accepted"]))
+            r["summary"] = summary(r["form"], d, px[0]["last"] if px else None)
+            r["items_ko"] = d.get("items")
+            r["headline"] = d.get("headline")
         rows += self.m("""SELECT symbol, 'NEWS' AS form, '' AS items, events, direction, NULL AS amount,
                           published AS accepted, session, trade_date, NULL AS insider_buy_usd, title FROM news
                           WHERE events IS NOT NULL AND events != '' ORDER BY published DESC LIMIT ?""", (limit,))
@@ -339,6 +384,9 @@ class Handler(BaseHTTPRequestHandler):
             "/api/reports": lambda: _reports(d.cfg.state_dir, n("limit", 30)),
             "/api/shorts": lambda: d.shorts(),
             "/api/symbol": lambda: d.symbol(qs.get("s", "")[:12]),
+            "/api/research_hist": lambda: d.research_hist(),
+            "/api/bigruns": lambda: d.bigruns(),
+            "/api/chart30": lambda: d.chart30(),
         }
         if u.path in routes:
             try:

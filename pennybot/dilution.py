@@ -298,7 +298,9 @@ class DilutionService:
     def _events_for(self, cik: int, f: ed.Filing) -> list[Event]:
         path = self.dir / f"{f.accession}.json"
         if path.exists():
-            return [Event(**{**e, "filed": date.fromisoformat(e["filed"])}) for e in json.loads(path.read_text(encoding="utf-8"))]
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            raw = raw["events"] if isinstance(raw, dict) else raw      # 예전 캐시는 이벤트 목록만
+            return [Event(**{**e, "filed": date.fromisoformat(e["filed"])}) for e in raw]
         text, ex10 = "", []
         if f.form.upper().startswith(TEXT_FORMS) and f.primary_doc:
             try:
@@ -316,8 +318,21 @@ class DilutionService:
                 if e.direction < 0 and e.kind not in have:
                     evs.append(e)
                     have.add(e.kind)
-        path.write_text(json.dumps([{**asdict(e), "filed": e.filed.isoformat()} for e in evs], ensure_ascii=False), encoding="utf-8")
+        from .filing_detail import extract
+        detail = extract(f.form, f.items, clean_text(text) if text else "",
+                         max((e.amount or 0 for e in evs), default=0) or None)
+        path.write_text(json.dumps({"events": [{**asdict(e), "filed": e.filed.isoformat()} for e in evs], "detail": detail},
+                                   ensure_ascii=False), encoding="utf-8")
         return evs
+
+    def detail_for(self, accession: str) -> dict | None:
+        """_events_for 가 본문에서 뽑아 둔 세부 숫자 (가격·주식 수·워런트·주관사 등). 예전 캐시면 None."""
+        path = self.dir / f"{accession}.json"
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        return raw.get("detail") if isinstance(raw, dict) else None
 
     def _with_exhibits(self, cik: int, f: ed.Filing, text: str) -> tuple[str, list[str]]:
         """8-K/6-K 첨부: 보도자료(EX-99)는 본문에 붙여 그대로 판정, 계약서(EX-10)는 따로 돌려준다."""

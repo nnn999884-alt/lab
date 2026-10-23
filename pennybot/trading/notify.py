@@ -12,6 +12,7 @@ import logging
 import queue
 import threading
 import time
+from pathlib import Path
 
 import requests
 
@@ -125,6 +126,7 @@ class TelegramCommands:
         self.token, self.chat = token, str(chat)
         self.control, self.trader, self.notifier = control, trader, notifier
         self.market_db = market_db           # /종목 이 읽는 수집기 DB
+        self.research_db = str(Path(market_db).parent / "research.db") if market_db else None   # 과거 일봉
         self.s = session or requests.Session()
         self.offset = None
 
@@ -181,8 +183,10 @@ class TelegramCommands:
         if cmd.split()[0] in ("/종목", "/symbol", "/s"):
             if len(cmd.split()) < 2 or not self.market_db:
                 return "사용법: /종목 PENX"
-            from ..brief import brief, render
+            from ..brief import brief, render, with_filings
             b = brief(self.market_db, cmd.split()[1])
+            fund = getattr(self.trader, "fund", None)
+            b = with_filings(b, getattr(fund, "dil", None), self.research_db)
             url = self.trader.dashboard_url() if hasattr(self.trader, "dashboard_url") else None
             return render(b) + (f"\n\n📊 {url}/?s={b['symbol']}" if url and b["found"] else "")
         if cmd in ("/대시보드", "/dashboard"):
