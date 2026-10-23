@@ -1133,6 +1133,7 @@ async function loadVs() {
   drawVs();
 }
 let vsRows = [], vsShown = 8;
+const untilS = (a, b) => { const m = Math.max(0, Math.round((new Date(b) - new Date(a)) / 60000)); return m >= 60 ? `${Math.floor(m / 60)}시간 ${m % 60}분 뒤` : `${m}분 뒤`; };
 const vsOpen = new Set();
 function drawVs() {
   const box = $("vs"); box.replaceChildren();
@@ -1146,7 +1147,8 @@ function drawVs() {
     l1.append(span("vs-st", r.status === "OPEN" ? "⏳" : v >= 0 ? "✅" : "❌"), span("vs-sym", r.symbol), span("vs-name", r.name || ""),
               span("vs-ret " + (tone(v) || ""), fmtPct(v)));
     const l2 = span("vs-l2", `${fmtPx(r.entry)} → ${r.status === "OPEN" ? fmtPx(r.last) + " 보유 중" : fmtPx(r.exit_price) + " " + r.exit_reason}`
-      + ` · 최고 ${fmtPct((r.high / r.entry - 1) * 100, 0)} 최저 ${fmtPct((r.low / r.entry - 1) * 100, 0)} · ${kst(r.opened)} ${SESS_SHORT[r.session] || ""}`);
+      + ` · 최고 ${fmtPct((r.high / r.entry - 1) * 100, 0)}${r.high_at && r.high > r.entry ? ` (${untilS(r.opened, r.high_at)})` : ""}`
+      + ` 최저 ${fmtPct((r.low / r.entry - 1) * 100, 0)} · ${kst(r.opened)} ${SESS_SHORT[r.session] || ""}`);
     row.append(l1, l2);
     if (open && r.reason) row.appendChild(span("vs-why", r.reason));
     row.onclick = () => { open ? vsOpen.delete(r.id) : vsOpen.add(r.id); drawVs(); };

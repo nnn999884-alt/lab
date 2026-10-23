@@ -350,6 +350,13 @@ def daily_list_text(db_path: str, n: int = 10, dashboard: str | None = None) -> 
     return "\n".join(L)
 
 
+def until_s(start: str, end: str) -> str:
+    """두 시각 사이 → '매수 35분 뒤' / '매수 2시간 10분 뒤'."""
+    from datetime import datetime
+    m = int((datetime.fromisoformat(end) - datetime.fromisoformat(start)).total_seconds() // 60)
+    return f"매수 {m // 60}시간 {m % 60}분 뒤" if m >= 60 else f"매수 {max(m, 0)}분 뒤"
+
+
 def vsignal_text(kind: str, sym: str, name: str | None, v: dict, cfg, session_ko: str) -> str:
     """가상 매수·매도 알림 (실제 주문 없음)."""
     from datetime import datetime
@@ -371,10 +378,11 @@ def vsignal_text(kind: str, sym: str, name: str | None, v: dict, cfg, session_ko
     h = held.total_seconds()
     held_s = f"{int(h // 86400)}일 {int(h % 86400 // 3600)}시간" if h >= 86400 else f"{int(h // 3600)}시간 {int(h % 3600 // 60)}분"
     icon = "🔵" if ret >= 0 else "🔴"
+    peak = f" ({until_s(v['opened'], v['high_at'])})" if v.get("high_at") else ""
     return "\n".join([
         f"{icon} 가상 매도 {head} · {v['exit_reason']}",
         "──────────────",
         f"💵 {px(v['entry'])} → {px(v['exit_price'])} ({pct(ret)}) · {session_ko}",
-        f"보유 {held_s} · 보유 중 최고 {pct((v['high'] / v['entry'] - 1) * 100)} · 최저 {pct((v['low'] / v['entry'] - 1) * 100)}",
+        f"보유 {held_s} · 보유 중 최고 {pct((v['high'] / v['entry'] - 1) * 100)}{peak} · 최저 {pct((v['low'] / v['entry'] - 1) * 100)}",
         "실제 주문 아님 — 전략 검증용 기록",
     ])

@@ -700,7 +700,7 @@ class Collector:
     @staticmethod
     def _vrow(r) -> dict:
         keys = ["id", "symbol", "d0", "opened", "session", "entry", "score", "reason", "status", "closed", "exit_price",
-                "exit_reason", "high", "low", "last"]
+                "exit_reason", "high", "low", "last", "high_at"]
         return dict(zip(keys, r))
 
     def check_vsignals(self, now: datetime, session: str) -> None:
@@ -713,6 +713,7 @@ class Collector:
             if not last:
                 continue
             hi, lo = max(v["high"] or last, last), min(v["low"] or last, last)
+            hi_at = iso(now) if last > (v["high"] or 0) else v.get("high_at")
             ret = (last / v["entry"] - 1) * 100
             why = None
             if ret >= self.cfg.vsignal_take_profit:
@@ -723,12 +724,12 @@ class Collector:
                 why = f"보유 기간 {self.cfg.vsignal_max_days}일 끝"
             with self.store.db:
                 if why:
-                    self.store.db.execute("UPDATE vsignals SET status='CLOSED', closed=?, exit_price=?, exit_reason=?, high=?, low=?, last=? "
-                                          "WHERE id=?", (iso(now), last, why, hi, lo, last, v["id"]))
+                    self.store.db.execute("UPDATE vsignals SET status='CLOSED', closed=?, exit_price=?, exit_reason=?, high=?, low=?, last=?, "
+                                          "high_at=? WHERE id=?", (iso(now), last, why, hi, lo, last, hi_at, v["id"]))
                 else:
-                    self.store.db.execute("UPDATE vsignals SET high=?, low=?, last=? WHERE id=?", (hi, lo, last, v["id"]))
+                    self.store.db.execute("UPDATE vsignals SET high=?, low=?, last=?, high_at=? WHERE id=?", (hi, lo, last, hi_at, v["id"]))
             if why and self.notifier:
-                v.update(status="CLOSED", closed=iso(now), exit_price=last, exit_reason=why, high=hi, low=lo, last=last)
+                v.update(status="CLOSED", closed=iso(now), exit_price=last, exit_reason=why, high=hi, low=lo, last=last, high_at=hi_at)
                 link = self.link() if self.link else None
                 name = (self.universe.get(v["symbol"]) or {}).get("name")
                 self.notifier.send(vsignal_text("sell", v["symbol"], name, v, self.cfg, SESSION_KO.get(session, session)),

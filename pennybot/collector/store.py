@@ -89,6 +89,7 @@ MIGRATIONS = [
     ("filings", "direction", "INTEGER"),  # +1 호재 / −1 악재 / 0
     ("filings", "amount", "REAL"),        # 공모 금액(달러)
     ("filings", "detail", "TEXT"),        # 세부 숫자 JSON (filing_detail: 가격·주식 수·워런트·주관사·Form 4 거래)
+    ("vsignals", "high_at", "TEXT"),      # 가상 매매 최고가에 닿은 시각
 ]
 
 

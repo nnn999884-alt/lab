@@ -41,6 +41,7 @@ def test_virtual_buy_then_take_profit(tmp_path):
     assert status == "CLOSED" and reason == "익절 +30%" and hi == 1.31
     text = sent.msgs[-1][0]
     assert text.startswith("🔵 가상 매도 (PENX · 펜엑스) · 익절 +30%") and "최저 −20.0%" in text
+    assert "최고 +31.0% (매수 5시간 0분 뒤)" in text
 
 
 def test_no_chase_after_big_move(tmp_path):
