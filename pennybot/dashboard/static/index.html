@@ -8,31 +8,35 @@
 :root {
   color-scheme: light;
   --surface-0: #f4f3f0; --surface-1: #fcfcfb; --border: #e3e2dd;
-  --text-primary: #0b0b0b; --text-secondary: #52514e; --text-muted: #7a7974;
+  --text-primary: #0b0b0b; --text-secondary: #45443f; --text-muted: #67665f;
   --grid: #ecebe7; --axis: #b9b8b2;
   --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a; --series-4: #eda100;
   --good: #0ca30c; --warning: #fab219; --serious: #ec835a; --critical: #d03b3b;
   --good-text: #006300; --critical-text: #b22a2a;
+  --up: #d23c3c; --down: #2f6fd6;
   --btn: #ffffff; --btn-hover: #f0efec;
 }
 @media (prefers-color-scheme: dark) {
   :root:where(:not([data-theme="light"])) {
     color-scheme: dark;
     --surface-0: #121211; --surface-1: #1a1a19; --border: #2e2e2c;
-    --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #8f8e86;
+    --text-primary: #f0efec; --text-secondary: #d0cfc6; --text-muted: #a3a29a;
     --grid: #2a2a28; --axis: #55544f;
     --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500;
     --good-text: #4cc94c; --critical-text: #ef7a7a;
+  --up: #ff6b6b; --down: #5b9bff;
+    --up: #ff6b6b; --down: #5b9bff;
     --btn: #232321; --btn-hover: #2c2c2a;
   }
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
   --surface-0: #121211; --surface-1: #1a1a19; --border: #2e2e2c;
-  --text-primary: #f0efec; --text-secondary: #c3c2b7; --text-muted: #8f8e86;
+  --text-primary: #f0efec; --text-secondary: #d0cfc6; --text-muted: #a3a29a;
   --grid: #2a2a28; --axis: #55544f;
   --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70; --series-4: #c98500;
   --good-text: #4cc94c; --critical-text: #ef7a7a;
+  --up: #ff6b6b; --down: #5b9bff;
   --btn: #232321; --btn-hover: #2c2c2a;
 }
 * { box-sizing: border-box; }
@@ -61,7 +65,7 @@ button:focus-visible, .seg button:focus-visible { outline: 2px solid var(--serie
 .tile .label { color: var(--text-secondary); font-size: 12.5px; }
 .tile .value { font-size: 24px; font-weight: 650; font-variant-numeric: tabular-nums; margin-top: 2px; }
 .tile .note { color: var(--text-muted); font-size: 12px; }
-.pos { color: var(--good-text); } .neg { color: var(--critical-text); }
+.pos { color: var(--up); } .neg { color: var(--down); }   /* 한국식: 상승 빨강, 하락 파랑 */
 section { margin-bottom: 16px; }
 .filters { display: flex; gap: 8px; align-items: center; margin-bottom: 12px; flex-wrap: wrap; }
 .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
@@ -125,6 +129,8 @@ body.readonly .readonly-note { display: inline; }
 
 /* ---------- 휴대폰 ---------- */
 @media (max-width: 640px) {
+  body { font-size: 15px; }
+  .card h2 { font-size: 16px; }
   main { padding: 12px 12px calc(76px + env(safe-area-inset-bottom)); }
   .tabs { position: fixed; top: auto; bottom: 0; left: 0; right: 0; margin: 0; padding: 6px 8px calc(6px + env(safe-area-inset-bottom));
     gap: 0; border-top: 1px solid var(--border); background: var(--surface-1); }
@@ -176,6 +182,41 @@ body.readonly .readonly-note { display: inline; }
   .strat button { width: 100%; }
   .tip { white-space: normal; max-width: 80vw; }
 }
+
+/* ---------- 급등 전조 카드 ---------- */
+.pre-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+.pre-head h2 { font-size: 17px; margin: 0; }
+.pre-list { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); margin-top: 8px; }
+.pre-card { border: 1px solid var(--border); border-left: 4px solid var(--border); border-radius: 12px; padding: 11px 12px;
+  cursor: pointer; background: var(--surface-1); min-width: 0; }
+.pre-card:hover, .pre-card:focus-visible { background: var(--btn-hover); outline: none; }
+.pre-card.warm { border-left-color: var(--warning); }
+.pre-card.hot { border-left-color: var(--critical); background: rgba(208, 59, 59, .07); }
+.pre-top { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.pre-sym { font-size: 18px; font-weight: 750; letter-spacing: .2px; }
+.pre-name { flex: 1; min-width: 0; color: var(--text-muted); font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pre-score { font-size: 13px; font-weight: 700; padding: 2px 9px; border-radius: 999px; white-space: nowrap; }
+.s-hi { background: var(--serious); color: #fff; }
+.s-mid { background: var(--warning); color: #1a1a19; }
+.s-lo { background: rgba(127,127,127,.2); color: var(--text-secondary); }
+.pre-price { margin-top: 4px; font-size: 15px; font-variant-numeric: tabular-nums; }
+.pre-now { font-weight: 700; }
+.muted { color: var(--text-muted); }
+.pre-facts { margin-top: 6px; font-size: 12.5px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.chip { border: 1px solid var(--border); background: transparent; color: var(--text-secondary); }
+.chip.live { background: var(--critical); border-color: var(--critical); color: #fff; font-weight: 600; }
+.more-btn { width: 100%; margin-top: 10px; padding: 9px; }
+
+.feed { list-style: none; margin: 6px 0 0; padding: 0; max-height: 300px; overflow: auto; }
+.feed .ev { padding: 6px 2px; border-bottom: 1px solid var(--border); font-size: 13.5px; cursor: pointer; }
+.feed .ev:hover { background: var(--btn-hover); }
+.ev-hot { color: var(--critical-text); font-weight: 650; }
+.ev-up { color: var(--up); }
+.ev-dn { color: var(--down); }
+.feed-ctl { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.pre-chart { margin-top: 6px; }
+.pre-judge { margin-top: 4px; font-size: 13px; font-weight: 650; }
+#lookup-chart { margin: 6px 0 10px; }
 </style>
 </head>
 <body>
@@ -206,6 +247,36 @@ body.readonly .readonly-note { display: inline; }
 
   <!-- ===== 홈: 지금 상태 ===== -->
   <div class="tab" data-tab="home">
+    <section class="card feed-wrap">
+      <div class="pre-head">
+        <h2>🔔 방금 일어난 일</h2>
+        <div class="feed-ctl">
+          <div class="seg" id="feed-filter" role="group" aria-label="이벤트">
+            <button data-f="all" aria-pressed="true">전체</button>
+            <button data-f="hot" aria-pressed="false">전조·급등만</button>
+          </div>
+          <label class="sub" style="margin:0"><input type="checkbox" id="feed-sound"> 새 이벤트 소리</label>
+        </div>
+      </div>
+      <ul class="feed" id="feed"></ul>
+    </section>
+    <section class="card pre-wrap">
+      <div class="pre-head">
+        <h2>⚡ 급등 전조</h2>
+        <div class="seg" id="pre-filter" role="group" aria-label="보기">
+          <button data-f="all" aria-pressed="true">전체</button>
+          <button data-f="live" aria-pressed="false">🔥 지금 움직임</button>
+          <button data-f="top" aria-pressed="false">8점 이상</button>
+        </div>
+      </div>
+      <p class="sub" id="pre-sub"></p>
+      <div class="pre-list" id="pre-list"></div>
+      <button id="pre-more" class="more-btn" hidden>더 보기</button>
+      <details class="sub" style="margin-top:8px"><summary>점수·증상 설명</summary>
+        과거 +500% 급등 직전에 비교군보다 훨씬 흔했던 증상. 크게 빠짐(60일 고점 −50%↓) 2점 · 튄 이력(60일 안 하루 +30%) 2점 ·
+        거래량 급증(전날 3배+) +2점 · 거래량 늘기 시작(1.5배+)·흔들림 큼·조용히 흘러내림·$2 미만 각 1점 (최대 10). 60일 고점 근처는 0점.
+        🔥 장중(1분마다, 5점 이상 종목): 거래 깨어남 = 최근 1시간 분당 거래량 3배+, 슬금슬금 상승 = 1시간 +3%·15분 +1.5%. 둘 다 켜지면 텔레그램 알림.</details>
+    </section>
     <div class="grid tiles">
       <div class="card tile"><div class="label">계좌 평가액</div><div class="value" id="t-equity">-</div><div class="note" id="t-cash"></div></div>
       <div class="card tile"><div class="label">오늘 실현 손익</div><div class="value" id="t-daypnl">-</div><div class="note" id="t-date"></div></div>
@@ -248,15 +319,6 @@ body.readonly .readonly-note { display: inline; }
 
   <!-- ===== 종목: 조회 + 공매도·대차 ===== -->
   <div class="tab" data-tab="symbol" hidden>
-    <section class="card">
-      <h2>⚡ 급등 전조 목록</h2>
-      <p class="sub" id="pre-sub">과거 +500% 급등 직전에 공통으로 보인 증상이 켜진 종목. 🔥 = 지금 장중에 거래가 깨어나고 슬금슬금 오르는 중</p>
-      <details class="sub"><summary>증상 설명</summary>
-        크게 빠짐: 60일 고점 대비 −50% 이하 · 흔들림 큼: 변동폭 10%+ 또는 갭 하락·폭락 이력 · 튄 이력: 60일 안 하루 +30% ·
-        싼 소외주: $2 미만 · 조용히 흘러내림: 10일 −10% + 거래량 절반 이하 · 거래량 늘기 시작/급증: 전날 1.5배/3배+ ·
-        60일 고점 근처는 0점. 장중(1분마다): 거래 깨어남 = 최근 1시간 분당 거래량 3배+, 슬금슬금 상승 = 1시간 +3%·15분 +1.5%</details>
-      <div class="tablewrap" style="max-height:70vh"><table id="pre"></table></div>
-    </section>
     <section class="card" id="lookup-card">
       <h2>종목 조회</h2>
       <p class="sub long">시세 흐름·호가·공매도 비율·대차·SSR·거래정지·공시를 한눈에. 아래 표의 종목을 눌러도 됩니다</p>
@@ -264,6 +326,7 @@ body.readonly .readonly-note { display: inline; }
         <input id="lookup-sym" placeholder="종목 (예: PENX)" autocomplete="off" autocapitalize="characters" spellcheck="false">
         <button type="submit">조회</button>
       </form>
+      <div class="chart" id="lookup-chart"></div>
       <div id="lookup"></div>
     </section>
 
@@ -822,6 +885,7 @@ async function lookup(sym) {
   sym = (sym || "").trim().toUpperCase();
   if (!sym) return;
   $("lookup-sym").value = sym;
+  api("/api/daily?s=" + encodeURIComponent(sym) + "&n=90").then(bs => candleChart($("lookup-chart"), bs, { height: 260 })).catch(() => {});
   const box = $("lookup");
   const b = await api("/api/symbol?s=" + encodeURIComponent(sym));
   box.replaceChildren();
@@ -892,28 +956,136 @@ async function lookup(sym) {
 }
 $("lookup-form").onsubmit = e => { e.preventDefault(); lookup($("lookup-sym").value).catch(err => alert(err.message)); };
 
-/* ---------- 급등 전조 목록 ---------- */
-async function loadPre() {
-  const r = await api("/api/precursor?limit=80");
-  $("pre-sub").textContent = r.d0 ? `${r.d0} 종가 기준 · 2점 이상 ${r.n}종목 · 장중 증상은 1분마다 갱신 (3점 이상 종목)` : "아직 없음 — 수집기가 장 마감 뒤 전 종목을 계산합니다";
-  table($("pre"), [
-    { h: "종목", f: x => `${x.live.includes("wake") && x.live.includes("creep") ? "🔥 " : ""}${x.symbol} · ${x.score}점`, tone: x => x.live.length ? "pos" : null },
-    { h: "전날 종가", num: 1, f: x => fmtPx(x.close) },
-    { h: "지금", num: 1, f: x => x.live_m && x.live_m.chg != null ? `${fmtPx(x.live_m.price)} (${fmtPct(x.live_m.chg)})` : null, tone: x => x.live_m && tone(x.live_m.chg) },
-    { h: "장중 증상", f: x => x.live_labels.join(", ") || null },
-    { h: "1시간 거래량", num: 1, f: x => x.live_m && x.live_m.vol_x != null ? x.live_m.vol_x.toFixed(1) + "배" : null },
-    { h: "차트 증상", wide: 1, f: x => x.labels.join(" · ") },
-    { h: "60일 고점 대비", num: 1, minor: 1, f: x => fmtPct(x.metrics.dd60, 0) },
-    { h: "전날 거래량", num: 1, minor: 1, f: x => x.metrics.vol_ratio != null ? x.metrics.vol_ratio.toFixed(1) + "배" : null },
-    { h: "20일 거래대금", num: 1, minor: 1, f: x => fmtQty(x.metrics.dollar20).replace(/^/, "$") },
-    { h: "이름", minor: 1, f: x => x.name },
-  ], r.rows || [], "아직 없음");
-  $("pre").querySelectorAll("tbody tr").forEach((tr, i) => {
-    const x = (r.rows || [])[i]; if (!x) return;
-    tr.style.cursor = "pointer";
-    tr.onclick = () => lookup(x.symbol).then(() => $("lookup-card").scrollIntoView({ behavior: "smooth" }));
+/* ---------- 캔들 차트 (이동평균·거래량) ---------- */
+function candleChart(box, bars, { height = 240, ma = [5, 20], log = false, labels = true } = {}) {
+  // bars: [[d?, o, h, l, c, v]] 또는 [[o, h, l, c, v]]
+  box.replaceChildren();
+  if (!bars || bars.length < 2) return;
+  const B = bars.map(b => b.length === 6 ? b.slice(1) : b);
+  const W = Math.max(box.clientWidth, 260), H = height, m = { l: labels ? 46 : 2, r: 6, t: 8 };
+  const ch = Math.round(H * 0.72), vh = H - ch - 14;
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img" }, box);
+  const lo = Math.min(...B.map(b => b[2])), hi = Math.max(...B.map(b => b[1]));
+  const f = v => log ? Math.log(Math.max(v, 1e-6)) : v;
+  const Y = v => m.t + (1 - (f(v) - f(lo)) / ((f(hi) - f(lo)) || 1)) * (ch - m.t);
+  const slot = (W - m.l - m.r) / B.length, bw = Math.max(1, slot * 0.62);
+  const X = i => m.l + slot * (i + 0.5);
+  if (labels) niceTicks(lo, hi, 3).forEach(v => { if (v < lo || v > hi) return; el("line", { x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v), stroke: css("--grid") }, svg); txt("text", fmtPx(v), { x: m.l - 4, y: Y(v) + 4, "text-anchor": "end" }, svg); });
+  const up = css("--up"), dn = css("--down");                   // 한국식: 상승 빨강, 하락 파랑
+  const vmax = Math.max(...B.map(b => b[4])) || 1;
+  B.forEach((b, i) => {
+    const color = b[3] >= b[0] ? up : dn, x = X(i);
+    el("line", { x1: x, x2: x, y1: Y(b[1]), y2: Y(b[2]), stroke: color, "stroke-width": 1 }, svg);
+    el("rect", { x: x - bw / 2, y: Math.min(Y(b[0]), Y(b[3])), width: bw, height: Math.max(1, Math.abs(Y(b[0]) - Y(b[3]))), fill: color }, svg);
+    const h = b[4] / vmax * vh;
+    el("rect", { x: x - bw / 2, y: H - h, width: bw, height: h, fill: color, opacity: 0.45 }, svg);
+  });
+  const colors = ["--series-4", "--series-3", "--series-2"];
+  ma.forEach((n, k) => {
+    if (B.length < n) return;
+    let d = "";
+    for (let i = n - 1; i < B.length; i++) {
+      const avg = B.slice(i - n + 1, i + 1).reduce((a, b) => a + b[3], 0) / n;
+      d += (d ? "L" : "M") + X(i).toFixed(1) + " " + Y(avg).toFixed(1);
+    }
+    el("path", { d, fill: "none", stroke: css(colors[k]), "stroke-width": 1.4 }, svg);
+    if (labels) txt("text", `MA${n}`, { x: m.l + 4 + k * 38, y: 12, fill: css(colors[k]), "font-weight": 600 }, svg);
   });
 }
+
+/* ---------- 방금 일어난 일 ---------- */
+let feedFilter = "all", feedSeen = null;
+const HOT = k => k === "precursor" || k === "spike_up" || k.startsWith("rank:");
+function beep() {
+  try { const a = new (window.AudioContext || window.webkitAudioContext)(), o = a.createOscillator(), g = a.createGain();
+    o.frequency.value = 880; o.connect(g); g.connect(a.destination); g.gain.value = 0.08; o.start(); o.stop(a.currentTime + 0.18); } catch (e) {}
+}
+async function loadFeed() {
+  const rows = await api("/api/events?limit=60");
+  const list = rows.filter(e => feedFilter === "all" || HOT(e.kind));
+  const box = $("feed"); box.replaceChildren();
+  if (!list.length) { const li = document.createElement("li"); li.className = "empty"; li.textContent = "아직 없음 — 장중에 랭킹 진입·1분새 급등·전조 발동·거래정지·공시가 여기 뜹니다"; box.appendChild(li); }
+  const now = Date.now();
+  list.slice(0, 14).forEach(e => {
+    const li = document.createElement("li");
+    li.className = "ev " + (e.kind === "precursor" ? "ev-hot" : e.kind === "spike_dn" || e.kind === "halt" ? "ev-dn" : e.kind === "spike_up" ? "ev-up" : "");
+    const s = Math.max(0, Math.round((now - new Date(e.ts)) / 1000));
+    const ago = s < 60 ? `${s}초 전` : s < 3600 ? `${Math.round(s / 60)}분 전` : kst(e.ts);
+    const a = document.createElement("span"); a.textContent = e.text; li.appendChild(a);
+    const b = document.createElement("span"); b.className = "muted"; b.textContent = " · " + ago; li.appendChild(b);
+    li.onclick = () => { lookup(e.symbol); showTab("symbol"); };
+    box.appendChild(li);
+  });
+  const newest = rows.length ? rows[0].ts : null;
+  if (feedSeen && newest && newest > feedSeen && $("feed-sound").checked && rows.some(e => e.ts > feedSeen && HOT(e.kind))) beep();
+  feedSeen = newest || feedSeen;
+}
+document.querySelectorAll("#feed-filter button").forEach(b => b.onclick = () => {
+  feedFilter = b.dataset.f;
+  document.querySelectorAll("#feed-filter button").forEach(x => x.setAttribute("aria-pressed", x === b));
+  loadFeed();
+});
+try { $("feed-sound").checked = localStorage.getItem("feedSound") === "1"; } catch (e) {}
+$("feed-sound").onchange = () => { try { localStorage.setItem("feedSound", $("feed-sound").checked ? "1" : "0"); } catch (e) {} if ($("feed-sound").checked) beep(); };
+
+/* ---------- 급등 전조 목록 ---------- */
+let preData = null, preFilter = "all", preShown = 24;
+async function loadPre() {
+  preData = await api("/api/precursor?limit=200");
+  const r = preData;
+  const live = (r.rows || []).filter(x => x.live.includes("wake") && x.live.includes("creep")).length;
+  $("pre-sub").textContent = r.d0 ? `${r.d0} 종가 기준 · ${r.n}종목 · 🔥 지금 움직이는 종목 ${live}개 · 장중 1분마다 갱신` : "아직 없음 — 수집기가 장 마감 뒤 전 종목을 계산합니다";
+  drawPre();
+}
+function drawPre() {
+  const box = $("pre-list"); box.replaceChildren();
+  const all = (preData && preData.rows) || [];
+  const rows = all.filter(x => preFilter === "live" ? x.live.length : preFilter === "top" ? x.score >= 8 : true);
+  if (!rows.length) { const d = document.createElement("div"); d.className = "empty"; d.textContent = preFilter === "live" ? "지금 장중 증상이 켜진 종목이 없습니다" : "없음"; box.appendChild(d); }
+  rows.slice(0, preShown).forEach(x => {
+    const hot = x.live.includes("wake") && x.live.includes("creep");
+    const c = document.createElement("div");
+    c.className = "pre-card" + (hot ? " hot" : x.live.length ? " warm" : "");
+    c.tabIndex = 0;
+    const top = document.createElement("div"); top.className = "pre-top";
+    const sym = document.createElement("span"); sym.className = "pre-sym"; sym.textContent = (hot ? "🔥 " : "") + x.symbol;
+    const nm = document.createElement("span"); nm.className = "pre-name"; nm.textContent = x.name || "";
+    const sc = document.createElement("span"); sc.className = "pre-score " + (x.score >= 8 ? "s-hi" : x.score >= 5 ? "s-mid" : "s-lo"); sc.textContent = x.score + "점";
+    top.append(sym, nm, sc); c.appendChild(top);
+    const pr = document.createElement("div"); pr.className = "pre-price";
+    const m = x.live_m || {};
+    const a = document.createElement("span"); a.textContent = fmtPx(x.close); pr.appendChild(a);
+    if (m.price != null) {
+      const arrow = document.createElement("span"); arrow.className = "muted"; arrow.textContent = "  →  "; pr.appendChild(arrow);
+      const now = document.createElement("span"); now.className = "pre-now " + (tone(m.chg) || ""); now.textContent = `${fmtPx(m.price)} ${fmtPct(m.chg)}`; pr.appendChild(now);
+    }
+    c.appendChild(pr);
+    if (x.judge) { const j = document.createElement("div"); j.className = "pre-judge"; j.textContent = `${x.judge.state} · 거래 흐름 ${x.judge.flow} · 변동성 ${x.judge.risk}`; c.appendChild(j); }
+    if (x.bars && x.bars.length > 5) { const mc = document.createElement("div"); mc.className = "chart pre-chart"; c.appendChild(mc); requestAnimationFrame(() => candleChart(mc, x.bars, { height: 86, ma: [5, 20], labels: false })); }
+    const chips = document.createElement("div"); chips.className = "chips";
+    x.live_labels.forEach(l => { const s = document.createElement("span"); s.className = "chip live"; s.textContent = l; chips.appendChild(s); });
+    x.labels.forEach(l => { const s = document.createElement("span"); s.className = "chip"; s.textContent = l; chips.appendChild(s); });
+    c.appendChild(chips);
+    const mt = x.metrics || {};
+    const facts = [
+      mt.dd60 != null ? `고점 대비 ${fmtPct(mt.dd60, 0)}` : null,
+      mt.vol_ratio != null ? `전날 거래량 ${mt.vol_ratio >= 100 ? Math.round(mt.vol_ratio) : mt.vol_ratio.toFixed(1)}배` : null,
+      mt.dollar20 != null ? `거래대금 $${fmtQty(mt.dollar20)}` : null,
+      m.vol_x != null ? `1시간 거래량 ${m.vol_x.toFixed(1)}배` : null,
+    ].filter(Boolean);
+    const f = document.createElement("div"); f.className = "pre-facts"; f.textContent = facts.join(" · "); c.appendChild(f);
+    c.onclick = c.onkeydown = e => { if (e.type === "click" || e.key === "Enter") { lookup(x.symbol); showTab("symbol"); } };
+    box.appendChild(c);
+  });
+  const more = $("pre-more"), left = rows.length - preShown;
+  more.hidden = left <= 0; more.textContent = `더 보기 (${left}개 더)`;
+}
+document.querySelectorAll("#pre-filter button").forEach(b => b.onclick = () => {
+  preFilter = b.dataset.f; preShown = 24;
+  document.querySelectorAll("#pre-filter button").forEach(x => x.setAttribute("aria-pressed", x === b));
+  drawPre();
+});
+$("pre-more").onclick = () => { preShown += 24; drawPre(); };
 
 /* ---------- 급등 전 30일 차트 조건 ---------- */
 function pathChart(box, days, series, { height = 170, fmt = v => v.toFixed(0), label = "" } = {}) {
@@ -1099,8 +1271,8 @@ try { const t = localStorage.getItem("theme"); if (t) document.documentElement.d
 
 // 보이는 탭의 데이터만 받는다 (휴대폰 데이터·배터리 절약)
 const TAB_JOBS = {
-  home: () => [loadEquity(), loadStrategies(), loadTables()],
-  symbol: () => [loadPre(), loadShorts()],
+  home: () => [loadFeed(), loadPre(), loadEquity(), loadStrategies(), loadTables()],
+  symbol: () => [loadShorts()],
   trade: () => [loadTables(), loadReports()],
   analysis: () => [loadC30(), loadBig(), loadHist(), loadRunners(), loadCollector(), loadResearch(), loadBacktests()],
 };

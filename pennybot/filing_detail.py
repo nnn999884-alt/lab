@@ -20,6 +20,17 @@ ITEMS_KO = {"1.01": "중요 계약 체결", "1.02": "중요 계약 해지", "1.0
             "5.03": "정관 변경(액면병합 등)", "5.07": "주총 결과", "5.08": "주총 일정", "7.01": "공정공시(IR 자료)",
             "8.01": "기타 중요 사항", "9.01": "첨부 서류"}
 
+FORM_KO = {"8-K": "수시공시", "8-K/A": "수시공시 정정", "6-K": "해외 수시공시", "4": "내부자 거래", "424B1": "공모 확정",
+           "424B3": "증권신고서", "424B4": "공모 확정", "424B5": "증권 발행", "S-1": "공모 신고", "F-1": "공모 신고",
+           "S-3": "증자 등록", "F-3": "증자 등록", "RW": "등록 철회", "EFFECT": "등록 효력", "NEWS": "보도자료"}
+EVENT_KO = {"ATM_TERMINATED": "ATM 종료", "OFFERING_TERMINATED": "공모 철회", "REGISTRATION_WITHDRAWN": "증자 등록 철회",
+            "BUYBACK": "자사주 매입", "COMPLIANCE_REGAINED": "상장 요건 회복", "MATERIAL_CONTRACT": "중요 계약",
+            "ATM_NEW": "ATM 신규", "REGISTERED_DIRECT": "등록 직접 공모", "PUBLIC_OFFERING": "공모", "PRIVATE_PLACEMENT": "사모",
+            "SECURITIES_PURCHASE_AGREEMENT": "증권매매계약", "EQUITY_LINE": "주식 매수 약정", "WARRANT_INDUCEMENT": "워런트 행사 유도",
+            "WARRANT_REPRICE": "워런트 행사가 인하", "CONVERTIBLE": "전환사채", "REVERSE_SPLIT": "액면병합", "TAKEDOWN": "증자 실행",
+            "SHELF_FILED": "증자 등록(S-3)", "OFFERING_FILED": "공모 신고", "REGISTRATION_EFFECTIVE": "등록 효력 발생",
+            "DELISTING_NOTICE": "상폐 통지", "FDA_APPROVAL": "FDA 승인", "MATERIAL_NEWS": "계약·수주", "GOING_CONCERN": "계속기업 불확실"}
+
 # 페니주 증자에 자주 나오는 주관사·배정 대행사 (이름이 보이면 그대로 적는다)
 AGENTS = ["H.C. Wainwright", "Maxim Group", "Aegis Capital", "ThinkEquity", "EF Hutton", "Spartan Capital", "Roth Capital",
           "A.G.P.", "Alliance Global Partners", "Dawson James", "Univest", "Craig-Hallum", "Ladenburg Thalmann",

@@ -137,6 +137,19 @@ class Data:
             r["held"] = r["symbol"] in held
         return sorted(rows, key=lambda r: (not r["held"], -(r["fee_rate"] or 0), -(r["short_ratio"] or 0)))
 
+    def events(self, limit: int = 40) -> list[dict]:
+        """'방금 일어난 일' (수집기 이벤트, 최신순)."""
+        return self.m("SELECT ts, symbol, kind, text, value FROM events ORDER BY ts DESC LIMIT ?", (limit,))
+
+    def daily(self, sym: str, n: int = 90) -> list[list]:
+        """차트용 일봉 [d, o, h, l, c, v] (수집기 daily_bars, 없으면 과거 검증 DB)."""
+        sym = sym.upper()
+        rows = self.m("SELECT d, open, high, low, close, volume FROM daily_bars WHERE symbol=? ORDER BY d DESC LIMIT ?", (sym, n))
+        if not rows:
+            rows = self._q(str(Path(self.cfg.state_dir) / "research.db"),
+                           "SELECT d, open, high, low, close, volume FROM daily_bars WHERE symbol=? ORDER BY d DESC LIMIT ?", (sym, n))
+        return [[r["d"], r["open"], r["high"], r["low"], r["close"], r["volume"]] for r in reversed(rows)]
+
     def equity(self, days: int) -> list[dict]:
         since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec="seconds")
         return self.t("SELECT ts, equity, cash, day_pnl FROM equity WHERE ts >= ? ORDER BY ts", (since,))
@@ -383,6 +396,8 @@ class Handler(BaseHTTPRequestHandler):
             "/api/backtests": lambda: _backtests(d.cfg.state_dir, n("limit", 10)),
             "/api/reports": lambda: _reports(d.cfg.state_dir, n("limit", 30)),
             "/api/shorts": lambda: d.shorts(),
+            "/api/events": lambda: d.events(n("limit", 40)),
+            "/api/daily": lambda: d.daily(qs.get("s", "")[:12], n("n", 90)),
             "/api/precursor": lambda: __import__("pennybot.precursor", fromlist=["ranked"]).ranked(d.market_db, n("limit", 80)),
             "/api/symbol": lambda: d.symbol(qs.get("s", "")[:12]),
             "/api/research_hist": lambda: d.research_hist(),

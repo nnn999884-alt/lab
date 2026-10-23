@@ -58,6 +58,8 @@ class Collector:
         self.link = link                  # () -> 대시보드 외부 주소
         self._pre_thread = None
         self._pre_tried = None
+        self._ev_last: dict = {}                  # (종목, 종류) → 마지막 이벤트 시각
+        self._rank_prev: dict = {}                # 랭킹 종류 → {종목: 순위}
         self._short_done: set[tuple[str, str]] = set()   # (종류, 날짜) 이미 받은 일별 파일
         self._seen_news: set[str] = set()
         self.clock = clock
@@ -162,7 +164,17 @@ class Collector:
         log.info("유니버스 %d종목 (상장 %d 중 $%.2f~$%.2f)", len(self.universe), len(listed),
                  self.cfg.min_price, self.cfg.max_price)
 
+    def _event(self, now: datetime, sym: str, kind: str, text: str, value: float | None = None) -> None:
+        """대시보드 '방금 일어난 일' 피드. 같은 종목·종류는 10분에 한 번만."""
+        key = (sym, kind)
+        last = self._ev_last.get(key)
+        if last and (now - last).total_seconds() < 600:
+            return
+        self._ev_last[key] = now
+        self.store.put_events([{"ts": iso(now), "symbol": sym, "kind": kind, "text": text, "value": value}])
+
     def poll_prices(self, now: datetime, trade_date, session: str) -> None:
+        prev = {s: v.get("last") for s, v in self.universe.items()}
         rows = []
         for p in self.c.prices(sorted(self.universe)):
             rows.append({"symbol": p["symbol"], "ts": iso(now), "trade_date": trade_date.isoformat(),
@@ -170,6 +182,14 @@ class Collector:
             if p["symbol"] in self.universe:
                 self.universe[p["symbol"]]["last"] = float(p["lastPrice"])
         self.store.put_prices(rows)
+        for r in rows:
+            a = prev.get(r["symbol"])
+            if a and a >= 0.2 and r["last"]:
+                chg = (r["last"] / a - 1) * 100
+                if chg >= 4:
+                    self._event(now, r["symbol"], "spike_up", f"⚡ {r['symbol']} 1분새 {chg:+.1f}% 급등 (${r['last']:.4g})", chg)
+                elif chg <= -7:
+                    self._event(now, r["symbol"], "spike_dn", f"▼ {r['symbol']} 1분새 {chg:.1f}% 급락 (${r['last']:.4g})", chg)
 
     def poll_orderbooks(self, now: datetime, trade_date, session: str) -> None:
         rows = []
@@ -205,6 +225,22 @@ class Collector:
                     "ranked_at": res.get("rankedAt"),
                 })
         self.store.put_rankings(rows)
+        names = {"MARKET_TRADING_AMOUNT": "시장 거래대금", "TOSS_SECURITIES_TRADING_AMOUNT": "토스 거래대금",
+                 "MARKET_TRADING_VOLUME": "시장 거래량", "TOSS_SECURITIES_TRADING_VOLUME": "토스 거래량",
+                 "TOP_GAINERS": "급등률", "TOP_LOSERS": "급락률"}
+        cur: dict[str, dict[str, int]] = {}
+        for r in rows:
+            if r["symbol"] in self.universe:               # 페니주 유니버스만 (대형주 순위 변화는 소음)
+                cur.setdefault(r["type"], {})[r["symbol"]] = r["rank"]
+        for typ, ranks in cur.items():
+            before = self._rank_prev.get(typ)
+            if before is not None and typ != "TOP_LOSERS":
+                for sym, rk in ranks.items():
+                    old_rk = before.get(sym)
+                    if rk <= 10 and (old_rk is None or old_rk - rk >= 3):
+                        moved = f"{old_rk}→{rk}위" if old_rk else f"{rk}위 신규 진입"
+                        self._event(now, sym, f"rank:{typ}", f"📈 {sym} {names.get(typ, typ)} {moved}", rk)
+            self._rank_prev[typ] = ranks
 
     def select_watch(self, now: datetime, trade_date) -> None:
         """공시 > 랭킹 > 급변 순으로 감시 종목을 채운다 (모두 유니버스 안에서만)."""
@@ -309,6 +345,13 @@ class Collector:
                 self.recent_filers[sym] = now
         if rows:
             self.store.put_filings(rows)
+            from ..filing_detail import EVENT_KO, FORM_KO
+            for r in rows:
+                if r["events"] or r["direction"]:
+                    tag = "▲ 호재" if r["direction"] > 0 else "▼ 악재" if r["direction"] < 0 else "·"
+                    evs = ", ".join(EVENT_KO.get(k, k) for k in (r["events"] or "").split(",") if k)
+                    self._event(now, r["symbol"], "filing",
+                                f"📰 {r['symbol']} {FORM_KO.get(r['form'], r['form'])} {tag}" + (f" · {evs}" if evs else ""), r["direction"])
             log.info("새 공시 %d건 (유니버스 종목)", len(rows))
 
     def poll_news(self, now: datetime) -> None:
@@ -379,6 +422,8 @@ class Collector:
             bars = sorted((cd["timestamp"][:10], float(cd["openPrice"]), float(cd["highPrice"]), float(cd["lowPrice"]),
                            float(cd["closePrice"]), float(cd["volume"])) for cd in cs)
             bars = [b for b in bars if b[0] <= d0.isoformat()]     # 기준일 뒤(진행 중인 봉)는 뺀다
+            store.put_daily_bars([{"symbol": sym, "d": b[0], "open": b[1], "high": b[2], "low": b[3], "close": b[4],
+                                   "volume": b[5]} for b in bars[-70:]])
             r = daily(bars)
             if r and r["d0"] == d0.isoformat() and r["score"] >= 2:
                 rows.append({"d0": r["d0"], "symbol": sym, "score": r["score"], "signals": json.dumps(r["signals"]),
@@ -391,7 +436,7 @@ class Collector:
 
     def poll_precursor_live(self, now: datetime, trade_date, session: str) -> None:
         """일봉 점수 높은 종목의 오늘 1분봉 → 거래 깨어남·슬금슬금 상승. 둘 다 켜지면 알림 (종목당 하루 한 번)."""
-        from ..precursor import alert_text, live
+        from ..precursor import alert_buttons, alert_text, live
         from ..trading.strategies import SESSION_KO
         d0 = self.store.query("SELECT MAX(d0) FROM precursor_daily")
         if not d0 or not d0[0][0]:
@@ -425,8 +470,12 @@ class Collector:
                 except Exception:
                     pass
                 self.notifier.send(alert_text(sym, (self.universe.get(sym) or {}).get("name"), day, lv,
-                                              SESSION_KO.get(session, session), link))
+                                              SESSION_KO.get(session, session), link, now),
+                                   buttons=alert_buttons(sym, link))
                 log.info("급등 전조 알림 %s (%s)", sym, ", ".join(lv["signals"]))
+            if fire:
+                self._event(now, sym, "precursor", f"🔥 {sym} 급등 전조 발동 ({score}점 · 1시간 거래량 "
+                            f"{lv['metrics'].get('vol_x', 0):.1f}배 · {lv['metrics'].get('chg', 0):+.1f}%)", lv["metrics"].get("chg"))
         self.store.put_precursor_live(out)
 
     # ---------- 공매도·대차 ----------
@@ -464,6 +513,9 @@ class Collector:
             "SELECT 1 FROM halts WHERE symbol=? AND halt_ts=? AND resume_ts IS ?", (r["symbol"], r["halt_ts"], r["resume_ts"]))]
         if new:
             self.store.put_halts(new)
+            for r in new:
+                if not r["resume_ts"]:
+                    self._event(self.clock(), r["symbol"], "halt", f"⏸ {r['symbol']} 거래정지 ({r['reason_ko']})")
             log.info("거래정지 %d건: %s", len(new), ", ".join(f"{r['symbol']}({r['reason_ko']})" for r in new[:10]))
 
     def backfill_details(self, days: int = 14, limit: int = 300) -> None:

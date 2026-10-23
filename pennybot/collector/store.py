@@ -56,6 +56,11 @@ CREATE TABLE IF NOT EXISTS reg_sho (trade_date TEXT, symbol TEXT, PRIMARY KEY (t
 CREATE TABLE IF NOT EXISTS halts (
     symbol TEXT, halt_ts TEXT, reason TEXT, reason_ko TEXT, resume_ts TEXT,
     PRIMARY KEY (symbol, halt_ts));
+CREATE TABLE IF NOT EXISTS daily_bars (
+    symbol TEXT, d TEXT, open REAL, high REAL, low REAL, close REAL, volume REAL, PRIMARY KEY (symbol, d));
+CREATE TABLE IF NOT EXISTS events (
+    ts TEXT, symbol TEXT, kind TEXT, text TEXT, value REAL, PRIMARY KEY (ts, symbol, kind));
+CREATE INDEX IF NOT EXISTS ix_events_ts ON events (ts);
 CREATE TABLE IF NOT EXISTS precursor_daily (
     d0 TEXT, symbol TEXT, score INTEGER, signals TEXT, metrics TEXT, close REAL, created TEXT,
     PRIMARY KEY (d0, symbol));
@@ -120,6 +125,8 @@ class Store:
     def put_reg_sho(self, rows): return self._put("reg_sho", rows)
     def put_halts(self, rows): return self._put("halts", rows)
     def put_precursor_daily(self, rows): return self._put("precursor_daily", rows)
+    def put_daily_bars(self, rows): return self._put("daily_bars", rows)
+    def put_events(self, rows): return self._put("events", rows)
     def put_precursor_live(self, rows): return self._put("precursor_live", rows)
 
     def runner_candidates(self, trade_date: str, prev_date: str, min_pct: float) -> list[tuple]:

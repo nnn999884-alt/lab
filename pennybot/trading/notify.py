@@ -58,7 +58,7 @@ class Notifier:
     def enabled(self) -> bool:
         return bool(self.url or (self.tg_token and self.tg_chat))
 
-    def send(self, text: str, key: str | None = None, every: float = 600) -> None:
+    def send(self, text: str, key: str | None = None, every: float = 600, buttons: list | None = None) -> None:
         if key:
             now = self.clock()
             if now - self._last.get(key, -1e18) < every:
@@ -67,11 +67,12 @@ class Notifier:
         log.info("알림: %s", text)
         if not self.enabled:
             return
+        item = (text, buttons) if buttons else text
         if self._q is None:
-            self._deliver(text)
+            self._deliver(item)
         else:
             try:
-                self._q.put_nowait(text)
+                self._q.put_nowait(item)
             except queue.Full:
                 log.warning("알림 대기열이 가득 참 → 버림: %s", text)
 
@@ -79,7 +80,9 @@ class Notifier:
         while True:
             self._deliver(self._q.get())
 
-    def _deliver(self, text: str) -> None:
+    def _deliver(self, item) -> None:
+        # buttons: [[{"text": "...", "url": "..."} | {"text": "...", "copy_text": {"text": "..."}}]] (텔레그램 인라인 버튼)
+        text, buttons = item if isinstance(item, tuple) else (item, None)
         if self.url:
             for part in chunks(text, 1900):
                 try:
@@ -90,10 +93,13 @@ class Notifier:
                 except requests.RequestException as e:
                     log.warning("웹훅 알림 실패: %s", redact(str(e), self.url))
         if self.tg_token and self.tg_chat:
-            for part in chunks(text, 4000):
+            parts = chunks(text, 4000)
+            for k, part in enumerate(parts):
                 try:
-                    r = requests.post(TG.format(token=self.tg_token, method="sendMessage"),
-                                      json={"chat_id": self.tg_chat, "text": part}, timeout=10)
+                    body = {"chat_id": self.tg_chat, "text": part, "disable_web_page_preview": True}
+                    if buttons and k == len(parts) - 1:
+                        body["reply_markup"] = {"inline_keyboard": buttons}
+                    r = requests.post(TG.format(token=self.tg_token, method="sendMessage"), json=body, timeout=10)
                     if r.status_code >= 400:
                         # 401 = 토큰 틀림, 400 chat not found = chat id 틀림 또는 봇에게 먼저 말을 안 걸었음
                         log.warning("텔레그램 알림 실패: HTTP %s %s", r.status_code, _desc(r))

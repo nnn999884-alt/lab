@@ -100,23 +100,55 @@ def live(minute_bars: list[tuple], prev_close: float, now: datetime | None = Non
     return out
 
 
-def alert_text(sym: str, name: str | None, day: dict, lv: dict, session_ko: str, dashboard: str | None = None) -> str:
-    """텔레그램 알림 (가독성: 첫 줄에 무슨 일·종목, 그다음 켜진 증상, 숫자)."""
-    from .trading.messages import money_s, pct, px, qty_s
+def judge(m: dict, dm: dict) -> dict:
+    """알림·대시보드용 한눈 판단. m: 장중 지표, dm: 일봉 지표."""
+    chg = m.get("chg") or 0
+    if chg >= 30:
+        state, timing, verdict = "🔴 추격 주의", "과열", "급등이 이미 많이 진행됐습니다. 무리한 추격은 피하세요."
+    elif chg >= 15:
+        state, timing, verdict = "🟠 진행 중", "중반", "이미 움직이는 중입니다. 눌림(개미털기) 뒤 다시 오르는지 확인하세요."
+    elif chg >= 5:
+        state, timing, verdict = "🟡 움직이기 시작", "초반", "전조가 켜지고 막 오르기 시작했습니다. 거래량이 계속 붙는지 보세요."
+    else:
+        state, timing, verdict = "🟢 아직 조용", "초기", "전조 증상이 켜졌지만 가격은 아직 그대로입니다. 지켜볼 구간."
+    vx = m.get("vol_x") or 0
+    flow = "매우 강함" if vx >= 10 else "강함" if vx >= 5 else "보통" if vx >= 3 else "약함"
+    rg = dm.get("range30") or 0
+    risk = "높음" if rg >= 15 else "보통" if rg >= 8 else "낮음"
+    return {"state": state, "timing": timing, "flow": flow, "risk": risk, "verdict": verdict}
+
+
+def alert_text(sym: str, name: str | None, day: dict, lv: dict, session_ko: str, dashboard: str | None = None,
+               now=None) -> str:
+    """텔레그램 알림: 첫 줄 = 무슨 일·종목, 다음 = 한눈 판단, 마지막 = 근거 숫자."""
+    from datetime import datetime, timezone
+    from .sessions import KST
+    from .trading.messages import money_s, pct, px
     m, dm = lv["metrics"], day["metrics"]
-    on_d = [DAILY_LABELS[k] for k in day["signals"] if k != "vol_up_strong"] + (["거래량 급증"] if "vol_up_strong" in day["signals"] else [])
-    on_l = [LIVE_LABELS[k] for k in lv["signals"]]
-    L = [f"⚡ 급등 전조 · {sym}" + (f" ({name})" if name else ""),
-         f"{px(m['price'])} ({pct(m['chg'])}) · {session_ko} · 전조 점수 {day['score']}점",
-         "",
-         "🔥 지금: " + ", ".join(on_l),
-         f"   최근 1시간 거래량 {m.get('vol_x', 0):.1f}배 · 1시간 {pct(m.get('ret60'))} · 15분 {pct(m.get('ret15'))} · 오늘 거래대금 {money_s(m.get('dollar_today'))}",
-         "📉 차트: " + ", ".join(on_d),
-         f"   60일 고점 대비 {pct(dm['dd60'])} · 10일 {pct(dm['ret10'])} · 변동폭 {dm['range30'] or 0:.0f}% · 60일 급등 {dm['spikes60']}회"
-         f" · 전날 거래량 {dm['vol_ratio']:.1f}배 · 20일 거래대금 {money_s(dm['dollar20'])}"]
+    j = judge(m, dm)
+    on_d = [DAILY_LABELS[k] for k in day["signals"] if not (k == "vol_up" and "vol_up_strong" in day["signals"])]
+    t = (now or datetime.now(timezone.utc)).astimezone(KST)
+    return "\n".join([
+        f"⚡ 급등 전조 ({sym}" + (f" · {name}" if name else "") + ")",
+        "──────────────",
+        f"💵 현재 {px(m['price'])} ({pct(m['chg'])}) · {session_ko}",
+        f"현재 상태: {j['state']}",
+        f"타이밍: {j['timing']}",
+        f"거래 흐름: {j['flow']} (1시간 거래량 {m.get('vol_x', 0):.1f}배 · 오늘 {money_s(m.get('dollar_today'))})",
+        f"변동성 위험: {j['risk']} (하루 변동폭 {dm.get('range30') or 0:.0f}%)",
+        f"한줄 판단: {j['verdict']}",
+        "",
+        f"📉 차트 전조 {day['score']}점: " + " · ".join(on_d),
+        f"   60일 고점 대비 {pct(dm['dd60'])} · 60일 급등 {dm['spikes60']}회 · 전날 거래량 {dm['vol_ratio']:.1f}배",
+        f"⏱ 갱신: {t:%m.%d %H:%M:%S}",
+    ])
+
+
+def alert_buttons(sym: str, dashboard: str | None) -> list:
+    row = [{"text": f"📋 {sym} 복사", "copy_text": {"text": sym}}]
     if dashboard:
-        L += ["", f"📊 {dashboard}/?s={sym}"]
-    return "\n".join(L)
+        row.insert(0, {"text": "📊 대시보드에서 보기", "url": f"{dashboard}/?s={sym}"})
+    return [row]
 
 
 def ranked(db_path: str, limit: int = 50) -> dict:
@@ -151,7 +183,21 @@ def ranked(db_path: str, limit: int = 50) -> dict:
             [DAILY_LABELS[k] for k in r["signals"]]
         r["live_labels"] = [LIVE_LABELS[k] for k in r["live"]]
     rows.sort(key=lambda r: (-len(set(r["live"]) & {"wake", "creep"}), -r["score"], -(r["metrics"].get("vol_ratio") or 0)))
-    return {"d0": d0, "rows": rows[:limit], "n": len(rows)}
+    total = len(rows)
+    rows = rows[:limit]
+    con = sqlite3.connect(ro_uri(db_path), uri=True)
+    try:
+        for r in rows[:80]:                        # 카드 미니 차트: 최근 30일 [o, h, l, c, v]
+            bs = con.execute("SELECT open, high, low, close, volume FROM daily_bars WHERE symbol=? AND d<=? "
+                             "ORDER BY d DESC LIMIT 30", (r["symbol"], d0)).fetchall()
+            r["bars"] = [list(b) for b in reversed(bs)]
+            if r["live_m"].get("price") is not None:
+                r["judge"] = judge(r["live_m"], r["metrics"])
+    except sqlite3.OperationalError:
+        pass
+    finally:
+        con.close()
+    return {"d0": d0, "rows": rows, "n": total}
 
 
 def top_text(db_path: str, limit: int = 15, dashboard: str | None = None) -> str:
