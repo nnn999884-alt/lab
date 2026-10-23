@@ -26,6 +26,14 @@ DAILY_LABELS = {
     "volatile": "고변동", "bleed": "거래 마름", "cheap": "동전주",
 }
 PATTERN_LABELS = {"compress": "응축", "accum": "매집 의심", "base": "바닥 다지기"}
+MAX_TURNOVER = 1000.0        # 하루 회전율이 이보다 크면 발행주식 수가 틀린 것으로 본다 (%)
+
+
+def times(v: float | None) -> str:
+    """거래량 배수 표시 (평소 거래가 거의 없으면 수천 배가 나오므로 100배 넘으면 '100배+')."""
+    if v is None:
+        return "-"
+    return "100배+" if v >= 100 else f"{v:.1f}배"
 LIVE_LABELS = {"wake": "거래 급증", "creep": "매수세 유입", "up10": "+10% 돌파"}
 
 
@@ -157,13 +165,13 @@ def alert_text(sym: str, name: str | None, day: dict, lv: dict, session_ko: str,
         f"타이밍: {j['timing']}",
         f"거래 흐름: {j['flow']} (1시간 거래량 {m.get('vol_x', 0):.1f}배 · 오늘 {money_s(m.get('dollar_today'))})",
         *( [f"회전율: 오늘 {m.get('vol_today', 0) / shares * 100:.1f}% · 3분 {m.get('vol_3m', 0) / shares * 100:.2f}% (발행 {shares / 1e6:.1f}M주)"]
-           if shares else [] ),
+           if shares and m.get('vol_today', 0) / shares * 100 <= MAX_TURNOVER else [] ),
         f"변동성 위험: {j['risk']} (하루 변동폭 {dm.get('range30') or 0:.0f}%)",
         f"한줄 판단: {j['verdict']}",
         "",
         f"📉 차트 전조 {day['score']}점: " + " · ".join(on_d),
         *( [f"🏷 {' · '.join(tags)}"] if tags else [] ),
-        f"   60일 고점 대비 {pct(dm['dd60'])} · 60일 급등 {dm['spikes60']}회 · 전날 거래량 {dm['vol_ratio']:.1f}배",
+        f"   60일 고점 대비 {pct(dm['dd60'])} · 60일 급등 {dm['spikes60']}회 · 전날 거래량 {times(dm['vol_ratio'])}",
         f"⏱ 갱신: {t:%m.%d %H:%M:%S}",
     ])
 
@@ -223,7 +231,10 @@ def ranked(db_path: str, limit: int = 50) -> dict:
             if info and info[0]:
                 r["shares"] = info[0]
                 r["turnover_d0"] = (r["metrics"].get("volume") or 0) / info[0] * 100
-                if r["live_m"].get("vol_3m") is not None:
+                if r["turnover_d0"] > MAX_TURNOVER:      # 발행주식 수가 액면병합 전 기준 등 → 믿을 수 없음
+                    r["turnover_d0"] = None
+                    r["shares_suspect"] = True
+                if r["live_m"].get("vol_3m") is not None and not r.get("shares_suspect"):
                     r["turnover_3m"] = r["live_m"]["vol_3m"] / info[0] * 100
                     r["turnover_today"] = (r["live_m"].get("vol_today") or 0) / info[0] * 100
             try:
@@ -278,7 +289,7 @@ def daily_list_text(db_path: str, n: int = 10, dashboard: str | None = None) -> 
         tags = (x.get("filing_tags") or [])[:2] + (x.get("patterns") or [])[:2]
         vol = [l for l in x["labels"] if l.startswith("거래량")]
         L.append(f"{i}. {x['symbol']} {x.get('name') or ''} · {x['score']}점 · {px(x['close'])}")
-        L.append(f"   고점 대비 {pct(m.get('dd60'))} · 전날 거래량 {m.get('vol_ratio') or 0:.1f}배"
+        L.append(f"   고점 대비 {pct(m.get('dd60'))} · 전날 거래량 {times(m.get('vol_ratio'))}"
                  + (f" · 회전율 {x['turnover_d0']:.1f}%" if x.get("turnover_d0") is not None else "")
                  + (f" · 최근 급등 {m['last_spike_d'][5:]}" if m.get("last_spike_d") else ""))
         if vol or tags:

@@ -1102,8 +1102,8 @@ function drawPre() {
   const rows = all.filter(x => preFilter === "live" ? x.live.length : preFilter === "top" ? x.score >= 8 : true);
   if (!rows.length) { const d = document.createElement("div"); d.className = "empty"; d.textContent = preFilter === "live" ? "지금 장중 증상이 켜진 종목이 없습니다" : "없음"; box.appendChild(d); }
   const span = (cls, text) => { const s = document.createElement("span"); if (cls) s.className = cls; s.textContent = text; return s; };
-  const vr = v => v == null ? null : (v >= 100 ? Math.round(v) : v.toFixed(1)) + "배";
-  const turn = v => v == null ? null : (v >= 10 ? Math.round(v) : v >= 1 ? v.toFixed(1) : v.toFixed(2)) + "%";
+  const vr = v => v == null ? null : v >= 100 ? "100배+" : v.toFixed(1) + "배";   // 평소 거래가 거의 없으면 수천 배가 나온다
+  const turn = v => v == null || v > 1000 ? null : (v >= 10 ? Math.round(v) : v >= 1 ? v.toFixed(1) : v.toFixed(2)) + "%";
   rows.slice(0, preShown).forEach(x => {
     const hot = x.live.includes("wake") && x.live.includes("creep");
     const c = document.createElement("div");
