@@ -157,6 +157,39 @@ def live(minute_bars: list[tuple], prev_close: float, now: datetime | None = Non
     return out
 
 
+def money_at(bars: list[tuple], k: int, prev_close: float, shares: float | None) -> bool:
+    """k 번째 1분봉에서 '거래대금 터짐' 조건 (live 의 money 와 같음)."""
+    last3 = bars[max(0, k - 2):k + 1]
+    d3, v3 = sum(b[4] * b[5] for b in last3), sum(b[5] for b in last3)
+    turn3 = v3 / shares * 100 if shares else 0
+    return (bars[k][4] / prev_close - 1) * 100 >= 5 and (d3 >= MONEY_3M or TURN_3M <= turn3 <= MAX_TURNOVER)
+
+
+def wave_breaks(bars: list[tuple], prev_close: float, shares: float | None, dip: float = 20.0) -> list[dict]:
+    """2차·3차 파동 매수 지점: 거래대금이 처음 터진 뒤 고점에서 dip% 이상 눌렸다가 그 고점을 다시 넘는 봉.
+    급등 후보 날 1,919일(결과 모르고 고름)로 매수 시점 12가지를 비교했을 때 앞·뒤 기간 모두 손해가 아니었던 유일한 방식
+    (터지자마자 사기·눌림 반등·10~30분 대기는 모두 손해). → [{k, high, low, depth}] 시간순."""
+    if not bars or not prev_close:
+        return []
+    trig = next((k for k in range(len(bars)) if money_at(bars, k, prev_close, shares)), None)
+    if trig is None:
+        return []
+    out, hi, lo, dipped = [], bars[trig][2], None, False
+    for k in range(trig + 1, len(bars)):
+        h, l = bars[k][2], bars[k][3]
+        if not dipped:
+            if h > hi:
+                hi = h
+            elif l <= hi * (1 - dip / 100):
+                dipped, lo = True, l
+        else:
+            lo = min(lo, l)
+            if h > hi:                                   # 눌렸던 고점을 다시 넘음 → 매수 지점, 새 파동 시작
+                out.append({"k": k, "high": hi, "low": lo, "depth": (lo / hi - 1) * 100})
+                hi, dipped = h, False
+    return out
+
+
 def ask_depth(ob: dict, price: float, pct: float = 10.0) -> float | None:
     """호가창 매도 쪽: 현재가 ~ +pct% 안에 걸린 물량의 달러 합 (작을수록 얇다 = 조금만 사도 잘 오른다)."""
     asks = (ob or {}).get("asks") or []
@@ -369,9 +402,9 @@ def vsignal_text(kind: str, sym: str, name: str | None, v: dict, cfg, session_ko
             "──────────────",
             f"💵 {px(e)} · {session_ko} · 실제 주문 아님",
             f"🎯 익절 {px(e * (1 + cfg.vsignal_take_profit / 100))} (+{cfg.vsignal_take_profit:g}%)"
-            f" · 🛑 손절 {px(e * (1 - cfg.vsignal_stop / 100))} (−{cfg.vsignal_stop:g}%) · 최대 {cfg.vsignal_max_days}일",
+            f" · 🛑 손절 {px(e * (1 - cfg.vsignal_stop / 100))} (−{cfg.vsignal_stop:g}%) · 정규장 마감에 정리",
             f"근거: {v['reason']}",
-            "한줄 판단: 전조가 켜졌고 아직 과열 전입니다. 눌림 −25%까지는 개미털기일 가능성이 높습니다.",
+            "한줄 판단: 첫 턴에 털린 뒤 고점을 다시 넘었습니다 (2차 파동). 다시 −40% 넘게 빠지면 끝난 경우가 많습니다.",
         ])
     ret = (v["exit_price"] / v["entry"] - 1) * 100
     held = datetime.fromisoformat(v["closed"]) - datetime.fromisoformat(v["opened"])

@@ -596,7 +596,7 @@ class Collector:
 
     def poll_precursor_live(self, now: datetime, trade_date, session: str) -> None:
         """일봉 점수 높은 종목의 오늘 1분봉 → 거래 깨어남·슬금슬금 상승. 둘 다 켜지면 알림 (종목당 하루 한 번)."""
-        from ..precursor import TIER_LABEL, alert_buttons, alert_text, ask_depth, live, tier
+        from ..precursor import TIER_LABEL, alert_buttons, alert_text, ask_depth, live, tier, wave_breaks
         from ..trading.strategies import SESSION_KO
         d0 = self.store.query("SELECT MAX(d0) FROM precursor_daily")
         if not d0 or not d0[0][0]:
@@ -631,7 +631,8 @@ class Collector:
             bars = sorted((iso(datetime.fromisoformat(cd["timestamp"].replace("Z", "+00:00"))), float(cd["openPrice"]),
                            float(cd["highPrice"]), float(cd["lowPrice"]), float(cd["closePrice"]), float(cd["volume"]))
                           for cd in cs)
-            lv = live([b for b in bars if b[0] >= start], close, now, shares.get(sym))
+            today = [b for b in bars if b[0] >= start]
+            lv = live(today, close, now, shares.get(sym))
             lv["metrics"]["session"] = session
             on = set(lv["signals"])
             if tiers[sym]:
@@ -666,24 +667,30 @@ class Collector:
                                               + (json.loads(tg[0][0]) if tg else []) + pats),
                                    buttons=alert_buttons(sym, link))
                 log.info("급등 전조 알림 %s (%s)", sym, ", ".join(lv["signals"]))
-            if fire and self.cfg.vsignal:
-                self._vbuy(now, d0, sym, score, close, lv, session)
+            if self.cfg.vsignal and session != AFTER:      # 가상 매수는 알림과 따로: 2차·3차 파동 돌파 순간만
+                brk = wave_breaks(today, close, shares.get(sym), self.cfg.vsignal_dip)
+                if brk and brk[-1]["k"] >= len(today) - 2:  # 방금(최근 2분 안) 돌파한 것만
+                    self._vbuy(now, d0, sym, score, close, lv, session, len(brk), brk[-1])
             if fire:
                 self._event(now, sym, "precursor", f"🔥 {sym} 급등 전조 발동 ({score}점 · 1시간 거래량 "
                             f"{lv['metrics'].get('vol_x', 0):.1f}배 · {lv['metrics'].get('chg', 0):+.1f}%)", lv["metrics"].get("chg"))
         self.store.put_precursor_live(out)
 
     # ---------- 가상 매수·매도 (알림만, 실제 주문 없음) ----------
-    def _vbuy(self, now, d0, sym, score, prev_close, lv, session) -> None:
+    def _vbuy(self, now, d0, sym, score, prev_close, lv, session, wave: int, brk: dict) -> None:
+        """wave 번째 돌파(1 = 2차 파동). 같은 날 같은 종목은 파동마다 한 번, 보유 중이면 안 삼."""
         from ..precursor import vsignal_text
         from ..trading.strategies import SESSION_KO
         m = lv["metrics"]
         price, chg = m.get("price"), m.get("chg") or 0
-        if not price or chg >= self.cfg.vsignal_max_chg:
-            return                                       # 이미 많이 오른 뒤 → 추격 안 함
-        if self.store.query("SELECT 1 FROM vsignals WHERE symbol=? AND (status='OPEN' OR d0=?)", (sym, d0)):
-            return                                       # 보유 중이거나 오늘 이미 신호
-        reason = f"전조 {score}점 · 1시간 거래량 {m.get('vol_x', 0):.1f}배 · 1시간 {m.get('ret60') or 0:+.1f}% · 전날 대비 {chg:+.1f}%"
+        if not price:
+            return
+        if self.store.query("SELECT 1 FROM vsignals WHERE symbol=? AND status='OPEN'", (sym,)):
+            return                                       # 보유 중
+        if self.store.query("SELECT COUNT(*) FROM vsignals WHERE symbol=? AND d0=?", (sym, d0))[0][0] >= wave:
+            return                                       # 이 파동은 이미 삼
+        reason = (f"{wave + 1}차 파동: 고점 {brk['high']:.4g}에서 {brk['depth']:.0f}% 눌린 뒤 다시 돌파 · 전날 대비 {chg:+.1f}%"
+                  f" · 3분 거래대금 ${m.get('dollar_3m', 0) / 1e3:.0f}K · 전조 {score}점")
         with self.store.db:
             cur = self.store.db.execute(
                 "INSERT INTO vsignals (symbol, d0, opened, session, entry, score, reason, status, high, low, last) "
@@ -720,8 +727,8 @@ class Collector:
                 why = f"익절 +{self.cfg.vsignal_take_profit:g}%"
             elif ret <= -self.cfg.vsignal_stop:
                 why = f"손절 −{self.cfg.vsignal_stop:g}%"
-            elif now - datetime.fromisoformat(v["opened"]) >= timedelta(days=self.cfg.vsignal_max_days):
-                why = f"보유 기간 {self.cfg.vsignal_max_days}일 끝"
+            elif session == AFTER or now - datetime.fromisoformat(v["opened"]) >= timedelta(hours=24):
+                why = "정규장 마감 정리"                     # 보유 안 함: 그날 안에 판다
             with self.store.db:
                 if why:
                     self.store.db.execute("UPDATE vsignals SET status='CLOSED', closed=?, exit_price=?, exit_reason=?, high=?, low=?, last=?, "

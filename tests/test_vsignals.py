@@ -24,31 +24,53 @@ def make(tmp_path):
     return col, st, sent
 
 
+BRK = {"k": 80, "high": 1.0, "low": 0.75, "depth": -25.0}
+
+
 def test_virtual_buy_then_take_profit(tmp_path):
     col, st, sent = make(tmp_path)
     now = datetime(2026, 10, 23, 1, 0, tzinfo=timezone.utc)
-    lv = {"metrics": {"price": 1.0, "chg": 5.0, "vol_x": 6.0, "ret60": 4.0}}
-    col._vbuy(now, "2026-10-22", "PENX", 9, 0.95, lv, "DAY")
-    col._vbuy(now, "2026-10-22", "PENX", 9, 0.95, lv, "DAY")             # 보유 중 → 중복 안 함
+    lv = {"metrics": {"price": 1.0, "chg": 25.0, "vol_x": 6.0, "ret60": 4.0, "dollar_3m": 8e4}}
+    col._vbuy(now, "2026-10-22", "PENX", 9, 0.8, lv, "DAY", 1, BRK)
+    col._vbuy(now, "2026-10-22", "PENX", 9, 0.8, lv, "DAY", 1, BRK)      # 보유 중 → 중복 안 함
     assert st.query("SELECT COUNT(*) FROM vsignals")[0][0] == 1
-    assert sent.msgs[0][0].startswith("🧪 가상 매수 (PENX · 펜엑스)") and "익절 $1.30" in sent.msgs[0][0]
+    assert sent.msgs[0][0].startswith("🧪 가상 매수 (PENX · 펜엑스)") and "익절 $1.20" in sent.msgs[0][0]
+    assert "2차 파동: 고점 1에서 -25% 눌린 뒤 다시 돌파" in sent.msgs[0][0]
     col.universe["PENX"]["last"] = 0.8                                    # −20%: 아직 보유 (손절 −35%)
     col.check_vsignals(now + timedelta(minutes=1), "DAY")
     assert st.query("SELECT status, low FROM vsignals")[0] == ("OPEN", 0.8)
-    col.universe["PENX"]["last"] = 1.31                                   # +31% → 익절
+    col.universe["PENX"]["last"] = 1.21                                   # +21% → 익절
     col.check_vsignals(now + timedelta(hours=5), "PRE")
     status, reason, hi = st.query("SELECT status, exit_reason, high FROM vsignals")[0]
-    assert status == "CLOSED" and reason == "익절 +30%" and hi == 1.31
+    assert status == "CLOSED" and reason == "익절 +20%" and hi == 1.21
     text = sent.msgs[-1][0]
-    assert text.startswith("🔵 가상 매도 (PENX · 펜엑스) · 익절 +30%") and "최저 −20.0%" in text
-    assert "최고 +31.0% (매수 5시간 0분 뒤)" in text
+    assert text.startswith("🔵 가상 매도 (PENX · 펜엑스) · 익절 +20%") and "최저 −20.0%" in text
+    assert "최고 +21.0% (매수 5시간 0분 뒤)" in text
+    col._vbuy(now, "2026-10-22", "PENX", 9, 0.8, lv, "PRE", 1, BRK)      # 같은 파동 → 다시 안 삼
+    assert st.query("SELECT COUNT(*) FROM vsignals")[0][0] == 1
+    col._vbuy(now, "2026-10-22", "PENX", 9, 0.8, lv, "PRE", 2, BRK)      # 3차 파동 → 다시 삼
+    assert st.query("SELECT COUNT(*) FROM vsignals")[0][0] == 2
 
 
-def test_no_chase_after_big_move(tmp_path):
+def test_virtual_position_closes_after_regular(tmp_path):
     col, st, sent = make(tmp_path)
-    lv = {"metrics": {"price": 1.3, "chg": 25.0, "vol_x": 6.0, "ret60": 10.0}}
-    col._vbuy(datetime(2026, 10, 23, tzinfo=timezone.utc), "2026-10-22", "PENX", 9, 1.04, lv, "DAY")
-    assert st.query("SELECT COUNT(*) FROM vsignals")[0][0] == 0 and not sent.msgs
+    now = datetime(2026, 10, 23, 14, 0, tzinfo=timezone.utc)
+    col._vbuy(now, "2026-10-22", "PENX", 9, 0.8, {"metrics": {"price": 1.0, "chg": 25.0}}, "REGULAR", 1, BRK)
+    col.universe["PENX"]["last"] = 1.05
+    col.check_vsignals(now + timedelta(hours=6), "AFTER")
+    assert st.query("SELECT status, exit_reason FROM vsignals")[0] == ("CLOSED", "정규장 마감 정리")
+
+
+def test_wave_breaks():
+    from pennybot.precursor import wave_breaks
+    t = lambda k: f"2026-10-23T08:{k:02d}:00+00:00"
+    px = [1.0] * 5 + [1.06, 1.10, 1.30, 1.40] + [1.25, 1.10, 1.05] + [1.20, 1.38] + [1.45, 1.50] + [1.10] + [1.55]
+    bars = [(t(k), p, p, p, p, 100000.0) for k, p in enumerate(px)]
+    br = wave_breaks(bars, 1.0, None, 20)
+    # 1.40 고점 → 1.05 (−25%) → 1.45 에서 돌파 / 1.50 고점 → 1.10 (−27%) → 1.55 에서 돌파
+    assert [(b["k"], b["high"]) for b in br] == [(14, 1.40), (17, 1.50)]
+    assert round(br[0]["depth"]) == -25
+    assert wave_breaks(bars[:14], 1.0, None, 20) == []                    # 아직 고점 못 넘음
 
 
 def test_daily_list_text(tmp_path):
