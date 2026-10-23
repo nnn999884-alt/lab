@@ -142,3 +142,20 @@ def test_live_money_signal_and_ask_depth():
     text = alert_text("PENX", None, {"score": 7, "signals": [], "metrics": {"dd60": -80, "spikes60": 1, "vol_ratio": 5}},
                       lv, "프리마켓")
     assert "호가: 매도 +10% 안" in text and "얇음 ✅" in text
+
+
+def test_premarket_burst_buys_at_once(tmp_path):
+    """동부 06~09시에 처음 터지면 지정가 대신 바로 매수, 익절 +30%."""
+    col, st, sent = make(tmp_path)
+    t7 = datetime(2026, 10, 23, 11, 0, tzinfo=timezone.utc)              # 07:00 ET (서머타임)
+    bars = [((t7 + timedelta(minutes=k)).isoformat(), p, p, p, p, 100000.0) for k, p in enumerate([0.9] * 3 + [1.0])]
+    col._vlimit(t7, "2026-10-22", "PENX", 9, 0.9, bars, None, "PRE")
+    status, entry, tp = st.query("SELECT status, round(entry, 3), tp FROM vsignals")[0]
+    assert (status, entry, tp) == ("OPEN", 1.005, 30.0)
+    assert sent.msgs[-1][0].startswith("🧪 가상 매수 체결") and "익절 $1.3065 (+30%)" in sent.msgs[-1][0]
+    col.universe["PENX"]["last"] = 1.2                                    # +19%: +15% 넘었지만 이 매매는 +30% 익절
+    col.check_vsignals(t7 + timedelta(minutes=20), "PRE")
+    assert st.query("SELECT status FROM vsignals")[0][0] == "OPEN"
+    col.universe["PENX"]["last"] = 1.31
+    col.check_vsignals(t7 + timedelta(minutes=40), "PRE")
+    assert st.query("SELECT status, exit_reason FROM vsignals")[0] == ("CLOSED", "익절 +30%")

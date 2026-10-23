@@ -100,6 +100,8 @@ class CollectorConfig:
     vsignal_dip: float = 20.0        # 신호가(1분 회전율 0.5%+ 또는 1분 거래대금 $5만+ 인 첫 분의 종가)보다 이만큼 아래 지정가
     vsignal_order_minutes: int = 60  # 지정가 유효 시간 (안 닿으면 취소)
     vsignal_take_profit: float = 15.0
+    vsignal_pre_hours: tuple = (6, 9)  # 동부 시간 이 사이(프리마켓 중후반)에 처음 터지면 지정가 대신 바로 매수
+    vsignal_pre_take_profit: float = 30.0
     vsignal_stop: float = 35.0       # 넓게: −35% 넘게 빠지면 개미털기가 아니라 끝난 경우가 대부분
     short_data: bool = True          # 공매도(FINRA)·대차(IBKR)·SSR·Reg SHO·거래정지 수집
     borrow_poll_minutes: int = 30    # IBKR 대차 파일은 15분마다 갱신

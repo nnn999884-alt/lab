@@ -21,7 +21,7 @@ from datetime import datetime, timedelta, timezone
 from ..config import CollectorConfig
 from ..dilution import classify
 from ..screener import edgar as ed
-from ..sessions import AFTER, CLOSED, DAY, PRE, REGULAR, SessionCalendar
+from ..sessions import AFTER, CLOSED, DAY, ET, PRE, REGULAR, SessionCalendar
 from ..toss_api import TossApiError
 from .store import Store
 
@@ -690,6 +690,20 @@ class Collector:
                 return
             b = today[p["trig_k"]]
             turn = f" · 1분 회전율 {b[5] / shares * 100:.1f}%" if shares else ""
+            lo_h, hi_h = self.cfg.vsignal_pre_hours
+            if lo_h <= datetime.fromisoformat(b[0]).astimezone(ET).hour < hi_h:
+                if not fresh(p["trig_k"]):
+                    return                               # 바로 사는 건 신호 직후에만
+                reason = (f"프리마켓 {datetime.fromisoformat(b[0]).astimezone(ET):%H:%M} ET 첫 거래 터짐 · 1분 거래대금 ${b[4] * b[5] / 1e3:.0f}K{turn}"
+                          f" · 전날 대비 {(b[4] / prev_close - 1) * 100:+.0f}% → 바로 매수 · 전조 {score}점")
+                e = b[4] * 1.005
+                with self.store.db:
+                    c = self.store.db.execute(
+                        "INSERT INTO vsignals (symbol, d0, opened, session, entry, score, reason, status, high, low, last, tp) "
+                        "VALUES (?,?,?,?,?,?,?, 'OPEN', ?, ?, ?, ?)", (sym, d0, b[0], session, e, score, reason, e, e, b[4],
+                                                                      self.cfg.vsignal_pre_take_profit))
+                self._vnotify("buy", c.lastrowid, session)
+                return
             reason = (f"1분 거래대금 ${b[4] * b[5] / 1e3:.0f}K{turn} · 신호가 {b[4]:.4g} (전날 대비 {(b[4] / prev_close - 1) * 100:+.0f}%)"
                       f" → −{self.cfg.vsignal_dip:g}% 지정가 · 전조 {score}점")
             with self.store.db:
@@ -723,7 +737,7 @@ class Collector:
     @staticmethod
     def _vrow(r) -> dict:
         keys = ["id", "symbol", "d0", "opened", "session", "entry", "score", "reason", "status", "closed", "exit_price",
-                "exit_reason", "high", "low", "last", "high_at"]
+                "exit_reason", "high", "low", "last", "high_at", "tp"]
         return dict(zip(keys, r))
 
     def check_vsignals(self, now: datetime, session: str) -> None:
@@ -743,8 +757,9 @@ class Collector:
             hi_at = iso(now) if last > (v["high"] or 0) else v.get("high_at")
             ret = (last / v["entry"] - 1) * 100
             why = None
-            if ret >= self.cfg.vsignal_take_profit:
-                why = f"익절 +{self.cfg.vsignal_take_profit:g}%"
+            tp = v.get("tp") or self.cfg.vsignal_take_profit
+            if ret >= tp:
+                why = f"익절 +{tp:g}%"
             elif ret <= -self.cfg.vsignal_stop:
                 why = f"손절 −{self.cfg.vsignal_stop:g}%"
             elif session == AFTER or now - datetime.fromisoformat(v["opened"]) >= timedelta(hours=24):

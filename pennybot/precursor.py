@@ -171,7 +171,11 @@ def limit_plan(bars: list[tuple], prev_close: float, shares: float | None, dip: 
     급등 후보 날 1,919일(결과 모르고 고름)에서 지정가보다 2% 더 내려가야 체결로 치는 엄격한 가정으로도
     −20% 지정가 · 익절 +15% · 손절 −35% 가 앞·뒤 기간 모두 1건당 +3.4% (승률 65%, 신호 476번 중 62번 체결).
     추격(터지자마자·2차 파동 돌파·10~30분 대기)은 모두 손해이거나 거의 본전. 체결 직전 거래대금 유지 조건은 도움 안 됨.
-    → {trig_k, trig_px, limit, until_k, fill_k, fill_px} 또는 신호 없으면 None."""
+    → {trig_k, trig_px, limit, until_k, fill_k, fill_px} 또는 신호 없으면 None.
+
+    단, 프리마켓 06~09시(동부)에 처음 터진 건 바로 사는 게 낫다 (호출하는 쪽에서 판단): 같은 표본에서 터진 분 종가에 사서
+    익절 +30% · 손절 −35% → 앞/뒤 +5.6/+3.2% (82건), 다른 표본(전날 점수 상위 날)에서도 +1.1/+9.8% (67건).
+    데이마켓·프리 초반·정규장에 터진 건 바로 사면 손해이거나 표본마다 들쭉날쭉."""
     if not bars or not prev_close:
         return None
     t = next((k for k, b in enumerate(bars) if (b[4] / prev_close - 1) * 100 >= 5
@@ -403,14 +407,16 @@ def vsignal_text(kind: str, sym: str, name: str | None, v: dict, cfg, session_ko
         ])
     if kind == "buy":
         e = v["entry"]
+        tp = v.get("tp") or cfg.vsignal_take_profit
         return "\n".join([
             f"🧪 가상 매수 체결 {head}",
             "──────────────",
             f"💵 {px(e)} · {session_ko} · 실제 주문 아님",
-            f"🎯 익절 {px(e * (1 + cfg.vsignal_take_profit / 100))} (+{cfg.vsignal_take_profit:g}%)"
+            f"🎯 익절 {px(e * (1 + tp / 100))} (+{tp:g}%)"
             f" · 🛑 손절 {px(e * (1 - cfg.vsignal_stop / 100))} (−{cfg.vsignal_stop:g}%) · 정규장 마감에 정리",
             f"근거: {v['reason']}",
-            "한줄 판단: 신호가에서 크게 눌린 자리에 체결됐습니다. 손절은 넓게(−35%), 익절은 짧게 잡습니다.",
+            ("한줄 판단: 프리마켓 중후반에 처음 터졌습니다. 이 시간대는 추격해도 이어지는 경우가 많았습니다." if v.get("tp")
+             else "한줄 판단: 신호가에서 크게 눌린 자리에 체결됐습니다. 손절은 넓게(−35%), 익절은 짧게 잡습니다."),
         ])
     ret = (v["exit_price"] / v["entry"] - 1) * 100
     held = datetime.fromisoformat(v["closed"]) - datetime.fromisoformat(v["opened"])
