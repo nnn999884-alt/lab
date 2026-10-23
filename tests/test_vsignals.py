@@ -259,3 +259,39 @@ def test_archive_saves_watched_symbols(tmp_path, monkeypatch):
     assert col.archive_1m("2026-10-22", "2026-10-23") == 2
     assert sorted(got) == [("ABCD", "2026-10-22", "2026-10-23"), ("PENX", "2026-10-22", "2026-10-23")]
     assert col.archive_1m("2026-10-22", "2026-10-23") == 0                # 이미 받은 날은 건너뜀
+
+
+def test_fast_scan_alerts_on_jump_with_volume(tmp_path):
+    col, st, sent = make(tmp_path)
+    col.universe = {"PENX": {"name": "펜엑스", "last": 1.0}, "THIN": {"name": "얇음", "last": 1.0}}
+    st.put_precursor_daily([{"d0": "2026-10-22", "symbol": s, "score": 7, "close": 1.0, "created": "x", "signals": "[]",
+                             "metrics": json.dumps({"dd60": -80, "vol_ratio": 60})} for s in ("PENX", "THIN")])
+    st.put_daily_bars([{"symbol": s, "d": "2026-10-22", "open": 1, "high": 1, "low": 1, "close": 1.0, "volume": 1} for s in ("PENX", "THIN")])
+    px = {"PENX": 1.0, "THIN": 1.0}
+
+    class C:
+        def prices(self, syms):
+            return [{"symbol": s, "lastPrice": str(px[s])} for s in syms]
+
+        def candles(self, sym, interval, count, before=None):
+            vol = 80000 if sym == "PENX" else 50
+            return {"candles": [{"timestamp": (T0 + timedelta(minutes=k)).isoformat(), "openPrice": 1, "highPrice": 1.1,
+                                 "lowPrice": 1, "closePrice": 1.08, "volume": vol} for k in range(3)]}
+
+        def orderbook(self, sym):
+            return {"asks": []}
+
+    class Cal:
+        def bounds(self, d, s):
+            return None
+    col.c, col.cal = C(), Cal()
+    t1 = T0 + timedelta(minutes=3)
+    assert col.fast_scan(t1, None, "PRE") == []                           # 첫 훑기: 1분 전 가격 없음 → 기록만
+    px.update(PENX=1.08, THIN=1.08)                                       # +8% (1분 새 +8%)
+    assert col.fast_scan(t1 + timedelta(seconds=10), None, "PRE") == ["PENX"]   # THIN 은 거래 얇아서 안 잡힘
+    assert len(sent.msgs) == 1 and "급등 전조 (PENX" in sent.msgs[0][0] and "빠른 포착" in sent.msgs[0][0]
+    assert st.query("SELECT alerted IS NOT NULL FROM precursor_live WHERE symbol='PENX'")[0][0] == 1
+    px.update(PENX=1.15)
+    col._fast_seen.clear()
+    col.fast_scan(t1 + timedelta(seconds=20), None, "PRE")                # 이미 알림 → 다시 안 보냄
+    assert len(sent.msgs) == 1

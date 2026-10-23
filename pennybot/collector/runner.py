@@ -69,6 +69,10 @@ class Collector:
         self._rank_prev: dict = {}                # 랭킹 종류 → {종목: 순위}
         self._rank_skip: tuple = (None, set())    # (기준일, 일봉 점수를 못 매긴 랭킹 종목)
         self._day_cache: dict = {}                # 종목 → (그날 시작, 그날 1분봉) — 가상 매매 VWAP 용
+        self._fast_hist: dict = {}                # 종목 → [(시각, 현재가)] 최근 몇 분 (빠른 훑기)
+        self._fast_seen: dict = {}                # 종목 → 마지막으로 1분봉 확인한 시각
+        self._fast_pc: tuple = (None, {})         # (기준일, 종목 → 전날 종가)
+        self._fast_hot: tuple = (None, set())     # (기준일, 빠른 훑기로 잡은 종목) → 1분 감시·가상 매매에도 넣는다
         self._short_done: set[tuple[str, str]] = set()   # (종류, 날짜) 이미 받은 일별 파일
         self._seen_news: set[str] = set()
         self.clock = clock
@@ -157,6 +161,9 @@ class Collector:
 
     def run(self, sleep=time.sleep) -> None:
         log.info("수집기 시작 (DB=%s)", self.cfg.db_path)
+        if self.cfg.fast_scan_seconds and self.cfg.precursor:
+            import threading
+            threading.Thread(target=self._fast_loop, name="fast-scan", daemon=True).start()
         while True:
             try:
                 self.tick()
@@ -640,7 +647,7 @@ class Collector:
 
     def poll_precursor_live(self, now: datetime, trade_date, session: str) -> None:
         """일봉 점수 높은 종목의 오늘 1분봉 → 거래 깨어남·슬금슬금 상승. 둘 다 켜지면 알림 (종목당 하루 한 번)."""
-        from ..precursor import TIER_LABEL, alert_buttons, alert_grade, alert_text, ask_depth, live, tier
+        from ..precursor import alert_grade, live, tier
         from ..vstrat import in_hours, signal_k
         from ..trading.strategies import SESSION_KO
         d0 = self.store.query("SELECT MAX(d0) FROM precursor_daily")
@@ -657,6 +664,12 @@ class Collector:
                 rows.append(r)
         rows.sort(key=lambda r: (-tiers[r[0]], -r[1], -(json.loads(r[3] or "{}").get("vol_ratio") or 0)))
         rows = rows[:self.cfg.precursor_live_max]
+        hot = set(self._fast_hot[1]) if self._fast_hot[0] == d0 else set()
+        have = {x[0] for x in rows}
+        for s in sorted(hot - have):                     # 빠른 훑기로 잡은 종목은 목록 밖이어도 1분 감시
+            if s in all_rows:
+                tiers.setdefault(s, tier(json.loads(all_rows[s][3] or "{}"), shares.get(s), all_rows[s][4]))
+                rows.append(all_rows[s])
         ranked_in = set()                            # 목록 밖, 랭킹으로 들어온 종목 (전날 일봉에 티가 안 난 급등)
         if self.cfg.precursor_rank_max:
             for r in self._rank_entrants(d0, {x[0] for x in rows}, all_rows):
@@ -687,40 +700,147 @@ class Collector:
                 lv["signals"].append("burst")
                 lv["metrics"]["grade"], lv["metrics"]["grade_why"] = alert_grade(
                     today[k][0], tiers[sym], close, json.loads(met or "{}").get("vol_ratio"))
-            fire = burst and in_hours(today[k][0], "pre") and sym not in prev_alert
-            if fire:
-                try:                                     # 호가창 두께 (알림 때만 조회)
-                    lv["metrics"]["ask10"] = ask_depth(self.c.orderbook(sym), lv["metrics"].get("price"))
-                except Exception as e:
-                    log.debug("호가 실패 %s: %s", sym, e)
+            fire = burst and in_hours(today[k][0], "pre") and sym not in prev_alert and not self._alerted(self.store, d0, sym)
             out.append({"d0": d0, "symbol": sym, "ts": iso(now), "signals": json.dumps(lv["signals"]),
                         "metrics": json.dumps(lv["metrics"]), "alerted": iso(now) if fire else prev_alert.get(sym)})
-            if fire and self.notifier:
-                day = {"score": score, "signals": json.loads(sig), "metrics": json.loads(met)}
-                link = None
-                try:
-                    link = self.link() if self.link else None
-                except Exception:
-                    pass
-                sh = self.store.query("SELECT shares FROM stock_info WHERE symbol=?", (sym,))
-                tg = self.store.query("SELECT tags FROM stock_tags WHERE symbol=? ORDER BY d0 DESC LIMIT 1", (sym,))
-                pats = [lab for k, lab in (("compress", "응축"), ("accum", "매집 의심"), ("base", "바닥 다지기")) if k in day["signals"]]
-                self.notifier.send(alert_text(sym, (self.universe.get(sym) or {}).get("name"), day, lv,
-                                              SESSION_KO.get(session, session), link, now,
-                                              shares=sh[0][0] if sh and sh[0][0] else None,
-                                              tags=[f"{lv['metrics']['grade']}급" + (f" ({' · '.join(lv['metrics']['grade_why'])})"
-                                                                                       if lv["metrics"]["grade_why"] else "")]
-                                              + ([TIER_LABEL[tiers[sym]]] if tiers[sym] else []) + (["랭킹 진입"] if sym in ranked_in else [])
-                                              + (["호가 얇음"] if (lv["metrics"].get("ask10") or 9e18) < (lv["metrics"].get("dollar_3m") or 0) else [])
-                                              + (json.loads(tg[0][0]) if tg else []) + pats),
-                                   buttons=alert_buttons(sym, link))
-                log.info("급등 전조 알림 %s (%s)", sym, ", ".join(lv["signals"]))
+            if fire:
+                self._alert(self.store, now, session, sym, score, sig, met, lv, tiers[sym],
+                            (["랭킹 진입"] if sym in ranked_in else []) + (["빠른 포착"] if sym in hot else []))
             if self.cfg.vsignal and session != AFTER:      # 가상 매매는 알림과 따로: 1분 거래 터짐 → 아래 지정가
                 self._vtrade(now, d0, sym, score, close, today, shares.get(sym), session, start)
-            if fire:
-                self._event(now, sym, "precursor", f"🔥 {sym} 급등 전조 {lv['metrics']['grade']}급 (1분 거래 터짐 · "
-                            f"{lv['metrics'].get('chg', 0):+.1f}% · 3분 ${lv['metrics'].get('dollar_3m', 0) / 1e3:.0f}K)", lv["metrics"].get("chg"))
+        for r in out:                                    # 루프 도는 사이 빠른 훑기가 보낸 알림 표시를 덮어쓰지 않게
+            if not r["alerted"]:
+                r["alerted"] = self._alerted(self.store, d0, r["symbol"])
         self.store.put_precursor_live(out)
+
+    @staticmethod
+    def _alerted(store, d0: str, sym: str):
+        r = store.query("SELECT alerted FROM precursor_live WHERE d0=? AND symbol=? AND alerted IS NOT NULL", (d0, sym))
+        return r[0][0] if r else None
+
+    def _alert(self, store, now, session, sym, score, sig, met, lv, tier_, extra_tags) -> None:
+        """급등 전조 알림 한 건 (호가창 두께 조회 → 텔레그램 → 피드 이벤트)."""
+        from ..precursor import TIER_LABEL, alert_buttons, alert_text, ask_depth
+        from ..trading.strategies import SESSION_KO
+        try:
+            lv["metrics"]["ask10"] = ask_depth(self.c.orderbook(sym), lv["metrics"].get("price"))
+        except Exception as e:
+            log.debug("호가 실패 %s: %s", sym, e)
+        m = lv["metrics"]
+        if self.notifier:
+            day = {"score": score, "signals": json.loads(sig or "[]"), "metrics": json.loads(met or "{}")}
+            link = None
+            try:
+                link = self.link() if self.link else None
+            except Exception:
+                pass
+            sh = store.query("SELECT shares FROM stock_info WHERE symbol=?", (sym,))
+            tg = store.query("SELECT tags FROM stock_tags WHERE symbol=? ORDER BY d0 DESC LIMIT 1", (sym,))
+            pats = [lab for k, lab in (("compress", "응축"), ("accum", "매집 의심"), ("base", "바닥 다지기")) if k in day["signals"]]
+            self.notifier.send(alert_text(sym, (self.universe.get(sym) or {}).get("name"), day, lv,
+                                          SESSION_KO.get(session, session), link, now,
+                                          shares=sh[0][0] if sh and sh[0][0] else None,
+                                          tags=[f"{m['grade']}급" + (f" ({' · '.join(m['grade_why'])})" if m["grade_why"] else "")]
+                                          + ([TIER_LABEL[tier_]] if tier_ else []) + extra_tags
+                                          + (["호가 얇음"] if (m.get("ask10") or 9e18) < (m.get("dollar_3m") or 0) else [])
+                                          + (json.loads(tg[0][0]) if tg else []) + pats),
+                               buttons=alert_buttons(sym, link))
+        log.info("급등 전조 알림 %s %s급 (%s)", sym, m["grade"], ", ".join(lv["signals"]))
+        self._event(now, sym, "precursor", f"🔥 {sym} 급등 전조 {m['grade']}급 (1분 거래 터짐 · "
+                    f"{m.get('chg', 0):+.1f}% · 3분 ${m.get('dollar_3m', 0) / 1e3:.0f}K)", m.get("chg"))
+
+    # ---------- 빠른 훑기: 10초마다 전 종목 현재가 → 막 튄 종목만 1분봉으로 확인 → 바로 알림 ----------
+    def _fast_loop(self) -> None:
+        store = Store(self.cfg.db_path)                  # 스레드 전용 연결
+        while True:
+            t0 = time.time()
+            try:
+                now = self.clock()
+                trade_date, session = self.cal.classify(now)
+                if session in (DAY, PRE, REGULAR) and self.universe:
+                    self.fast_scan(now, trade_date, session, store)
+            except Exception as e:
+                log.warning("빠른 훑기 실패: %s", str(e)[:160])
+            time.sleep(max(1.0, self.cfg.fast_scan_seconds - (time.time() - t0)))
+
+    def fast_scan(self, now: datetime, trade_date, session: str, store=None) -> list[str]:
+        """전날 대비 +5%↑ 이면서 약 1분 전보다 +3%↑ 튄 종목 → 1분봉으로 거래 터짐 확인 → 알림 (정규장 전만, 정규장은 피드만).
+        재시작 직후엔 1분 전 가격이 없어 아무것도 안 잡는다 (지난 신호로 몰려 오지 않게). → 확인된 종목."""
+        from collections import deque
+        store = store or self.store
+        d0 = store.query("SELECT MAX(d0) FROM precursor_daily")
+        if not d0 or not d0[0][0]:
+            return []
+        d0 = d0[0][0]
+        if self._fast_pc[0] != d0:
+            self._fast_pc = (d0, dict(store.query("SELECT symbol, close FROM daily_bars WHERE d=?", (d0,))))
+            self._fast_hot = (d0, set())
+        pcs = self._fast_pc[1]
+        jumps = []
+        for p in self.c.prices(sorted(self.universe)):
+            s, last = p["symbol"], float(p["lastPrice"] or 0)
+            if s in self.universe and last:
+                self.universe[s]["last"] = last
+            pc = pcs.get(s)
+            if not pc or not last:
+                continue
+            h = self._fast_hist.setdefault(s, deque(maxlen=30))
+            old = next((x for t, x in h if (now - t).total_seconds() <= 75), None)
+            h.append((now, last))
+            if old and (last / pc - 1) * 100 >= 5 and (last / old - 1) * 100 >= 3:
+                jumps.append((s, pc))
+        hit = []
+        for s, pc in jumps:
+            if self._fast_seen.get(s) and now - self._fast_seen[s] < timedelta(minutes=3):
+                continue
+            self._fast_seen[s] = now
+            if self._fast_confirm(now, trade_date, session, store, d0, s, pc):
+                hit.append(s)
+        return hit
+
+    def _fast_confirm(self, now, trade_date, session, store, d0, sym, pc) -> bool:
+        from ..precursor import alert_grade, live, tier
+        from ..vstrat import in_hours
+        try:
+            cs = (self.c.candles(sym, "1m", 200) or {}).get("candles", [])
+        except Exception as e:
+            log.debug("빠른 확인 1분봉 실패 %s: %s", sym, e)
+            return False
+        bars = sorted((iso(datetime.fromisoformat(cd["timestamp"].replace("Z", "+00:00"))), float(cd["openPrice"]),
+                       float(cd["highPrice"]), float(cd["lowPrice"]), float(cd["closePrice"]), float(cd["volume"])) for cd in cs)
+        day_start = self.cal.bounds(trade_date, DAY)
+        start = iso(day_start[0]) if day_start else iso(now - timedelta(hours=12))
+        today = [b for b in bars if b[0] >= start]
+        if len(today) < 2:
+            return False
+        sh = store.query("SELECT shares FROM stock_info WHERE symbol=?", (sym,))
+        shares = sh[0][0] if sh and sh[0][0] else None
+        last2 = today[-2:]
+        d2, v2 = sum(b[4] * b[5] for b in last2), sum(b[5] for b in last2)
+        if not (d2 >= 5e4 or (shares and 0.5 <= v2 / shares * 100 <= 1000)):
+            return False                                 # 가격만 튀고 거래는 얇음
+        self._fast_hot[1].add(sym)                       # 다음 1분 감시·가상 매매에 넣는다
+        if self._alerted(store, d0, sym):
+            return True
+        row = store.query("SELECT symbol, score, signals, metrics, close FROM precursor_daily WHERE d0=? AND symbol=?", (d0, sym))
+        if not row:
+            new = self._precursor_row(sym, d0, store, src="fast")
+            if new:
+                store.put_precursor_daily([new])
+                row = [(sym, new["score"], new["signals"], new["metrics"], new["close"])]
+        _, score, sig, met, _ = row[0] if row else (sym, 0, "[]", "{}", pc)
+        dm = json.loads(met or "{}")
+        lv = live(today, pc, now, shares)
+        lv["signals"].append("burst")
+        lv["metrics"]["session"] = session
+        t_ = tier(dm, shares, pc)
+        lv["metrics"]["grade"], lv["metrics"]["grade_why"] = alert_grade(iso(now), t_, pc, dm.get("vol_ratio"))
+        fire = in_hours(iso(now), "pre")
+        store.put_precursor_live([{"d0": d0, "symbol": sym, "ts": iso(now), "signals": json.dumps(lv["signals"]),
+                                   "metrics": json.dumps(lv["metrics"]), "alerted": iso(now) if fire else None}])
+        if fire:
+            self._alert(store, now, session, sym, score, sig, met, lv, t_, ["빠른 포착"])
+        return True
 
     # ---------- 가상 매수·매도 (알림만, 실제 주문 없음) ----------
     def _day_bars(self, sym: str, recent: list[tuple], start: str) -> list[tuple]:

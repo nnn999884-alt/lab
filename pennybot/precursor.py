@@ -238,7 +238,7 @@ def alert_text(sym: str, name: str | None, day: dict, lv: dict, session_ko: str,
         "",
         f"📉 차트 전조 {day['score']}점: " + " · ".join(on_d),
         *( [f"🏷 {' · '.join(tags)}"] if tags else [] ),
-        f"   60일 고점 대비 {pct(dm['dd60'])} · 60일 급등 {dm['spikes60']}회 · 전날 거래량 {times(dm['vol_ratio'])}",
+        f"   60일 고점 대비 {pct(dm.get('dd60'))} · 60일 급등 {dm.get('spikes60', '-')}회 · 전날 거래량 {times(dm.get('vol_ratio'))}",
         f"⏱ 갱신: {t:%m.%d %H:%M:%S}",
     ])
 
