@@ -242,6 +242,27 @@ body.readonly .readonly-note { display: inline; }
 .pre-score { flex: 0 0 auto; }
 .tablewrap table.cards td { overflow-wrap: anywhere; word-break: keep-all; }
 .brief-head > * { min-width: 0; overflow-wrap: anywhere; }
+
+/* ---------- 카드 간결하게 ---------- */
+.pre-card { padding: 12px 14px; }
+.pre-top { margin-bottom: 2px; }
+.pre-price { font-size: 17px; gap: 8px; }
+.pre-now { font-weight: 750; }
+.pre-live { display: block; margin-top: 6px; font-size: 13.5px; font-weight: 700; color: var(--up); }
+.pre-tags { display: block; margin-top: 6px; font-size: 13px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pre-tags.all { white-space: normal; }
+.pre-k3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin-top: 8px; }
+.pre-k3 > div { display: flex; flex-direction: column; min-width: 0; }
+.pre-k3 .k { font-size: 11.5px; color: var(--text-muted); }
+.pre-k3 .v { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pre-more { margin-top: 8px; padding-top: 8px; border-top: 1px dashed var(--border); }
+.pre-more .pre-judge { margin-bottom: 4px; }
+.pre-toggle { display: block; text-align: right; margin-top: 4px; font-size: 12.5px; color: var(--text-muted); }
+.link-btn { margin-top: 8px; padding: 6px 12px; font-size: 13px; }
+.sess-badge { margin-left: 0; }
+/* 피드: 한 줄 (넘치면 말줄임) */
+.feed .ev { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ev-ago { display: inline-block; min-width: 46px; margin-right: 6px; font-size: 12px; color: var(--text-muted); font-weight: 400; }
 </style>
 </head>
 <body>
@@ -1063,8 +1084,8 @@ async function loadFeed() {
     li.className = "ev " + (e.kind === "precursor" ? "ev-hot" : e.kind === "spike_dn" || e.kind === "halt" ? "ev-dn" : e.kind === "spike_up" ? "ev-up" : "");
     const s = Math.max(0, Math.round((now - new Date(e.ts)) / 1000));
     const ago = s < 60 ? `${s}초 전` : s < 3600 ? `${Math.round(s / 60)}분 전` : kst(e.ts);
+    const b = document.createElement("span"); b.className = "ev-ago"; b.textContent = ago; li.appendChild(b);   // 시간 먼저 (줄이 잘려도 보이게)
     const a = document.createElement("span"); a.textContent = e.text; li.appendChild(a);
-    const b = document.createElement("span"); b.className = "muted"; b.textContent = " · " + ago; li.appendChild(b);
     li.onclick = () => { lookup(e.symbol); showTab("symbol"); };
     box.appendChild(li);
   });
@@ -1111,62 +1132,67 @@ async function loadPre() {
   drawPre();
 }
 const SESS_SHORT = { DAY: "데이", PRE: "프리", REGULAR: "정규", AFTER: "애프터", CLOSED: "휴장" };
+const preOpen = new Set();               // '자세히' 펼친 종목 (새로고침해도 유지)
 function drawPre() {
   const box = $("pre-list"); box.replaceChildren();
   const all = (preData && preData.rows) || [];
   const rows = all.filter(x => preFilter === "live" ? x.live.length : preFilter === "top" ? x.score >= 8 : true);
   if (!rows.length) { const d = document.createElement("div"); d.className = "empty"; d.textContent = preFilter === "live" ? "지금 장중 증상이 켜진 종목이 없습니다" : "없음"; box.appendChild(d); }
   const span = (cls, text) => { const s = document.createElement("span"); if (cls) s.className = cls; s.textContent = text; return s; };
-  const vr = v => v == null ? null : v >= 100 ? "100배+" : v.toFixed(1) + "배";   // 평소 거래가 거의 없으면 수천 배가 나온다
+  const vr = v => v == null ? null : v >= 100 ? "100배+" : v.toFixed(1) + "배";
   const turn = v => v == null || v > 1000 ? null : (v >= 10 ? Math.round(v) : v >= 1 ? v.toFixed(1) : v.toFixed(2)) + "%";
   rows.slice(0, preShown).forEach(x => {
     const hot = x.live.includes("wake") && x.live.includes("creep");
+    const open = preOpen.has(x.symbol);
     const c = document.createElement("div");
     c.className = "pre-card" + (hot ? " hot" : x.live.length ? " warm" : "");
-    c.tabIndex = 0;
-    // 1줄: 티커 · 종목명 · 점수
+    // 1줄: 티커 · 이름 · 점수
     const top = document.createElement("div"); top.className = "pre-top";
-    top.append(span("pre-sym", (hot ? "🔥 " : "") + x.symbol), span("pre-name", x.name || ""),
+    top.append(span("pre-sym", x.symbol), span("pre-name", x.name || ""),
                span("pre-score " + (x.score >= 8 ? "s-hi" : x.score >= 5 ? "s-mid" : "s-lo"), x.score + "점"));
     c.appendChild(top);
-    // 2줄: 실시간 가격 · 당일 등락률(전날 종가 대비) · 세션
+    // 2줄: 지금 가격 · 등락 · 세션
     const now = x.now || {}, m = x.live_m || {};
     const pr = document.createElement("div"); pr.className = "pre-price";
-    if (now.price != null) {
-      pr.append(span("pre-now " + (tone(now.chg) || ""), fmtPx(now.price)), span("pre-chg " + (tone(now.chg) || ""), " " + fmtPct(now.chg)),
-                span("sess-badge", SESS_SHORT[now.session] || now.session || ""), span("muted", ` 전날 ${fmtPx(x.close)}`));
-    } else {
-      pr.append(span("pre-now", fmtPx(x.close)), span("muted", " 전날 종가"));
-    }
+    if (now.price != null) pr.append(span("pre-now " + (tone(now.chg) || ""), fmtPx(now.price)), span("pre-chg " + (tone(now.chg) || ""), fmtPct(now.chg)), span("sess-badge", SESS_SHORT[now.session] || ""));
+    else pr.append(span("pre-now", fmtPx(x.close)), span("muted", "전날 종가"));
     c.appendChild(pr);
-    if (x.judge) c.appendChild(span("pre-judge", `${x.judge.state} · 거래 흐름 ${x.judge.flow} · 변동성 ${x.judge.risk}`));
-    if (x.bars && x.bars.length > 5) { const mc = document.createElement("div"); mc.className = "chart pre-chart"; c.appendChild(mc); requestAnimationFrame(() => candleChart(mc, x.bars, { height: 86, ma: [5, 20], labels: false })); }
-    // 태그: 장중(빨강) · 거래량(주황) · 공시(보라) · 패턴(청록) · 차트(회색)
-    const chips = document.createElement("div"); chips.className = "chips";
-    x.live_labels.forEach(l => chips.appendChild(span("chip live", l)));
-    x.labels.filter(l => l.startsWith("거래량")).forEach(l => chips.appendChild(span("chip vol", l)));
-    (x.filing_tags || []).forEach(l => chips.appendChild(span("chip filing", l)));
-    (x.patterns || []).forEach(l => chips.appendChild(span("chip pattern", l)));
-    x.labels.filter(l => !l.startsWith("거래량")).forEach(l => chips.appendChild(span("chip", l)));
-    c.appendChild(chips);
-    // 숫자
+    // 3줄: 지금 일어나는 일 (있을 때만)
+    if (x.live_labels.length) c.appendChild(span("pre-live", "🔥 " + x.live_labels.join(" · ")));
+    // 4줄: 핵심 태그 최대 3개 (거래량 → 공시 → 패턴)
+    const keyTags = [...x.labels.filter(l => l.startsWith("거래량")), ...(x.filing_tags || []).map(l => l.replace(/ \d\d\/\d\d(\/\d\d)?$/, "")), ...(x.patterns || [])];
+    if (keyTags.length) c.appendChild(span("pre-tags", keyTags.slice(0, 3).join(" · ")));
+    // 5줄: 숫자 3개
     const mt = x.metrics || {};
-    const facts = [
-      ["고점 대비", mt.dd60 != null ? fmtPct(mt.dd60, 0) : null],
-      ["10일", mt.ret10 != null ? fmtPct(mt.ret10, 0) : null],
-      ["최근 급등", mt.last_spike_d ? `${mt.last_spike_d.slice(5)} ${fmtPct(mt.last_spike_pct, 0)}` : "60일 없음"],
-      ["전날 거래량", vr(mt.vol_ratio)],
-      ["전날 회전율", turn(x.turnover_d0)],
-      ["거래대금(20일)", mt.dollar20 != null ? "$" + fmtQty(mt.dollar20) : null],
-      ["오늘 회전율", turn(x.turnover_today)],
-      ["3분 회전율", turn(x.turnover_3m)],
-      ["1시간 거래량", m.vol_x != null ? vr(m.vol_x) : null],
-      ["발행주식", x.shares ? fmtQty(x.shares) + "주" : null],
-    ].filter(f => f[1]);
-    const f = document.createElement("div"); f.className = "pre-facts";
-    facts.forEach(([k, v]) => { const s = document.createElement("span"); const b = document.createElement("b"); b.textContent = v; s.append(span("k", k + " "), b); f.appendChild(s); });
-    c.appendChild(f);
-    c.onclick = c.onkeydown = e => { if (e.type === "click" || e.key === "Enter") { lookup(x.symbol); showTab("symbol"); } };
+    const k3 = document.createElement("div"); k3.className = "pre-k3";
+    [["고점", mt.dd60 != null ? fmtPct(mt.dd60, 0) : "-"], ["전날 거래량", vr(mt.vol_ratio) || "-"], ["회전율", turn(x.turnover_d0) || "-"]]
+      .forEach(([k, v]) => { const d = document.createElement("div"); d.append(span("k", k), span("v", v)); k3.appendChild(d); });
+    c.appendChild(k3);
+    if (x.bars && x.bars.length > 5) { const mc = document.createElement("div"); mc.className = "chart pre-chart"; c.appendChild(mc); requestAnimationFrame(() => candleChart(mc, x.bars, { height: 64, ma: [5, 20], labels: false })); }
+    // 자세히 (펼치면)
+    if (open) {
+      const more = document.createElement("div"); more.className = "pre-more";
+      if (x.judge) more.appendChild(span("pre-judge", `${x.judge.state} · 거래 흐름 ${x.judge.flow} · 변동성 ${x.judge.risk}`));
+      const tags = [...x.labels, ...(x.filing_tags || []), ...(x.patterns || [])];
+      if (tags.length) more.appendChild(span("pre-tags all", tags.join(" · ")));
+      const facts = [
+        ["전날 종가", fmtPx(x.close)], ["10일", mt.ret10 != null ? fmtPct(mt.ret10, 0) : null],
+        ["최근 급등", mt.last_spike_d ? `${mt.last_spike_d.slice(5)} ${fmtPct(mt.last_spike_pct, 0)}` : "60일 없음"],
+        ["거래대금(20일)", mt.dollar20 != null ? "$" + fmtQty(mt.dollar20) : null],
+        ["오늘 회전율", turn(x.turnover_today)], ["3분 회전율", turn(x.turnover_3m)],
+        ["1시간 거래량", m.vol_x != null ? vr(m.vol_x) : null], ["발행주식", x.shares ? fmtQty(x.shares) + "주" : null],
+      ].filter(f => f[1]);
+      const f = document.createElement("div"); f.className = "pre-facts";
+      facts.forEach(([k, v]) => { const s = document.createElement("span"); const b = document.createElement("b"); b.textContent = v; s.append(span("k", k + " "), b); f.appendChild(s); });
+      more.appendChild(f);
+      const go = document.createElement("button"); go.className = "link-btn"; go.textContent = "종목 조회 →";
+      go.onclick = e => { e.stopPropagation(); lookup(x.symbol); showTab("symbol"); };
+      more.appendChild(go);
+      c.appendChild(more);
+    }
+    const tg = span("pre-toggle", open ? "접기 ▴" : "자세히 ▾");
+    c.appendChild(tg);
+    c.onclick = () => { open ? preOpen.delete(x.symbol) : preOpen.add(x.symbol); drawPre(); };
     box.appendChild(c);
   });
   const more = $("pre-more"), left = rows.length - preShown;
