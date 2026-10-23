@@ -240,3 +240,30 @@ def test_calendar_failure_falls_back_to_static_then_retries():
     cal._retry_at = 0
     cal.classify(ts)
     assert Flaky.calls == 2                                # 근사로 채운 날은 다시 받아 본다
+
+
+def test_rank_entrant_joins_live_watch(tmp_path):
+    """전날 목록에 없던 종목이 랭킹에 들면 일봉으로 점수를 매겨 장중 감시에 넣는다."""
+    import json
+
+    class Toss(FakeToss):
+        def candles(self, symbol, interval, count, before=None):
+            if interval == "1d":
+                d0 = date(2026, 10, 20)
+                return {"candles": [{"timestamp": f"{d0 - timedelta(days=k)}T00:00:00-04:00", "openPrice": "1",
+                                     "highPrice": "1.1", "lowPrice": "0.9", "closePrice": "1", "volume": "1000"}
+                                    for k in range(70)]}
+            return super().candles(symbol, interval, count, before)
+
+    store = Store(tmp_path / "m.db")
+    col = Collector(Toss(), store, SessionCalendar(Toss()), CollectorConfig(min_price=0.2, max_price=10), None,
+                    clock=lambda: et(10, 5))
+    col.refresh_universe(et(10, 5))
+    store.put_precursor_daily([{"d0": "2026-10-20", "symbol": "LOW", "score": 9, "close": 0.5, "created": "x",
+                                "signals": "[]", "metrics": "{}"}])
+    col.poll_rankings(et(10, 5), D, REGULAR)
+    col.poll_precursor_live(et(10, 5), D, REGULAR)
+    live = {r[0] for r in store.query("SELECT symbol FROM precursor_live")}
+    assert live == {"LOW", "PEN"}                       # BIG 은 유니버스 밖
+    m = store.query("SELECT metrics FROM precursor_daily WHERE symbol='PEN'")
+    assert json.loads(m[0][0])["src"] == "rank"

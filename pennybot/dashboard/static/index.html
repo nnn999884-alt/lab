@@ -1161,7 +1161,7 @@ function drawPre() {
     // 3줄: 지금 일어나는 일 (있을 때만)
     if (x.live_labels.length) c.appendChild(span("pre-live", "🔥 " + x.live_labels.join(" · ")));
     // 4줄: 핵심 태그 최대 3개 (거래량 → 공시 → 패턴)
-    const keyTags = [...x.labels.filter(l => l.startsWith("거래량")), ...(x.filing_tags || []).map(l => l.replace(/ \d\d\/\d\d(\/\d\d)?$/, "")), ...(x.patterns || [])];
+    const keyTags = [...(x.metrics && x.metrics.src === "rank" ? ["📈 랭킹 진입"] : []), ...x.labels.filter(l => l.startsWith("거래량")), ...(x.filing_tags || []).map(l => l.replace(/ \d\d\/\d\d(\/\d\d)?$/, "")), ...(x.patterns || [])];
     if (keyTags.length) c.appendChild(span("pre-tags", keyTags.slice(0, 3).join(" · ")));
     // 5줄: 숫자 3개
     const mt = x.metrics || {};

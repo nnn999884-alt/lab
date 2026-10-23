@@ -66,6 +66,7 @@ class Collector:
         self._pre_tried = None
         self._ev_last: dict = {}                  # (종목, 종류) → 마지막 이벤트 시각
         self._rank_prev: dict = {}                # 랭킹 종류 → {종목: 순위}
+        self._rank_skip: tuple = (None, set())    # (기준일, 일봉 점수를 못 매긴 랭킹 종목)
         self._short_done: set[tuple[str, str]] = set()   # (종류, 날짜) 이미 받은 일별 파일
         self._seen_news: set[str] = set()
         self.clock = clock
@@ -458,24 +459,14 @@ class Collector:
         self._pre_thread.start()
 
     def build_precursor_daily(self, d0, symbols: list[str]) -> int:
-        from ..precursor import daily
         store = Store(self.cfg.db_path)                # 스레드 전용 연결
         rows, n = [], 0
         for sym in symbols:
-            try:
-                cs = (self.c.candles(sym, "1d", 70) or {}).get("candles", [])
-            except Exception as e:
-                log.debug("전조 일봉 실패 %s: %s", sym, e)
+            r = self._precursor_row(sym, d0, store)
+            if r is False:
                 continue
-            bars = sorted((cd["timestamp"][:10], float(cd["openPrice"]), float(cd["highPrice"]), float(cd["lowPrice"]),
-                           float(cd["closePrice"]), float(cd["volume"])) for cd in cs)
-            bars = [b for b in bars if b[0] <= d0.isoformat()]     # 기준일 뒤(진행 중인 봉)는 뺀다
-            store.put_daily_bars([{"symbol": sym, "d": b[0], "open": b[1], "high": b[2], "low": b[3], "close": b[4],
-                                   "volume": b[5]} for b in bars[-70:]])
-            r = daily(bars)
-            if r and r["d0"] == d0.isoformat() and r["score"] >= 2:
-                rows.append({"d0": r["d0"], "symbol": sym, "score": r["score"], "signals": json.dumps(r["signals"]),
-                             "metrics": json.dumps(r["metrics"]), "close": r["close"], "created": iso(self.clock())})
+            if r and r["score"] >= 2:
+                rows.append(r)
             n += 1
         store.put_precursor_daily(rows)
         log.info("급등 전조 일봉 점수 %s: %d종목 계산, 2점 이상 %d, %d점 이상 %d", d0, n, len(rows),
@@ -491,6 +482,55 @@ class Collector:
             except Exception as e:
                 log.warning("감시 목록 알림 실패: %s", e)
         return len(rows)
+
+    def _precursor_row(self, sym: str, d0, store, src: str | None = None):
+        """일봉 70개 → 전조 행 (기준일 봉이 없으면 None, 조회 실패면 False). 일봉은 daily_bars 에도 저장."""
+        from ..precursor import daily
+        d0s = d0 if isinstance(d0, str) else d0.isoformat()
+        try:
+            cs = (self.c.candles(sym, "1d", 70) or {}).get("candles", [])
+        except Exception as e:
+            log.debug("전조 일봉 실패 %s: %s", sym, e)
+            return False
+        bars = sorted((cd["timestamp"][:10], float(cd["openPrice"]), float(cd["highPrice"]), float(cd["lowPrice"]),
+                       float(cd["closePrice"]), float(cd["volume"])) for cd in cs)
+        bars = [b for b in bars if b[0] <= d0s]                    # 기준일 뒤(진행 중인 봉)는 뺀다
+        store.put_daily_bars([{"symbol": sym, "d": b[0], "open": b[1], "high": b[2], "low": b[3], "close": b[4],
+                               "volume": b[5]} for b in bars[-70:]])
+        r = daily(bars)
+        if not r or r["d0"] != d0s:
+            return None
+        if src:
+            r["metrics"]["src"] = src
+        return {"d0": r["d0"], "symbol": sym, "score": r["score"], "signals": json.dumps(r["signals"]),
+                "metrics": json.dumps(r["metrics"]), "close": r["close"], "created": iso(self.clock())}
+
+    def _rank_entrants(self, d0: str, have: set, daily_rows: dict) -> list[tuple]:
+        """지금 랭킹(급락률 제외)에 든 유니버스 종목 중 목록 밖인 것 → 전조 행. 처음 보는 종목은 일봉으로 점수를 매겨 저장."""
+        if self._rank_skip[0] != d0:
+            self._rank_skip = (d0, set())
+        skip = self._rank_skip[1]
+        out, fetched = [], 0
+        for (sym,) in self.store.query(
+                "SELECT symbol FROM rankings WHERE ts=(SELECT MAX(ts) FROM rankings) AND type != 'TOP_LOSERS' "
+                "GROUP BY symbol ORDER BY MIN(rank), symbol"):
+            if len(out) >= self.cfg.precursor_rank_max:
+                break
+            if sym in have or sym in skip or sym not in self.universe:
+                continue
+            r = daily_rows.get(sym)
+            if r is None:
+                if fetched >= 10:                    # 한 번에 일봉 10개까지 (나머지는 다음 분에)
+                    continue
+                fetched += 1
+                new = self._precursor_row(sym, d0, self.store, src="rank")
+                if not new:
+                    skip.add(sym)
+                    continue
+                self.store.put_precursor_daily([new])
+                r = (sym, new["score"], new["signals"], new["metrics"], new["close"])
+            out.append(r)
+        return out
 
     def build_stock_tags(self, d0, symbols: list[str], store=None) -> int:
         """ATM·워런트·공모·액면병합·상폐 통지·전환사채 태그 (SEC 공시 판정, 디스크 캐시라 두 번째부터 빠름)."""
@@ -564,13 +604,20 @@ class Collector:
         d0 = d0[0][0]
         shares = dict(self.store.query("SELECT symbol, shares FROM stock_info WHERE shares > 0"))
         tiers = {}
-        rows = []
+        rows, all_rows = [], {}
         for r in self.store.query("SELECT symbol, score, signals, metrics, close FROM precursor_daily WHERE d0=?", (d0,)):
+            all_rows[r[0]] = r
             tiers[r[0]] = tier(json.loads(r[3] or "{}"), shares.get(r[0]), r[4])
-            if tiers[r[0]] or r[1] >= self.cfg.precursor_min_score:
+            if (tiers[r[0]] or r[1] >= self.cfg.precursor_min_score) and json.loads(r[3] or "{}").get("src") != "rank":
                 rows.append(r)
         rows.sort(key=lambda r: (-tiers[r[0]], -r[1], -(json.loads(r[3] or "{}").get("vol_ratio") or 0)))
         rows = rows[:self.cfg.precursor_live_max]
+        ranked_in = set()                            # 목록 밖, 랭킹으로 들어온 종목 (전날 일봉에 티가 안 난 급등)
+        if self.cfg.precursor_rank_max:
+            for r in self._rank_entrants(d0, {x[0] for x in rows}, all_rows):
+                tiers.setdefault(r[0], tier(json.loads(r[3] or "{}"), shares.get(r[0]), r[4]))
+                ranked_in.add(r[0])
+                rows.append(r)
         day_start = self.cal.bounds(trade_date, DAY)
         start = iso(day_start[0]) if day_start else iso(now - timedelta(hours=12))
         prev_alert = dict(self.store.query("SELECT symbol, alerted FROM precursor_live WHERE d0=? AND alerted IS NOT NULL", (d0,)))
@@ -587,7 +634,13 @@ class Collector:
             lv = live([b for b in bars if b[0] >= start], close, now)
             lv["metrics"]["session"] = session
             on = set(lv["signals"])
-            fire = ({"wake", "creep"} <= on or (tiers[sym] and on & {"wake", "up10"})) and sym not in prev_alert
+            if tiers[sym]:
+                cond = bool(on & {"wake", "up10"})       # 급등 후보: 하나만 켜져도
+            elif sym in ranked_in:
+                cond = {"wake", "up10"} <= on            # 랭킹 진입: 이미 움직이는 종목이라 거래 급증 + +10% 둘 다
+            else:
+                cond = {"wake", "creep"} <= on
+            fire = cond and sym not in prev_alert
             out.append({"d0": d0, "symbol": sym, "ts": iso(now), "signals": json.dumps(lv["signals"]),
                         "metrics": json.dumps(lv["metrics"]), "alerted": iso(now) if fire else prev_alert.get(sym)})
             if fire and self.notifier:
@@ -603,7 +656,8 @@ class Collector:
                 self.notifier.send(alert_text(sym, (self.universe.get(sym) or {}).get("name"), day, lv,
                                               SESSION_KO.get(session, session), link, now,
                                               shares=sh[0][0] if sh and sh[0][0] else None,
-                                              tags=([TIER_LABEL[tiers[sym]]] if tiers[sym] else []) + (json.loads(tg[0][0]) if tg else []) + pats),
+                                              tags=([TIER_LABEL[tiers[sym]]] if tiers[sym] else []) + (["랭킹 진입"] if sym in ranked_in else [])
+                                              + (json.loads(tg[0][0]) if tg else []) + pats),
                                    buttons=alert_buttons(sym, link))
                 log.info("급등 전조 알림 %s (%s)", sym, ", ".join(lv["signals"]))
             if fire and self.cfg.vsignal:
