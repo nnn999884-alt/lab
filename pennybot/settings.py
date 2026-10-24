@@ -7,12 +7,12 @@ from pathlib import Path
 
 DEFAULTS = {
     "strategies": {"S1": True, "S2": True, "S3": True, "S4": True, "S5": True, "S6": True},
-    "alerts": {"presurge": True, "burst": True, "halt": True, "pre_open": True, "vtrade": True},
+    "alerts": {"presurge": True, "burst": True, "halt": True, "pre_open": True, "vtrade": True, "briefing": True, "perf": True},
     "realtime": True,
     "vaccount": {"capital": 10000, "per_trade": 1000},
 }
 ALERT_KO = {"presurge": "🚨 급등 전조", "burst": "📶 거래 터짐 신호", "halt": "🛑 뉴스 대기 거래정지", "pre_open": "🌅 프리 개장 주목 목록",
-            "vtrade": "🧪 가상 매매 (주문·체결·매도)"}
+            "vtrade": "🧪 가상 매매 (주문·체결·매도)", "briefing": "🗞 장 시작 전 브리핑 (03:45 ET)", "perf": "📊 장 마감 알림 성과 요약"}
 
 
 def path(state_dir: str) -> Path:

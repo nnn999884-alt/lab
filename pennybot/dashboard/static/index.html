@@ -765,6 +765,55 @@ table.det .chips { margin: 0; max-width: 280px; }
 .det-help p { margin: 6px 0; line-height: 1.55; }
 @media (max-width: 700px) { table.det td, table.det th { padding: 7px 6px; } table.det .hide-m { display: none; } table.det td { white-space: normal; }
   .det-wrap .det-scroll { max-height: 62vh !important; overflow-y: auto; } .det-wrap .feed-ctl label { display: inline-flex !important; } .det-et { display: none; } }
+/* 브리핑 */
+.brief-wrap { padding: 12px 16px; margin-bottom: 16px; } .brief-wrap > summary { cursor: pointer; list-style: none; display: flex; align-items: baseline; flex-wrap: wrap; }
+.brief-wrap > summary::before { content: "▸"; margin-right: 8px; color: var(--text-muted); } .brief-wrap[open] > summary::before { content: "▾"; }
+.brief-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin-top: 12px; }
+.br-sec { min-width: 0; } .br-t { font-size: 12px; font-weight: 700; color: var(--text-secondary); margin-bottom: 4px; }
+.br-l { list-style: none; margin: 0; padding: 0; } .br-l li { display: flex; gap: 8px; align-items: baseline; padding: 5px 0; border-bottom: 1px solid var(--border); font-size: 12.5px; cursor: pointer; }
+.br-l li:hover { background: var(--surface-2); } .br-l b { flex: none; min-width: 44px; }
+.br-m { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-muted); }
+.br-r { flex: none; font-size: 12px; } .br-r.gold { color: #f5b301; } .br-e { color: var(--text-muted); cursor: default !important; }
+@media (max-width: 1100px) { .brief-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 700px) { .brief-grid { grid-template-columns: minmax(0, 1fr); } }
+/* 실제 계좌 */
+.racct { margin-bottom: 16px; }
+.ra-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 8px 0 12px; }
+.ra-k { background: var(--surface-2); border-radius: 10px; padding: 10px 12px; min-width: 0; }
+.ra-k .k { font-size: 11.5px; color: var(--text-muted); } .ra-k .v { font-size: 20px; font-weight: 700; margin-top: 2px; } .ra-k .n { font-size: 11.5px; color: var(--text-muted); margin-top: 2px; }
+table.ra-tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.ra-tbl th { text-align: left; font-size: 11.5px; color: var(--text-muted); font-weight: 600; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+table.ra-tbl td { padding: 8px 10px; border-bottom: 1px solid var(--border); cursor: pointer; vertical-align: top; }
+table.ra-tbl .num { text-align: right; } table.ra-tbl tr:hover td { background: var(--surface-2); }
+.show-m { display: none; }
+@media (max-width: 700px) { .ra-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } .ra-k .v { font-size: 17px; }
+  table.ra-tbl .hide-m { display: none; } table.ra-tbl td, table.ra-tbl th { padding: 7px 6px; } .show-m { display: block; } }
+/* 위 매물 칩 */
+.chip.oh-hi { border-color: var(--critical); color: var(--text-primary); background: rgba(240, 68, 82, .14); }
+.chip.oh-lo { border-color: #14b8a6; color: var(--text-primary); background: rgba(20, 184, 166, .14); }
+/* 물린 물량 */
+.oh-wrap { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 16px; margin-top: 10px; }
+.oh-prof { display: flex; flex-direction: column; gap: 1px; }
+.oh-r { display: grid; grid-template-columns: 62px minmax(0, 1fr) 34px; gap: 6px; align-items: center; font-size: 11px; }
+.oh-p { color: var(--text-muted); text-align: right; } .oh-v { color: var(--text-muted); }
+.oh-bw { height: 11px; background: transparent; border-radius: 2px; } .oh-bw.near { background: rgba(240, 68, 82, .07); }
+.oh-b { height: 100%; border-radius: 2px; background: var(--text-muted); opacity: .55; }
+.oh-r.up .oh-b { background: var(--critical); opacity: .55; } .oh-r.up .oh-bw.near .oh-b { opacity: .95; }
+.oh-r.dn .oh-b { background: #14b8a6; opacity: .5; } .oh-r.at .oh-b { background: var(--warning); opacity: .8; }
+.oh-now { border-top: 1px dashed var(--warning); margin: 2px 0; font-size: 11px; color: var(--warning); padding-left: 2px; }
+.kv2-2 { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+@media (max-width: 700px) { .oh-wrap { grid-template-columns: minmax(0, 1fr); } }
+/* 휴대폰 종목 카드 */
+.pc-bar { display: flex; justify-content: space-between; align-items: center; margin: 4px 0 6px; }
+.pc-sort { background: var(--surface-2); color: var(--text-primary); border: 1px solid var(--border); border-radius: 8px; padding: 6px 8px; font-size: 13px; }
+.pc-list { display: flex; flex-direction: column; }
+.pc-it { display: flex; justify-content: space-between; gap: 10px; padding: 10px 4px; border-bottom: 1px solid var(--border); cursor: pointer; }
+.pc-it.h-up { background: linear-gradient(90deg, transparent, rgba(240, 68, 82, calc(var(--heat) * .16))); }
+.pc-it.live { box-shadow: inset 3px 0 0 var(--warning); padding-left: 10px; }
+.pc-l { min-width: 0; flex: 1; } .pc-top { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; } .pc-top b { font-size: 14.5px; }
+.pc-name { font-size: 12px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pc-meta { font-size: 11.5px; color: var(--text-secondary); margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pc-r { text-align: right; flex: none; } .pc-px { font-size: 14.5px; font-weight: 600; } .pc-chg { font-size: 13px; margin-top: 2px; }
 </style>
 </head>
 <body>
@@ -797,6 +846,10 @@ table.det .chips { margin: 0; max-width: 280px; }
       <div class="kpi"><div class="k">가상 매매</div><div class="v" id="k-vs">-</div><div class="n" id="k-vs-n"></div></div>
       <div class="kpi"><div class="k">급등 후보</div><div class="v" id="k-picks">-</div><div class="n" id="k-picks-n"></div></div>
     </section>
+    <details class="card brief-wrap" id="brief-wrap">
+      <summary><span class="bot-title">🗞 오늘 브리핑</span><span class="sub" id="brief-sub" style="margin:0 0 0 8px"></span></summary>
+      <div class="brief-grid" id="brief"></div>
+    </details>
     <section class="card det-wrap">
       <div class="pre-head">
         <h2>🎯 조기 감지 <span class="sub" style="margin:0 0 0 6px;font-weight:400">알림 뜬 순간 가격 → 그 뒤 실제로 얼마나 갔나</span></h2>
@@ -883,6 +936,16 @@ table.det .chips { margin: 0; max-width: 280px; }
 
   <!-- ===== 매매: 주문·청산·후보 ===== -->
   <div class="tab" data-tab="trade" hidden>
+    <section class="card racct" id="racct">
+      <div class="pre-head"><h2>💼 토스 실제 계좌</h2><span class="sub" style="margin:0" id="ra-upd"></span></div>
+      <div class="ra-kpis">
+        <div class="ra-k"><div class="k">총 평가금액</div><div class="v mono" id="ra-eq">-</div><div class="n mono" id="ra-eq-n"></div></div>
+        <div class="ra-k"><div class="k">총 손익 · 수익률</div><div class="v mono" id="ra-pl">-</div><div class="n mono" id="ra-pl-n"></div></div>
+        <div class="ra-k"><div class="k">오늘 손익</div><div class="v mono" id="ra-day">-</div><div class="n mono" id="ra-day-n"></div></div>
+        <div class="ra-k"><div class="k">매수 가능</div><div class="v mono" id="ra-cash">-</div><div class="n" id="ra-cash-n">달러</div></div>
+      </div>
+      <div class="tablewrap"><table class="ra-tbl" id="ra-tbl"></table></div>
+    </section>
     <section class="card vacct">
       <div class="pre-head"><h2>가상 계좌</h2><span class="sub" style="margin:0" id="va-rule"></span></div>
       <div class="va-row">
@@ -1558,6 +1621,7 @@ function kvBox(title, pairs) {
 // ===== 종목 상세: 1 회사 · 2 지금 상황 · 3 희석·부양 · 4 가격 레벨 · 5 차트 · 6 공시 · 7 뉴스 · 8 신호 기록 · 9 가상 매매 · 10 시세·공매도 =====
 const mk = (tag, cls, text) => { const x = document.createElement(tag); if (cls) x.className = cls; if (text != null) x.textContent = text; return x; };
 function scard(page, num, title, cls, sub) {
+  num = page.querySelectorAll(".sc").length + 1;                 // 카드를 끼워 넣어도 번호가 이어지게
   const c = mk("section", "card sc " + (cls || ""));
   const h = mk("div", "sc-head"); h.append(mk("span", "sc-num", String(num)), mk("span", "sc-title", title));
   if (sub) h.appendChild(mk("span", "sc-sub", sub));
@@ -1650,6 +1714,36 @@ async function lookup(sym) {
     r.append(mk("span", "k", k), mk("span", "v mono", fmtPx(v)), mk("span", "d mono " + (tone(dist) || ""), dist == null ? "" : fmtPct(dist))); lad.appendChild(r); });
   c4.appendChild(lad);
   if (r60.low && price) c4.appendChild(mk("div", "sub", `60일 저점 대비 ${(price / r60.low).toFixed(2)}배 · 60일 고점 대비 ${fmtPct((price / r60.high - 1) * 100, 0)}`));
+  // ---- 물린 물량 (최근 60일 매물대)
+  const oh = x.overhead;
+  const cO = scard(page, 0, "물린 물량", "sc-2", oh ? `최근 ${oh.days}일 거래량 · 가격대별` : "");
+  if (!oh) cO.appendChild(mk("div", "empty", "일봉 기록이 부족함"));
+  else {
+    const heavy = oh.near_pct >= 25, light = oh.near_pct < 10;
+    const vb2 = mk("div", "verdict " + (heavy ? "v-dn" : light ? "v-up" : "v-mid"));
+    vb2.append(mk("div", "vd-t", heavy ? "🧱 바로 위 매물 무거움" : light ? "🪶 바로 위 매물 가벼움" : "⚖️ 바로 위 매물 보통"),
+      mk("div", "vd-s", `현재가 ~ +30% 구간에 최근 거래량의 ${oh.near_pct.toFixed(0)}% · 과거 일봉: 무거우면 +10% 뚫고 +30% 간 비율 7% (나머지 11%)`));
+    cO.appendChild(vb2);
+    const wrap = mk("div", "oh-wrap");
+    const prof = mk("div", "oh-prof");
+    const zs = [...oh.zones].reverse(), mx = Math.max(...zs.map(z => z.vol)) || 1;
+    let marked = false;
+    zs.forEach(z => {
+      if (!marked && z.lo <= oh.price) { const m = mk("div", "oh-now"); m.append(mk("span", "mono", "▶ $" + fmtPx(oh.price))); prof.appendChild(m); marked = true; }
+      const r = mk("div", "oh-r " + (z.lo >= oh.price ? "up" : z.hi <= oh.price ? "dn" : "at"));
+      const bar = mk("div", "oh-b"); bar.style.width = (z.vol / mx * 100).toFixed(1) + "%";
+      const near = z.lo >= oh.price && z.lo < oh.price * 1.3;
+      r.append(mk("span", "oh-p mono", "$" + fmtPx(z.lo)), mk("div", "oh-bw" + (near ? " near" : ""), ""), mk("span", "oh-v mono", z.pct >= 1 ? z.pct.toFixed(0) + "%" : ""));
+      r.children[1].appendChild(bar); prof.appendChild(r);
+    });
+    const kv = mk("div", "oh-kv");
+    kvGrid(kv, [["위에 물린 물량", oh.above_pct.toFixed(0) + "%", oh.above_pct >= 60 ? "neg" : ""], ["+30% 안", oh.near_pct.toFixed(0) + "%", heavy ? "neg" : light ? "pos" : ""],
+      ["발행주식 대비", oh.above_x != null ? oh.above_x.toFixed(1) + "배" : null],
+      ["가까운 벽", oh.wall ? `$${fmtPx(oh.wall.lo)} (${fmtPct(oh.wall.dist, 0)})` : "없음", oh.wall && oh.wall.dist < 10 ? "neg" : ""],
+      ["가까운 지지", oh.support ? `$${fmtPx(oh.support.hi)} (${fmtPct(oh.support.dist, 0)})` : "없음"], ["아래 깔린 물량", oh.below_pct.toFixed(0) + "%"]], "kv2-2");
+    kv.appendChild(mk("p", "sub", "빨간 막대 = 현재가보다 비싸게 사서 물린 물량 (오르면 본전 매도가 나오는 자리). 진한 칸 = +30% 안 (급등 한 번에 닿는 벽). 일봉 거래량을 그날 고가~저가에 고르게 나눈 추정치."));
+    wrap.append(prof, kv); cO.appendChild(wrap);
+  }
   // ---- 5 차트
   const c5 = scard(page, 5, "차트", "sc-wide");
   const ch = mk("div", "sym-charts");
@@ -1807,6 +1901,68 @@ function drawFilingsFeed(rows) {
   });
 }
 
+/* ---------- 오늘 브리핑 ---------- */
+try { if (matchMedia("(min-width: 701px)").matches && localStorage.getItem("briefOpen") !== "0") $("brief-wrap").open = true; } catch (e) {}
+$("brief-wrap").addEventListener("toggle", () => { try { localStorage.setItem("briefOpen", $("brief-wrap").open ? "1" : "0"); } catch (e) {} });
+async function loadBrief() {
+  const b = await api("/api/briefing");
+  if (unchanged("brief", b)) return;
+  const box = $("brief"); box.replaceChildren();
+  const p = b.perf;
+  $("brief-sub").textContent = `${b.date} 거래일` + (p && p.n ? ` · 어제 알림 ${p.n}건 ✅${p.win} ❌${p.loss}` : "") + ((b.halts || []).length ? ` · 뉴스 대기 정지 ${b.halts.length}` : "");
+  const sec = (title, items, row, empty) => {
+    const c = mk("div", "br-sec"); c.appendChild(mk("div", "br-t", title));
+    const ul = mk("ul", "br-l");
+    if (!items || !items.length) ul.appendChild(mk("li", "br-e", empty || "없음"));
+    else items.forEach(it => { const li = mk("li"); row(li, it); li.onclick = () => { lookup(it.symbol); showTab("symbol"); }; ul.appendChild(li); });
+    c.appendChild(ul); box.appendChild(c);
+  };
+  const line = (li, sym, mid, right, rc) => { li.append(mk("b", "mono", sym), mk("span", "br-m", mid), mk("span", "br-r mono " + (rc || ""), right)); };
+  sec(`📈 어제${b.d0 ? " (" + b.d0.slice(5) + ")" : ""} 급등`, (b.movers || []).slice(0, 6), (li, m) => line(li, m.symbol, `종가 ${fmtPct(m.chg, 0)} · ${usdK(m.dollar)}`, "고가 " + fmtPct(m.high_chg, 0), "pos"), "+30% 넘은 종목 없음");
+  sec("⭐ 오늘 급등 후보", (b.picks || []).slice(0, 6), (li, x) => line(li, x.symbol, x.name || "", "★".repeat(x.tier), "gold"), "★★ 이상 없음");
+  sec("🌙 밤사이 거래 터짐·급등", (b.night || []).slice(0, 6), (li, n) => line(li, n.symbol, n.text.replace(/^[^\p{L}\p{N}$]+/u, "").replace(new RegExp("^" + n.symbol + "\\s*"), ""), etSession(n.ts).replace(" ET", "")), "조용함");
+  sec("🛑 정지 · 📄 공시", [...(b.halts || []).map(h => ({ ...h, _h: 1 })), ...(b.filings || [])].slice(0, 6),
+    (li, f) => f._h ? line(li, f.symbol, f.name || "", "뉴스 대기", "neg") : line(li, f.symbol, f.text.replace(/^[^\p{L}\p{N}$]+/u, "").replace(new RegExp("^(" + f.symbol + "\\s*)+"), "").replace(/[▲▼]\S*/g, ""), f.up ? "▲ 호재" : "▼ 악재", f.up ? "pos" : "neg"), "없음");
+}
+
+/* ---------- 토스 실제 계좌 ---------- */
+const usd2 = v => v == null || isNaN(v) ? "-" : (v < 0 ? "−" : "") + "$" + Math.abs(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const sgn2 = v => v == null || isNaN(v) ? "-" : (v > 0 ? "+" : "") + usd2(v);
+async function loadAccount() {
+  const a = await api("/api/account");
+  if (unchanged("acct", a)) return;
+  const h = a.holdings || {}, num = v => v == null ? null : +v;
+  if (!a.ts) { $("ra-upd").textContent = "수집기가 계좌를 아직 못 읽음 (토스 계좌 권한 확인)"; $("ra-tbl").replaceChildren(); return; }
+  const age = Math.round((Date.now() - new Date(a.ts)) / 1000);
+  $("ra-upd").textContent = `${age < 60 ? age + "초" : Math.round(age / 60) + "분"} 전 갱신 · 10초마다`;
+  const eq = num(((h.marketValue || {}).amount || {}).usd), pl = num(((h.profitLoss || {}).amount || {}).usd), plr = num((h.profitLoss || {}).rate);
+  const dp = num(((h.dailyProfitLoss || {}).amount || {}).usd), dpr = num((h.dailyProfitLoss || {}).rate), cash = num((a.buying_power || {}).cashBuyingPower);
+  $("ra-eq").textContent = usd2(eq); $("ra-eq-n").textContent = "매입 " + usd2(num((h.totalPurchaseAmount || {}).usd));
+  $("ra-pl").textContent = sgn2(pl); $("ra-pl").className = "v mono " + (tone(pl) || "");
+  $("ra-pl-n").textContent = plr == null ? "" : fmtPct(plr * 100, 2); $("ra-pl-n").className = "n mono " + (tone(plr) || "");
+  $("ra-day").textContent = sgn2(dp); $("ra-day").className = "v mono " + (tone(dp) || "");
+  $("ra-day-n").textContent = dpr == null ? "" : fmtPct(dpr * 100, 2); $("ra-day-n").className = "n mono " + (tone(dpr) || "");
+  $("ra-cash").textContent = usd2(cash);
+  const items = (h.items || []).filter(i => +i.quantity > 0).sort((p, q) => (+q.marketValue.amount) - (+p.marketValue.amount));
+  const t = $("ra-tbl"); t.replaceChildren();
+  const hd = t.createTHead().insertRow();
+  [["종목", ""], ["보유", "num"], ["평균단가", "num hide-m"], ["현재가", "num"], ["평가금액", "num hide-m"], ["손익", "num"], ["오늘", "num hide-m"]].forEach(([l, c]) => hd.appendChild(el2("th", c, l)));
+  const tb = t.createTBody();
+  if (!items.length) { const r = tb.insertRow(), c = r.insertCell(); c.colSpan = 7; c.className = "empty"; c.textContent = "보유 종목 없음"; return; }
+  items.forEach(i => {
+    const r = tb.insertRow(), cell = cls => { const c = r.insertCell(); c.className = cls || ""; return c; };
+    const rate = +i.profitLoss.rate * 100, day = +(i.dailyProfitLoss || {}).rate * 100;
+    const c0 = cell(); c0.append(el2("div", "det-sym", ""), el2("div", "det-n", i.name || "")); c0.firstChild.append(el2("b", "", i.symbol));
+    cell("num mono").textContent = (+i.quantity).toLocaleString();
+    cell("num mono hide-m").textContent = "$" + fmtPx(+i.averagePurchasePrice);
+    const c3 = cell("num"); c3.append(el2("div", "mono", "$" + fmtPx(+i.lastPrice)), el2("div", "det-n show-m", "평단 $" + fmtPx(+i.averagePurchasePrice)));
+    cell("num mono hide-m").textContent = usd2(+i.marketValue.amount);
+    const c5 = cell("num"); c5.append(el2("div", "mono " + (tone(rate) || ""), fmtPct(rate, 2)), el2("div", "det-n " + (tone(rate) || ""), sgn2(+i.profitLoss.amount)));
+    cell("num mono hide-m " + (tone(day) || "")).textContent = isNaN(day) ? "-" : fmtPct(day, 2);
+    r.onclick = () => { lookup(i.symbol); showTab("symbol"); };
+  });
+}
+
 /* ---------- 조기 감지: 알림 → 결과 ---------- */
 let detFilter = "all";
 try { $("det-norun").checked = localStorage.getItem("detNorun") === "1"; } catch (e) {}
@@ -1863,7 +2019,8 @@ async function loadDet() {
     if (s && s.n) c5.append(two(`+30% ${Math.round(s.hit30 / s.n * 100)}% · 먹을 ${Math.round(s.win / s.n * 100)}%`, `과거 ${s.n}건${s.n < 20 ? " (적음)" : ""}`, "mono"));
     else c5.append(two("-", "끝난 기록 아직 없음"));
     const c6 = cell("hide-m"), ch = el2("div", "chips");
-    (r.tags || []).slice(0, 5).forEach(x => ch.append(el2("span", "chip", x)));
+    if (r.overhead) ch.append(el2("span", "chip " + (/무거움/.test(r.overhead) ? "oh-hi" : /가벼움/.test(r.overhead) ? "oh-lo" : ""), r.overhead.replace(" · 벽", " · 벽")));
+    (r.tags || []).slice(0, 4).forEach(x => ch.append(el2("span", "chip", x)));
     c6.append(ch);
     tr.onclick = () => { lookup(r.symbol); showTab("symbol"); };
   });
@@ -2023,7 +2180,8 @@ $("bot-wrap").addEventListener("toggle", () => { if ($("bot-wrap").open) { delet
 /* ---------- 설정 탭 ---------- */
 const ALERT_KO = { presurge: ["🚨 급등 전조", "프리 06~09시 + $2 미만/거래량 50배+/★★★ 인 첫 거래 터짐"],
   burst: ["📶 거래 터짐 신호", "모든 세션, 1분 거래대금·회전율 터짐"], halt: ["🛑 뉴스 대기 거래정지", "정지 직후 + 재개 시각 공개 때"],
-  pre_open: ["🌅 프리 개장 주목", "동부 03:55, 데이마켓에서 움직인 종목"], vtrade: ["🧪 가상 매매", "지정가 주문·체결·매도"] };
+  pre_open: ["🌅 프리 개장 주목", "동부 03:55, 데이마켓에서 움직인 종목"], vtrade: ["🧪 가상 매매", "지정가 주문·체결·매도"],
+  briefing: ["🗞 장 시작 전 브리핑", "동부 03:45, 어제 급등·오늘 후보·밤사이 정지·공시"], perf: ["📊 알림 성과 요약", "애프터장 마감 뒤, 오늘 알림이 실제로 얼마나 갔나"] };
 async function postSettings(patch) {
   const r = await fetch("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });
   const j = await r.json(); if (!r.ok) throw new Error(j.error || r.status); return j;
@@ -2105,6 +2263,41 @@ const PRE_COLS = [
   ["sc", "점수", x => x.score, v => v, 0, 1],
   ["tag", "태그", x => 0, null, 0, 0],
 ];
+const PHONE = matchMedia("(max-width: 700px)");
+PHONE.addEventListener("change", () => { if (preData) drawPre(); });
+// 휴대폰: 가로로 잘리는 표 대신 한 종목 한 줄 카드 (정렬은 고르기 상자)
+function drawPreCards(box, rows) {
+  const bar = mk("div", "pc-bar");
+  const sel = mk("select", "pc-sort"); sel.setAttribute("aria-label", "정렬");
+  [["auto", "추천순"], ["chg", "등락률"], ["vr", "전날 거래량"], ["tt", "오늘 회전율"], ["vx", "1시간 거래량"], ["px", "현재가"], ["dd", "고점 대비"]]
+    .forEach(([k, l]) => { const o = mk("option", "", l); o.value = k; o.selected = preSort.k === k; sel.appendChild(o); });
+  sel.onchange = () => { preSort = { k: sel.value, dir: sel.value === "dd" ? 1 : -1 }; drawPre(); };
+  bar.append(mk("span", "sub", `${rows.length}종목`), sel); box.appendChild(bar);
+  const col = k => PRE_COLS.find(c => c[0] === k);
+  const val = (k, x) => { const c = col(k); const v = c[2](x); return c[3] ? c[3](v) : v; };
+  const list = mk("div", "pc-list");
+  rows.slice(0, preShown).forEach(x => {
+    const chg = (x.now || {}).chg;
+    const it = mk("div", "pc-it" + (x.live.length ? " live" : "") + (chg > 0 ? " h-up" : chg < 0 ? " h-dn" : ""));
+    it.style.setProperty("--heat", Math.min(1, Math.abs(chg || 0) / 30).toFixed(2));
+    const l = mk("div", "pc-l");
+    const top = mk("div", "pc-top"); top.append(mk("b", "mono", x.symbol));
+    if (x.tier) top.append(mk("span", "tg tg-tier", "★".repeat(x.tier)));
+    x.live_labels.slice(0, 1).forEach(lb => top.append(mk("span", "tg tg-live", lb.replace(/^[^\p{L}]+/u, ""))));
+    l.append(top, mk("div", "pc-name", x.name || ""));
+    const m = [`전날 ${val("vr", x)}`];
+    if (x.turnover_today != null) m.push(`회전 ${val("tt", x)}`);
+    if ((x.live_m || {}).vol_x != null) m.push(`1시간 ${val("vx", x)}`);
+    const tg = [...(x.filing_tags || []).map(t => t.replace(/ \d\d\/\d\d(\/\d\d)?$/, "")), ...(x.patterns || [])].slice(0, 2);
+    l.append(mk("div", "pc-meta", m.join(" · ") + (tg.length ? " · " + tg.join(" · ") : "")));
+    const r = mk("div", "pc-r"); r.append(mk("div", "mono pc-px", val("px", x)), mk("div", "mono pc-chg " + (tone(chg) || "flat"), val("chg", x)));
+    it.append(l, r); it.onclick = () => { lookup(x.symbol); showTab("symbol"); };
+    list.appendChild(it);
+  });
+  box.appendChild(list);
+  const more = $("pre-more"), left = rows.length - preShown;
+  more.hidden = left <= 0; more.textContent = `더 보기 (${left}개 더)`;
+}
 function drawPre() {
   const box = $("pre-list"); box.replaceChildren();
   const all = (preData && preData.rows) || [];
@@ -2115,6 +2308,7 @@ function drawPre() {
       return (a > b ? 1 : a < b ? -1 : 0) * preSort.dir; });
   }
   if (!rows.length) { const d = document.createElement("div"); d.className = "empty"; d.textContent = preFilter === "live" ? "지금 장중 증상이 켜진 종목이 없습니다" : "없음"; box.appendChild(d); return; }
+  if (PHONE.matches) { drawPreCards(box, rows); return; }
   const wrap = document.createElement("div"); wrap.className = "scr-wrap";
   const t = document.createElement("table"); t.className = "scr";
   const thead = t.createTHead().insertRow();
@@ -2351,9 +2545,9 @@ try { const t = localStorage.getItem("theme"); if (t) document.documentElement.d
 
 // 보이는 탭의 데이터만 받는다 (휴대폰 데이터·배터리 절약)
 const TAB_JOBS = {
-  home: () => [loadDet(), loadFeed(), loadVs(), loadPre()],
+  home: () => [loadBrief(), loadDet(), loadFeed(), loadVs(), loadPre()],
   symbol: () => [loadShorts()],
-  trade: () => [loadVTrade()],
+  trade: () => [loadAccount(), loadVTrade()],
   settings: () => [loadSettings()],
   analysis: () => [loadC30(), loadBig(), loadHist(), loadRunners(), loadCollector(), loadResearch(), loadBacktests()],
 };

@@ -174,3 +174,13 @@ def test_detections_track_outcome(server):
 def get_market_path(tmp):
     import glob
     return [p for p in glob.glob(str(tmp / "*.db")) if "market" in p][0]
+
+
+def test_briefing_account_overhead_endpoints(server):
+    base, tmp = server
+    b = get(base + "/api/briefing")
+    assert set(b) >= {"date", "picks", "night", "halts", "filings"}
+    assert get(base + "/api/account") == {}                         # 수집기가 아직 안 남김
+    (tmp / "account.json").write_text(json.dumps({"ts": "2026-10-24T00:00:00+00:00", "holdings": {"items": []}}), encoding="utf-8")
+    assert get(base + "/api/account")["holdings"] == {"items": []}
+    assert "overhead" in get(base + "/api/symbol_extra?s=PENX")

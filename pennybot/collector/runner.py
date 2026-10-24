@@ -119,6 +119,85 @@ class Collector:
         import os
         os.replace(tmp, p)
 
+    def _mq(self, store=None):
+        """sql → [dict] (알림 성과·브리핑·매물대 모듈용)."""
+        db = (store or self.store).db
+
+        def q(sql, args=()):
+            cur = db.execute(sql, args)
+            cols = [d[0] for d in cur.description]
+            return [dict(zip(cols, r)) for r in cur.fetchall()]
+        return q
+
+    def _rq(self):
+        """연구용 1분봉 보관본 (state/research.db) — 수집기 1분봉이 없는 알림의 감지가용."""
+        import sqlite3
+        from pathlib import Path
+        from .store import ro_uri
+        p = Path(self.cfg.db_path).parent / "research.db"
+        if not p.exists():
+            return None
+
+        def q(sql, args=()):
+            con = sqlite3.connect(ro_uri(str(p)), uri=True)
+            try:
+                cur = con.execute(sql, args)
+                cols = [d[0] for d in cur.description]
+                return [dict(zip(cols, r)) for r in cur.fetchall()]
+            finally:
+                con.close()
+        return q
+
+    def send_briefing(self, now: datetime, trade_date) -> str | None:
+        """03:45 ET (프리마켓 열기 15분 전) 한 번: 장 시작 전 브리핑. state/briefing.json 에도 남긴다 (대시보드)."""
+        from pathlib import Path
+        from .. import briefing
+        t = now.astimezone(ET)
+        if not (t.hour == 3 and 45 <= t.minute < 55) or getattr(self, "_brief_sent", None) == trade_date:
+            return None
+        self._brief_sent = trade_date
+        b = briefing.build(self._mq(), self.cfg.db_path, self._rq(), now)
+        (Path(self.cfg.db_path).parent / "briefing.json").write_text(json.dumps(b, ensure_ascii=False), encoding="utf-8")
+        txt = briefing.text(b)
+        if self.notifier and self._on("briefing"):
+            self.notifier.send(txt)
+        log.info("장 시작 전 브리핑 보냄 (%s)", trade_date)
+        return txt
+
+    def send_perf(self, now: datetime, trade_date: str) -> str | None:
+        """애프터장 마감 뒤: 그날 알림이 실제로 얼마나 갔나 (텔레그램)."""
+        from .. import alertperf
+        y, m, d = map(int, trade_date.split("-"))
+        end = datetime(y, m, d, 20, tzinfo=ET).astimezone(timezone.utc)
+        mq, rq = self._mq(), self._rq()
+        rows = alertperf.rows(mq, rq, (end - timedelta(hours=24)).isoformat(), end.isoformat())
+        txt = alertperf.summary_text(rows, alertperf.stats(mq, rq, today=trade_date), trade_date)
+        if txt and self.notifier and self._on("perf"):
+            self.notifier.send(txt)
+        log.info("알림 성과 요약 %s: %d건", trade_date, len(rows))
+        return txt
+
+    def write_account(self, now: datetime) -> None:
+        """토스 실제 계좌 (보유·평가손익·매수 가능) → state/account.json (대시보드 '실제 계좌'). 계좌 권한이 없으면 조용히 멈춤."""
+        import os
+        from pathlib import Path
+        if getattr(self, "_acct_off", False) or not hasattr(self.c, "holdings"):
+            return
+        try:
+            h = self.c.holdings() or {}
+        except Exception as e:
+            self._acct_off = True
+            log.warning("계좌 조회 안 됨 — 대시보드 실제 계좌 꺼짐: %s", e)
+            return
+        try:
+            bp = self.c.buying_power("USD") or {}
+        except Exception:
+            bp = {}
+        p = Path(self.cfg.db_path).parent / "account.json"
+        tmp = p.with_suffix(".acct.tmp")
+        tmp.write_text(json.dumps({"ts": iso(now), "holdings": h, "buying_power": bp}, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, p)
+
     # ---------- 스케줄 ----------
     def _due(self, name: str, now: datetime, every: timedelta) -> bool:
         if now >= self._next.get(name, datetime.min.replace(tzinfo=timezone.utc)):
@@ -149,6 +228,8 @@ class Collector:
 
         if self._due("status", now, timedelta(seconds=15)):
             self._run("status", self.write_status, now, session)
+        if self._due("account", now, timedelta(seconds=10 if session != CLOSED else 300)):
+            self._run("account", self.write_account, now)
         if self._last_session is None:
             self._run("catch_up", self.catch_up_summaries)
             if c.vsignal:                                # 꺼져 있는 사이 애프터장 마감이 지나간 가상 포지션 정리
@@ -167,6 +248,8 @@ class Collector:
                 self._run("archive", self.start_archive, trade_date)
             if prev_session == AFTER and c.vsignal:              # 애프터장이 끝나면 남은 가상 포지션 정리
                 self._run("vsignals_eod", self.check_vsignals, now, session, True)
+            if prev_session == AFTER and prev_date:
+                self._run("perf", self.send_perf, now, prev_date.isoformat())
         self._last_session = cur
 
         if self.edgar and self._due("edgar", now, timedelta(minutes=c.edgar_poll_minutes)):
@@ -184,6 +267,8 @@ class Collector:
             self._run("precursor_daily", self.ensure_precursor_daily, trade_date, session)
             if c.pre_open_watch and session == DAY:
                 self._run("pre_open", self.pre_open_watch, now, trade_date)
+            if session == DAY:
+                self._run("briefing", self.send_briefing, now, trade_date)
             if session in (DAY, PRE, REGULAR) and self._due("precursor_live", now, timedelta(seconds=60)):
                 self._run("precursor_live", self.poll_precursor_live, now, trade_date, session)
         if session == CLOSED:
@@ -770,6 +855,31 @@ class Collector:
         r = store.query("SELECT alerted FROM precursor_live WHERE d0=? AND symbol=? AND alerted IS NOT NULL", (d0, sym))
         return r[0][0] if r else None
 
+    def _overhead(self, store, sym: str, price) -> str | None:
+        """'위 +30% 매물 무거움 35% · 벽 $2.09 (+3%)' — +10% 뚫은 뒤 +30% 간 비율: 무거움 7% vs 나머지 11% (일봉 8.5천 건)."""
+        from .. import overhead
+        try:
+            return overhead.label(overhead.for_symbol(self._mq(store), sym, price))
+        except Exception as e:
+            log.debug("매물대 실패 %s: %s", sym, e)
+            return None
+
+    def _perf_note(self, kind: str) -> str:
+        """알림 근거 옆 숫자: 끝난 거래일 실제 결과가 20건 넘게 쌓이면 그걸, 아니면 연구 결과."""
+        import time
+        from .. import alertperf
+        c = getattr(self, "_perf_cache", None)
+        if not c or time.time() - c[0] > 3600:
+            try:
+                c = self._perf_cache = (time.time(), alertperf.stats(self._mq(), self._rq()))
+            except Exception as e:
+                log.debug("알림 성과 실패: %s", e)
+                c = self._perf_cache = (time.time(), {})
+        s = c[1].get(kind) or {}
+        if s.get("n", 0) >= 20:
+            return f" (실제 지난 {s['n']}건: +20% 먼저 {s['win'] / s['n'] * 100:.0f}% · 그날 +30% {s['hit30'] / s['n'] * 100:.0f}%)"
+        return " (연구: +30% 먼저 약 50%)"
+
     def _alert(self, store, now, session, sym, score, sig, met, lv, tier_, extra_tags) -> None:
         """거래 터짐 한 건: 급등 전조 조건(presurge)이면 '🚨 급등 전조' 전체, 아니면 '📶 거래 터짐' 짧은 신호 (세션 상관없이)."""
         from ..precursor import TIER_LABEL, alert_buttons, alert_text, ask_depth, presurge, signal_text
@@ -785,8 +895,9 @@ class Collector:
                 except Exception:
                     pass
                 from ..trading.strategies import SESSION_KO
+                oh = self._overhead(store, sym, m.get("price"))
                 self.notifier.send(signal_text(sym, (self.universe.get(sym) or {}).get("name"), lv, SESSION_KO.get(session, session),
-                                               extra_tags + ([TIER_LABEL[tier_]] if tier_ else [])),
+                                               extra_tags + ([TIER_LABEL[tier_]] if tier_ else []) + ([oh] if oh else [])),
                                    buttons=alert_buttons(sym, link))
             log.info("거래 터짐 신호 %s (%s)", sym, session)
             self._event(now, sym, "burst", f"📶 {sym} 거래 터짐 ({m.get('chg', 0):+.1f}% · 3분 ${m.get('dollar_3m', 0) / 1e3:.0f}K)",
@@ -812,7 +923,8 @@ class Collector:
             self.notifier.send(alert_text(sym, (self.universe.get(sym) or {}).get("name"), day, lv,
                                           SESSION_KO.get(session, session), link, now,
                                           shares=sh[0][0] if sh and sh[0][0] else None,
-                                          tags=["근거: " + " · ".join(m["grade_why"]) + " (과거 +30% 먼저 약 50%)"]
+                                          tags=["근거: " + " · ".join(m["grade_why"]) + self._perf_note("precursor")]
+                                          + ([oh] if (oh := self._overhead(store, sym, m.get("price"))) else [])
                                           + ([TIER_LABEL[tier_]] if tier_ else []) + extra_tags
                                           + (["호가 얇음"] if (m.get("ask10") or 9e18) < (m.get("dollar_3m") or 0) else [])
                                           + (json.loads(tg[0][0]) if tg else []) + pats),
