@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Pennybot 대시보드</title>
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;700&display=swap">
 <style>
 :root {
   color-scheme: light;
@@ -517,6 +518,102 @@ header .pill { background: var(--surface-1); }
   .pre-more { margin-left: 0; }
   .pre-more .pre-k3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+/* ===================== 스크리너 (터미널) 디자인 ===================== */
+:root[data-theme="dark"] {
+  --surface-0: #07090c; --surface-1: #0e1217; --surface-2: #151a21; --border: #1e252e;
+  --text-primary: #e6e9ee; --text-secondary: #a7b0bd; --text-muted: #6d7685;
+  --accent: #27c4f5; --accent-soft: rgba(39, 196, 245, .12); --up: #ff4d5e; --down: #3d8bff;
+  --up-soft: rgba(255, 77, 94, .14); --down-soft: rgba(61, 139, 255, .14); --btn: #151a21; --btn-hover: #1c232c;
+}
+:root[data-theme="light"] {
+  --surface-0: #eef0f3; --surface-1: #ffffff; --surface-2: #f3f5f8; --border: #dfe3e8;
+  --text-primary: #0f1419; --text-secondary: #46505c; --text-muted: #7a8490;
+  --accent: #0b84c6; --accent-soft: rgba(11, 132, 198, .10); --up: #e0323f; --down: #1f6fe0;
+  --up-soft: rgba(224, 50, 63, .10); --down-soft: rgba(31, 111, 224, .10); --btn: #fff; --btn-hover: #eef1f4;
+}
+.mono, .scr td.num, .scr th.num, .lg-t, .kpi .v, .trow-px, .trow-chg { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+body { font-size: 14px; }
+.card { border-radius: 10px; padding: 14px 14px 10px; border: 1px solid var(--border); }
+.card h2, .pre-head h2 { font-size: 13px; font-weight: 800; letter-spacing: .6px; text-transform: uppercase; color: var(--text-secondary); }
+.pre-head { margin-bottom: 8px; }
+.pre-head h2::after { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); margin-left: 8px; vertical-align: middle;
+  box-shadow: 0 0 8px var(--accent); }
+.seg { border-radius: 8px; padding: 2px; }
+.seg button { border-radius: 6px; padding: 4px 10px; font-size: 12px; }
+.sub { font-size: 12px; }
+
+/* 상단 요약: 터미널 숫자판 */
+.kpis { gap: 8px; margin-bottom: 10px; }
+.kpi { border-radius: 10px; padding: 10px 12px; border: 1px solid var(--border); }
+.kpi .k { font-size: 11px; font-weight: 800; letter-spacing: .6px; color: var(--text-muted); }
+.kpi .v { font-size: 18px; font-weight: 700; letter-spacing: -0.3px; margin-top: 4px; }
+.kpi .n { font-size: 11.5px; margin-top: 2px; }
+
+/* 넓은 화면: 스크리너 표가 넓게 (왼쪽 = 신호 로그 + 가상 매매, 오른쪽 = 스크리너) */
+@media (min-width: 1000px) {
+  .home-grid { grid-template-columns: minmax(340px, 0.85fr) minmax(0, 1.6fr); }
+  .tabs::before { color: var(--accent); font-family: "JetBrains Mono", monospace; letter-spacing: -0.5px; }
+  .tabs { width: 200px; padding-top: 76px; } main { padding-left: 224px; }
+  .tabs button { padding: 10px 12px; font-size: 14px; }
+}
+
+/* 스크리너 표 */
+.scr-wrap { overflow-x: auto; margin: 0 -14px; }
+table.scr { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 12.5px; }
+.scr th { position: sticky; top: 0; z-index: 2; background: var(--surface-1); color: var(--text-muted); font-size: 11px; font-weight: 700;
+  letter-spacing: .3px; padding: 7px 10px; border-bottom: 1px solid var(--border); cursor: pointer; white-space: nowrap; user-select: none; }
+.scr th:hover { color: var(--text-primary); }
+.scr td { padding: 7px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.scr tr { cursor: pointer; }
+.scr tbody tr:hover td { background: var(--surface-2); }
+.scr tr.h-up td { background: rgba(255, 77, 94, calc(var(--heat) * .10)); }
+.scr tr.h-dn td { background: rgba(61, 139, 255, calc(var(--heat) * .08)); }
+.scr tr.live td.sticky { box-shadow: inset 3px 0 0 var(--up); }
+.scr td.sticky, .scr th.sticky { position: sticky; left: 0; z-index: 1; background: var(--surface-1); }
+.scr th.sticky { z-index: 3; }
+.scr-sym { font-weight: 800; font-size: 13.5px; letter-spacing: .2px; font-family: "JetBrains Mono", monospace; }
+.scr-name { font-size: 11px; color: var(--text-muted); max-width: 120px; overflow: hidden; text-overflow: ellipsis; }
+.scr td.pos { color: var(--up); font-weight: 700; } .scr td.neg { color: var(--down); font-weight: 700; } .scr td.flat { color: var(--text-muted); }
+.scr-tags { color: var(--text-secondary); font-size: 11.5px; max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+.tg { display: inline-block; font-size: 10.5px; font-weight: 800; padding: 1px 6px; border-radius: 4px; margin-right: 4px; letter-spacing: .2px; }
+.tg-tier { background: rgba(240, 168, 48, .16); color: #f0a830; }
+.tg-live { background: var(--up-soft); color: var(--up); }
+
+/* 실시간 신호: 터미널 로그 */
+.feed { max-height: 560px; font-size: 12.5px; }
+.feed .ev { display: grid; grid-template-columns: 50px 58px auto minmax(0, 1fr); align-items: baseline; gap: 8px;
+  padding: 7px 4px; margin: 0; border-radius: 0; border-bottom: 1px solid var(--border); }
+.feed .ev:hover { background: var(--surface-2); }
+.lg-t { color: var(--text-muted); font-size: 11.5px; }
+.lg-s { font-weight: 800; font-family: "JetBrains Mono", monospace; color: var(--text-primary); }
+.lg-x { color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.ev-hot .lg-x { color: var(--text-primary); font-weight: 600; }
+.ev-kind { font-size: 10.5px; padding: 1px 6px; border-radius: 4px; letter-spacing: .2px; }
+
+/* 가상 매매 */
+.vs-row { padding: 8px 4px; margin: 0; border-radius: 0; border-bottom: 1px solid var(--border); }
+.vs-strat { border-radius: 6px; padding: 6px 9px; font-size: 12px; }
+.vs-sym { font-family: "JetBrains Mono", monospace; }
+
+@media (max-width: 640px) {
+  .hide-m { display: none; }
+  .scr-wrap { margin: 0 -15px; }
+  .scr td, .scr th { padding: 8px 8px; }
+  .scr-name { max-width: 92px; }
+  .feed .ev { grid-template-columns: 42px 50px minmax(0, 1fr); row-gap: 3px; }
+  .feed .ev .ev-kind { grid-column: 3; justify-self: start; }
+  .feed .ev .lg-x { grid-column: 1 / -1; white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; padding-left: 50px; }
+  header { flex-wrap: nowrap; gap: 6px; padding: 10px 12px; }
+  header #mode { display: none; }
+  header #trader-hb, header #collector-hb { font-size: 0; gap: 0; padding: 7px; }
+  header #session { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
+  header h1 { flex: 0 0 auto; font-size: 18px; margin-right: 2px; }
+  .theme-btn { order: 9; margin-left: 0; flex: 0 0 auto; white-space: nowrap; padding: 4px 10px; }
+  header #trader-hb, header #collector-hb { flex: 0 0 auto; background: transparent; padding: 4px; }
+  .feed-ctl label { display: none; }
+  .kpi .v { font-size: 15.5px; }
+}
 </style>
 </head>
 <body>
@@ -555,8 +652,8 @@ header .pill { background: var(--surface-1); }
         <h2>🔔 실시간 신호</h2>
         <div class="feed-ctl">
           <div class="seg" id="feed-filter" role="group" aria-label="이벤트">
-            <button data-f="all" aria-pressed="true">전체</button>
-            <button data-f="hot" aria-pressed="false">전조·급등만</button>
+            <button data-f="hot" aria-pressed="true">중요</button>
+            <button data-f="all" aria-pressed="false">전체</button>
           </div>
           <label class="sub" style="margin:0"><input type="checkbox" id="feed-sound"> 새 이벤트 소리</label>
         </div>
@@ -1335,8 +1432,8 @@ function candleChart(box, bars, { height = 240, ma = [5, 20], log = false, label
 }
 
 /* ---------- 방금 일어난 일 ---------- */
-let feedFilter = "all", feedSeen = null;
-const HOT = k => k === "precursor" || k === "burst" || k === "halt" || k === "spike_up" || k.startsWith("rank:");
+let feedFilter = "hot", feedSeen = null;
+const HOT = k => k === "precursor" || k === "burst" || k === "halt" || k === "spike_up";   // '중요' 보기 (+ 호재 공시)
 const KIND = k => k === "precursor" ? ["급등 전조", "k-pre"] : k === "burst" ? ["거래 터짐", "k-burst"] : k === "halt" ? ["정지", "k-halt"]
   : k === "spike_up" ? ["급등", "k-up"] : k === "spike_dn" ? ["급락", "k-dn"] : k.startsWith("rank:") ? ["랭킹", "k-rank"]
   : k === "filing" ? ["공시", ""] : [k, ""];
@@ -1349,11 +1446,11 @@ async function loadFeed() {
   kpiFeed(rows);
   const minute = Math.floor(Date.now() / 60000);          // '몇 분 전' 표시는 1분에 한 번만 갱신
   if (unchanged("feed", [rows, feedFilter, minute])) return;
-  const list = rows.filter(e => feedFilter === "all" || HOT(e.kind));
+  const list = rows.filter(e => feedFilter === "all" || HOT(e.kind) || (e.kind === "filing" && e.text.includes("▲")));
   const box = $("feed"); box.replaceChildren();
-  if (!list.length) { const li = document.createElement("li"); li.className = "empty"; li.textContent = "아직 없음 — 장중에 랭킹 진입·1분새 급등·전조 발동·거래정지·공시가 여기 뜹니다"; box.appendChild(li); }
+  if (!list.length) { const li = document.createElement("li"); li.className = "empty"; li.textContent = feedFilter === "hot" ? "중요한 신호 없음 — 급등 전조·거래 터짐·뉴스 정지·급등·호재 공시가 여기 뜹니다 ('전체' 에 모든 이벤트)" : "아직 없음"; box.appendChild(li); }
   const now = Date.now();
-  list.slice(0, 14).forEach(e => {
+  list.slice(0, 40).forEach(e => {
     const li = document.createElement("li");
     li.className = "ev " + (e.kind === "precursor" ? "ev-hot" : e.kind === "spike_dn" || e.kind === "halt" ? "ev-dn" : e.kind === "spike_up" ? "ev-up" : "");
     const s = Math.max(0, Math.round((now - new Date(e.ts)) / 1000));
@@ -1361,17 +1458,9 @@ async function loadFeed() {
     const ago = s < 60 ? `${s}초 전` : s < 3600 ? `${Math.round(s / 60)}분 전`
       : kstDay(e.ts) === kstDay(new Date()) ? hm : new Date(e.ts).toLocaleDateString("ko-KR", { timeZone: "Asia/Seoul", month: "2-digit", day: "2-digit" }).replace(/\.\s?/g, "/").replace(/\/$/, "");
     const [kl, kc] = KIND(e.kind);
-    li.appendChild(avatar(e.symbol));
-    const body = document.createElement("div"); body.className = "trow-body";
-    const l1 = document.createElement("div"); l1.className = "trow-l1";
-    const sy = document.createElement("span"); sy.className = "trow-sym"; sy.textContent = e.symbol || "";
-    const k = document.createElement("span"); k.className = "ev-kind " + kc; k.textContent = kl;
-    l1.append(sy, k);
-    const l2 = document.createElement("div"); l2.className = "trow-l2 ev-text";
-    l2.textContent = e.text.replace(/^[^\p{L}\p{N}$]+/u, "").replace(new RegExp("^" + (e.symbol || "@@") + "\\s*"), "");
-    body.append(l1, l2);
-    const b = document.createElement("span"); b.className = "ev-ago"; b.textContent = ago;
-    li.append(body, b);
+    const cell = (cls, t) => { const x = document.createElement("span"); x.className = cls; x.textContent = t; return x; };
+    li.append(cell("lg-t", ago), cell("lg-s", e.symbol || ""), cell("ev-kind " + kc, kl),
+              cell("lg-x", e.text.replace(/^[^\p{L}\p{N}$]+/u, "").replace(new RegExp("^" + (e.symbol || "@@") + "\\s*"), "")));
     li.onclick = () => { lookup(e.symbol); showTab("symbol"); };
     box.appendChild(li);
   });
@@ -1456,7 +1545,7 @@ function drawVs() {
 $("vs-more").onclick = () => { vsShown += 20; drawVs(); };
 
 /* ---------- 급등 전조 목록 ---------- */
-let preData = null, preFilter = "all", preShown = 24;
+let preData = null, preFilter = "all", preShown = 40;
 async function loadPre() {
   const fresh = await api("/api/precursor?limit=200");
   if (unchanged("pre", fresh)) return;
@@ -1478,68 +1567,71 @@ function avatar(sym) {
   let h = 0; for (const ch of sym || "") h = (h * 31 + ch.charCodeAt(0)) % 360;
   a.style.setProperty("--h", h); a.textContent = t; return a;
 }
+let preSort = { k: "auto", dir: -1 };
+const PRE_COLS = [
+  // [키, 제목, 값 함수, 표시 함수, 휴대폰에서도 보임, 숫자]
+  ["sym", "종목", x => x.symbol, null, 1, 0],
+  ["px", "현재가", x => (x.now || {}).price ?? x.close, v => fmtPx(v), 1, 1],
+  ["chg", "등락", x => (x.now || {}).chg ?? null, v => v == null ? "-" : fmtPct(v), 1, 1],
+  ["sig", "신호", x => x.live.length * 10 + (x.tier || 0), null, 1, 0],
+  ["vr", "전날 거래량", x => (x.metrics || {}).vol_ratio ?? null, v => v == null ? "-" : v >= 100 ? "100x+" : v.toFixed(1) + "x", 1, 1],
+  ["vx", "1시간 거래량", x => (x.live_m || {}).vol_x ?? null, v => v == null ? "-" : v >= 100 ? "100x+" : v.toFixed(1) + "x", 0, 1],
+  ["tt", "오늘 회전율", x => x.turnover_today ?? null, v => v == null ? "-" : (v >= 10 ? Math.round(v) : v.toFixed(1)) + "%", 1, 1],
+  ["t3", "3분 회전율", x => x.turnover_3m ?? null, v => v == null ? "-" : v.toFixed(2) + "%", 0, 1],
+  ["td", "전날 회전율", x => x.turnover_d0 ?? null, v => v == null ? "-" : (v >= 10 ? Math.round(v) : v.toFixed(1)) + "%", 0, 1],
+  ["sh", "발행주식", x => x.shares ?? null, v => v == null ? "-" : fmtQty(v), 0, 1],
+  ["dd", "고점 대비", x => (x.metrics || {}).dd60 ?? null, v => v == null ? "-" : fmtPct(v, 0), 0, 1],
+  ["sc", "점수", x => x.score, v => v, 0, 1],
+  ["tag", "태그", x => 0, null, 0, 0],
+];
 function drawPre() {
   const box = $("pre-list"); box.replaceChildren();
   const all = (preData && preData.rows) || [];
-  const rows = all.filter(x => preFilter === "live" ? x.live.length : preFilter === "top" ? x.tier > 0 : true);
-  if (!rows.length) { const d = document.createElement("div"); d.className = "empty"; d.textContent = preFilter === "live" ? "지금 장중 증상이 켜진 종목이 없습니다" : "없음"; box.appendChild(d); }
-  const span = (cls, text) => { const s = document.createElement("span"); if (cls) s.className = cls; s.textContent = text; return s; };
-  const vr = v => v == null ? null : v >= 100 ? "100배+" : v.toFixed(1) + "배";
-  const turn = v => v == null || v > 1000 ? null : (v >= 10 ? Math.round(v) : v >= 1 ? v.toFixed(1) : v.toFixed(2)) + "%";
-  rows.slice(0, preShown).forEach(x => {
-    const hot = x.live.includes("wake") && (x.live.includes("creep") || x.live.includes("money"));
-    const open = preOpen.has(x.symbol);
-    const c = document.createElement("div");
-    c.className = "pre-card" + (hot ? " hot" : x.live.length ? " warm" : "");
-    // 토스 목록 행: 동그라미 · 종목명/태그 · 가격/등락
-    const now = x.now || {}, m = x.live_m || {}, mt = x.metrics || {};
-    const tr = document.createElement("div"); tr.className = "trow";
-    tr.appendChild(avatar(x.symbol));
-    const body = document.createElement("div"); body.className = "trow-body";
-    const l1 = document.createElement("div"); l1.className = "trow-l1";
-    l1.append(span("trow-sym", x.symbol), span("trow-name", x.name || ""));
-    const l2 = document.createElement("div"); l2.className = "trow-l2";
-    if (x.tier) l2.appendChild(span("badge b-tier", "★".repeat(x.tier)));
-    if (x.live_labels.length) l2.appendChild(span("badge b-live", x.live_labels[0].replace(/^[^\p{L}]+/u, "")));
-    const keyTags = [...(mt.src === "rank" ? ["랭킹 진입"] : []), ...x.labels.filter(l => l.startsWith("거래량")),
-                     ...(x.filing_tags || []).map(l => l.replace(/ \d\d\/\d\d(\/\d\d)?$/, "")), ...(x.patterns || [])];
-    keyTags.slice(0, 2).forEach(t => l2.appendChild(span("badge", t)));
-    body.append(l1, l2);
-    const right = document.createElement("div"); right.className = "trow-right";
-    const px0 = now.price != null ? now.price : x.close, chg = now.price != null ? now.chg : null;
-    right.append(span("trow-px", fmtPx(px0)), span("trow-chg " + (tone(chg) || ""), chg != null ? fmtPct(chg) : "전날 종가"));
-    tr.append(body, right);
-    c.appendChild(tr);
-    // 펼치면: 숫자·차트·세부
-    const k3 = document.createElement("div"); k3.className = "pre-k3";
-    [["고점 대비", mt.dd60 != null ? fmtPct(mt.dd60, 0) : "-"], ["전날 거래량", vr(mt.vol_ratio) || "-"], ["회전율", turn(x.turnover_d0) || "-"], ["점수", x.score + "점"]]
-      .forEach(([k, v]) => { const d = document.createElement("div"); d.append(span("k", k), span("v", v)); k3.appendChild(d); });
-    // 자세히 (펼치면)
-    if (open) {
-      const more = document.createElement("div"); more.className = "pre-more";
-      more.appendChild(k3);
-      if (x.bars && x.bars.length > 5) { const mc = document.createElement("div"); mc.className = "chart pre-chart"; more.appendChild(mc); requestAnimationFrame(() => candleChart(mc, x.bars, { height: 90, ma: [5, 20], labels: false })); }
-      if (x.judge) more.appendChild(span("pre-judge", `${x.judge.state} · 거래 흐름 ${x.judge.flow} · 변동성 ${x.judge.risk}`));
-      const tags = [...x.labels, ...(x.filing_tags || []), ...(x.patterns || [])];
-      if (tags.length) more.appendChild(span("pre-tags all", tags.join(" · ")));
-      const facts = [
-        ["전날 종가", fmtPx(x.close)], ["10일", mt.ret10 != null ? fmtPct(mt.ret10, 0) : null],
-        ["최근 급등", mt.last_spike_d ? `${mt.last_spike_d.slice(5)} ${fmtPct(mt.last_spike_pct, 0)}` : "60일 없음"],
-        ["거래대금(20일)", mt.dollar20 != null ? "$" + fmtQty(mt.dollar20) : null],
-        ["오늘 회전율", turn(x.turnover_today)], ["3분 회전율", turn(x.turnover_3m)],
-        ["1시간 거래량", m.vol_x != null ? vr(m.vol_x) : null], ["발행주식", x.shares ? fmtQty(x.shares) + "주" : null],
-      ].filter(f => f[1]);
-      const f = document.createElement("div"); f.className = "pre-facts";
-      facts.forEach(([k, v]) => { const s = document.createElement("span"); const b = document.createElement("b"); b.textContent = v; s.append(span("k", k + " "), b); f.appendChild(s); });
-      more.appendChild(f);
-      const go = document.createElement("button"); go.className = "link-btn"; go.textContent = "종목 조회 →";
-      go.onclick = e => { e.stopPropagation(); lookup(x.symbol); showTab("symbol"); };
-      more.appendChild(go);
-      c.appendChild(more);
-    }
-    c.onclick = () => { open ? preOpen.delete(x.symbol) : preOpen.add(x.symbol); drawPre(); };
-    box.appendChild(c);
+  let rows = all.filter(x => preFilter === "live" ? x.live.length : preFilter === "top" ? x.tier > 0 : true);
+  if (preSort.k !== "auto") {
+    const col = PRE_COLS.find(c => c[0] === preSort.k), f = col[2];
+    rows = [...rows].sort((p, q) => { const a = f(p), b = f(q); if (a == null) return 1; if (b == null) return -1;
+      return (a > b ? 1 : a < b ? -1 : 0) * preSort.dir; });
+  }
+  if (!rows.length) { const d = document.createElement("div"); d.className = "empty"; d.textContent = preFilter === "live" ? "지금 장중 증상이 켜진 종목이 없습니다" : "없음"; box.appendChild(d); return; }
+  const wrap = document.createElement("div"); wrap.className = "scr-wrap";
+  const t = document.createElement("table"); t.className = "scr";
+  const thead = t.createTHead().insertRow();
+  PRE_COLS.forEach(([k, h, , , mob, num]) => {
+    const th = document.createElement("th"); th.textContent = h + (preSort.k === k ? (preSort.dir > 0 ? " ▲" : " ▼") : "");
+    th.className = (num ? "num" : "") + (mob ? "" : " hide-m") + (k === "sym" ? " sticky" : "");
+    if (k !== "tag") th.onclick = () => { preSort = preSort.k === k ? { k, dir: -preSort.dir } : { k, dir: k === "sym" ? 1 : -1 }; drawPre(); };
+    thead.appendChild(th);
   });
+  const tb = t.createTBody();
+  rows.slice(0, preShown).forEach(x => {
+    const tr = tb.insertRow();
+    const chg = (x.now || {}).chg;
+    const heat = chg == null ? 0 : Math.max(-1, Math.min(1, chg / 30));
+    tr.style.setProperty("--heat", Math.abs(heat).toFixed(2));
+    tr.className = (heat > 0 ? "h-up" : heat < 0 ? "h-dn" : "") + (x.live.length ? " live" : "");
+    PRE_COLS.forEach(([k, , f, fmt, mob, num]) => {
+      const td = tr.insertCell();
+      td.className = (num ? "num" : "") + (mob ? "" : " hide-m") + (k === "sym" ? " sticky" : "");
+      if (k === "sym") {
+        const a = document.createElement("div"); a.className = "scr-sym"; a.textContent = x.symbol;
+        const n = document.createElement("div"); n.className = "scr-name"; n.textContent = x.name || "";
+        td.append(a, n);
+      } else if (k === "sig") {
+        if (x.tier) { const b = document.createElement("span"); b.className = "tg tg-tier"; b.textContent = "★".repeat(x.tier); td.appendChild(b); }
+        x.live_labels.slice(0, 1).forEach(l => { const b = document.createElement("span"); b.className = "tg tg-live"; b.textContent = l.replace(/^[^\p{L}]+/u, ""); td.appendChild(b); });
+        if (!x.tier && !x.live.length) td.textContent = "·";
+      } else if (k === "tag") {
+        const tags = [...((x.metrics || {}).src === "rank" ? ["랭킹"] : []), ...(x.filing_tags || []).map(l => l.replace(/ \d\d\/\d\d(\/\d\d)?$/, "")), ...(x.patterns || [])];
+        td.className += " scr-tags"; td.textContent = tags.slice(0, 3).join(" · ");
+      } else {
+        const v = f(x); td.textContent = fmt ? fmt(v) : v;
+        if (k === "chg" || k === "dd") td.classList.add(tone(v) || "flat");
+      }
+    });
+    tr.onclick = () => { lookup(x.symbol); showTab("symbol"); };
+  });
+  wrap.appendChild(t); box.appendChild(wrap);
   const more = $("pre-more"), left = rows.length - preShown;
   more.hidden = left <= 0; more.textContent = `더 보기 (${left}개 더)`;
 }
@@ -1733,6 +1825,7 @@ $("theme-btn").onclick = () => {
   try { localStorage.setItem("theme", document.documentElement.dataset.theme); } catch (e) {}
   redrawAll();
 };
+document.documentElement.dataset.theme = "dark";                 // 스크리너는 어두운 화면이 기본
 try { const t = localStorage.getItem("theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
 
 // 보이는 탭의 데이터만 받는다 (휴대폰 데이터·배터리 절약)
