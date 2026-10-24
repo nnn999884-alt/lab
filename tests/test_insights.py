@@ -158,7 +158,7 @@ def test_keep_watch_includes_faded_runners(tmp_path):
     assert keep == {"RUNR"}                                    # 어제 +80% 찍고 제자리로 온 종목은 계속 감시
 
 
-def test_runners_and_realtime_rebreak(tmp_path):
+def test_runners_and_approach_before_breakout(tmp_path):
     from datetime import timedelta as td
     from tests.test_vsignals import T0
     col, st, sent = make(tmp_path)
@@ -178,23 +178,30 @@ def test_runners_and_realtime_rebreak(tmp_path):
             return None
     col.cal = Cal()
     col.clock = lambda: T0
-    col._rb_levels = {"PENX": 2.2}
+    col._rb_levels = {"PENX": 2.2}                             # 1단계 선 1.87 · 2단계 선 2.09
     col._rt_seeded.add("PENX")
+
     def jobs():
         out = []
         while not col._rt_q.empty():
             out.append(col._rt_q.get_nowait())
-        return [j for j in out if j[0] == "rebreak"]
-    col._on_trade("PENX", 2.1, 50000, t=1000.0)                # 아직 고점 아래
+        return [j for j in out if j[0] == "approach"]
+    for k in range(30):                                        # 평소 분당 1천 주
+        col._rt_min.setdefault("PENX", {})[int((1000.0 - 60 * (k + 2)) // 60)] = 1000
+    col._on_trade("PENX", 1.80, 500, t=1000.0)                 # 선 아래
+    col._on_trade("PENX", 1.88, 500, t=1001.0)                 # 1단계 선 넘었지만 거래 안 붙음 → 아직
     assert jobs() == []
-    col._on_trade("PENX", 2.25, 20000, t=1001.0)               # 넘음 + 최근 1분 $15만
-    job, = jobs()
-    assert job[1] == "PENX"
-    col._on_trade("PENX", 2.3, 20000, t=1002.0)                # 한 번만 넘김
-    assert jobs() == []
-    assert col._rebreak(st, T0, "PRE", "PENX", 2.25, job[3], 1.0)
-    msg = [m[0] for m in sent.msgs if m[0].startswith("🚀")][-1]
-    assert msg.startswith("🚀 이전 고점 재돌파 (PENX · 펜엑스) — 6일 전 +120% 급등주") and "$2.20" in msg
-    assert not col._rebreak(st, T0 + td(minutes=5), "PRE", "PENX", 2.4, 9e4, 1.0)   # 하루 한 번
+    col._on_trade("PENX", 1.80, 500, t=1002.0)
+    col._on_trade("PENX", 1.90, 30000, t=1003.0)               # 거래 붙어서 넘음 → 👀 접근
+    j, = jobs()
+    assert j[3] == 1
+    assert col._approach(st, T0, "PRE", "PENX", j[2], 1, j[4], 1.0)
+    col._on_trade("PENX", 2.10, 10000, t=1004.0)               # 5% 아래 선 → 🎯 임박
+    j2, = jobs()
+    assert j2[3] == 2 and col._approach(st, T0 + td(minutes=1), "PRE", "PENX", 2.10, 2, j2[4], 1.0)
+    msgs = [m[0] for m in sent.msgs if m[0].startswith(("👀", "🎯"))]
+    assert msgs[0].startswith("👀 이전 고점 접근 (PENX · 펜엑스) — 6일 전 +120% 급등주") and "$2.20" in msgs[0]
+    assert msgs[1].startswith("🎯 이전 고점 임박") and "+4.8%" in msgs[1]
+    assert not col._approach(st, T0 + td(minutes=2), "PRE", "PENX", 2.12, 2, 9e4, 1.0)   # 단계마다 하루 한 번
     from pennybot.precursor import runner_tag
     assert runner_tag(r) == "🔙 6일 전 +120% 급등주"

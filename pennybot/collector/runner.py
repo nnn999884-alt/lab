@@ -82,8 +82,9 @@ class Collector:
         self._rt_seeded: set = set()              # 1분봉으로 평소 거래량을 채운 종목
         self._rt_fired: dict = {}                 # 종목 → 마지막 실시간 신호 시각(초)
         self._rt_shares: dict = {}
-        self._rb_levels: dict = {}                # 며칠 전 급등주 → 그 뒤 최고가 (실시간 재돌파 감시선)
-        self._rb_sent: set = set()
+        self._rb_levels: dict = {}                # 며칠 전 급등주 → 그 뒤 최고가 (넘기 전에 접근·임박 알림)
+        self._rb_sent: set = set()                # 오늘 보낸 (종목, 단계)
+        self._rt_last: dict = {}                  # 종목 → 직전 체결가 (선을 아래에서 위로 넘는 순간만)
         self._keep_today: set = set()
         self._vopen: dict = {}                    # 종목 → [가상 포지션] (실시간 체결로 익절·손절·목표 근처 밀림 확인)
         self._vhi: dict = {}                      # 가상 포지션 id → 실시간 고점
@@ -859,10 +860,8 @@ class Collector:
                             (["랭킹 진입"] if sym in ranked_in else []) + (["빠른 포착"] if sym in hot else []))
             elif (sym in keep or sym in prev_alert) and not (self._rt and self._rt.healthy):
                 self._reaccel_check(self.store, now, session, d0, sym, today, close, shares.get(sym), start)
-            if sym in self._rb_levels and today and not (self._rt and self._rt.healthy):
-                hi2 = max(b[2] for b in today[-2:])
-                if hi2 > self._rb_levels[sym]:
-                    self._rebreak(self.store, now, session, sym, today[-1][4], sum(b[4] * b[5] for b in today[-2:]), close)
+            if sym in self._rb_levels and len(today) > 2 and not (self._rt and self._rt.healthy):
+                self._approach_bars(now, session, sym, today, close)
             if self.cfg.vsignal and session != AFTER:      # 가상 매매는 알림과 따로: 1분 거래 터짐 → 아래 지정가
                 self._vtrade(now, d0, sym, score, close, today, shares.get(sym), session, start)
         # 구독 우선: 오늘 알림·+30% → 감시 상위 → 며칠 전 급등주 (최근 것부터)
@@ -917,35 +916,55 @@ class Collector:
         self._runner_cache = (d0, out)
         return out
 
-    def _rebreak(self, store, now, session, sym: str, price: float, dollar: float | None, pc: float | None) -> bool:
-        """며칠 전 급등주가 그 뒤 최고가를 넘음 → '🚀 이전 고점 재돌파' (하루 한 번, 최근 거래 $2만 이상)."""
-        from ..precursor import alert_buttons, rebreak_text
+    def _approach(self, store, now, session, sym: str, price: float, stage: int, dollar: float | None, pc: float | None) -> bool:
+        """며칠 전 급등주가 그 뒤 최고가에 다가옴 → 1단계 '👀 접근'(15% 아래) · 2단계 '🎯 임박'(5% 아래). 단계마다 하루 한 번, 넘기 전에만."""
+        from ..precursor import APPROACH, alert_buttons, approach_text
         from ..trading.strategies import SESSION_KO
         r = (getattr(self, "_runner_cache", None) or (None, {}))[1].get(sym)
-        if not r or not r["days"] or price <= r["level"] or (dollar is not None and dollar < 2e4):
-            return False
+        if not r or not r["days"] or price > r["level"] * 1.02:
+            return False                                 # 이미 넘은 뒤면 늦음
+        title = APPROACH[stage - 1][3]
         trade_date, _ = self.cal.classify(now)
         b = self.cal.bounds(trade_date, DAY) if trade_date else None
         start = iso(b[0]) if b else iso(now - timedelta(hours=12))
-        if store.query("SELECT 1 FROM events WHERE symbol=? AND kind='rebreak' AND ts>=?", (sym, start)):
+        if store.query("SELECT 1 FROM events WHERE symbol=? AND kind='approach' AND ts>=? AND text LIKE ?", (sym, start, title[:2] + "%")):
             return False
         if pc is None:
             row = store.query("SELECT close FROM daily_bars WHERE symbol=? ORDER BY d DESC LIMIT 1", (sym,))
             pc = row[0][0] if row else None
-        self._event(now, sym, "rebreak", f"🚀 {sym} 이전 고점 재돌파 ({r['days']}일 전 +{r['run_chg']:.0f}% · 고점 ${r['level']:.4g} 넘음)",
-                    (price / pc - 1) * 100 if pc else None)
-        log.info("재돌파 %s $%.4g > $%.4g (%d일 전 급등)", sym, price, r["level"], r["days"])
+        self._ev_last.pop((sym, "approach"), None)       # 1단계 직후 2단계도 남게 (10분 제한 무시)
+        self._event(now, sym, "approach", f"{title[:2]} {sym} {title[2:].strip()} (고점 ${r['level']:.4g}까지 {(r['level'] / price - 1) * 100:+.1f}%"
+                    f" · {r['days']}일 전 +{r['run_chg']:.0f}%)", (price / pc - 1) * 100 if pc else None)
+        log.info("고점 %s %s $%.4g → $%.4g (%d일 전 급등)", title, sym, price, r["level"], r["days"])
         self._fast_hot[1].add(sym)
-        if self.notifier and self._on("rebreak"):
+        if self.notifier and self._on("approach"):
             link = None
             try:
                 link = self.link() if self.link else None
             except Exception:
                 pass
             oh = self._overhead(store, sym, price)
-            self.notifier.send(rebreak_text(sym, (self.universe.get(sym) or {}).get("name"), r, price, pc, SESSION_KO.get(session, session),
-                                            dollar, [oh] if oh else None), buttons=alert_buttons(sym, link))
+            self.notifier.send(approach_text(sym, (self.universe.get(sym) or {}).get("name"), r, stage, price, pc,
+                                             SESSION_KO.get(session, session), dollar, [oh] if oh else None),
+                               buttons=alert_buttons(sym, link))
         return True
+
+    def _approach_bars(self, now, session, sym: str, today: list, pc) -> None:
+        """웹소켓이 없을 때 1분봉으로: 최근 2분에 선을 처음 넘어왔으면 (그 전엔 종가가 선 아래)."""
+        from ..precursor import APPROACH
+        lvl = self._rb_levels[sym]
+        before, last2 = today[:-2], today[-2:]
+        hi2 = max(b[2] for b in last2)
+        for stage, k, need_x, _, _ in reversed(APPROACH):
+            line = lvl * k
+            if (sym, stage) in self._rb_sent or hi2 < line or (before and max(b[4] for b in before) >= line):
+                continue
+            base = sum(b[5] for b in before[-30:]) / max(1, len(before[-30:]))
+            if need_x and last2[-1][5] < need_x * max(base, 1.0):
+                continue
+            if self._approach(self.store, now, session, sym, last2[-1][4], stage, sum(b[4] * b[5] for b in last2), pc):
+                self._rb_sent.update({(sym, s_) for s_ in range(1, stage + 1)})
+            break
 
     def _reaccel_check(self, store, now, session, d0, sym, today, pc, shares, start) -> bool:
         """급등 뒤 15% 눌렸다 10% 다시 오르고 최근 2분 거래가 붙으면 '🔁 재가속' (한 파동에 한 번, 20분 간격, 하루 3번까지)."""
@@ -1102,11 +1121,21 @@ class Collector:
             for k in sorted(mins)[:-40]:
                 mins.pop(k, None)
         lvl = self._rb_levels.get(sym)
-        if lvl and price > lvl and sym not in self._rb_sent:
-            d = sum(p * v for _, p, v in w)
-            if d >= 2e4:                                 # 체결 한두 건 말고 거래가 붙어서 넘을 때
-                self._rb_sent.add(sym)
-                self._rt_q.put(("rebreak", sym, price, d))
+        if lvl:                                          # 며칠 전 급등주: 그 뒤 최고가의 15%·5% 아래 선을 넘어오는 순간
+            from ..precursor import APPROACH
+            prev, self._rt_last[sym] = self._rt_last.get(sym), price
+            if prev is not None and price <= lvl * 1.02:
+                d60, v60 = sum(p * v for _, p, v in w), sum(v for _, _, v in w)
+                base = sum(v for k, v in mins.items() if m - 31 <= k <= m - 2) / 30
+                for stage, k, need_x, _, _ in reversed(APPROACH):
+                    line = lvl * k
+                    if not (prev < line <= price) or (sym, stage) in self._rb_sent:
+                        continue
+                    if d60 < (1e4 if stage == 2 else 2e4) or (need_x and v60 < need_x * max(base, 1.0) * 1.0):
+                        continue                         # 거래가 안 붙은 선 넘기는 아직
+                    self._rb_sent.update({(sym, s_) for s_ in range(1, stage + 1)})   # 2단계면 1단계도 건너뜀
+                    self._rt_q.put(("approach", sym, price, stage, d60))
+                    break
         if t - self._rt_fired.get(sym, 0) < 600 or not self._settings.get().get("realtime", True):
             return
         d60 = sum(p * v for _, p, v in w)
@@ -1141,11 +1170,10 @@ class Collector:
                     self._rt_vclose(store, job[1], job[2])
                 elif job[0] == "vfill":
                     self._rt_vfill(store, job[1], job[2])
-                elif job[0] == "rebreak":
+                elif job[0] == "approach":
                     now = self.clock()
                     _, session = self.cal.classify(now)
-                    if not self._rebreak(store, now, session, job[1], job[2], job[3], None):
-                        self._rb_sent.discard(job[1])    # 오늘 이미 보냈으면 그대로, 조건 미달이면 다음 체결에 다시
+                    self._approach(store, now, session, job[1], job[2], job[3], job[4], None)
                 else:
                     self._rt_alert(store, *job[1:])
             except Exception as e:
