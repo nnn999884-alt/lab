@@ -87,6 +87,43 @@ class Data:
         from ..brief import brief, with_filings
         return with_filings(brief(self.market_db, sym), self.dilution(), str(Path(self.cfg.state_dir) / "research.db"))
 
+    def symbol_extra(self, sym: str) -> dict:
+        """종목 상세: 급등 후보 진단(일봉 점수·등급·장중 증상) · 발행주식/회전율 · 공시 태그 · 오늘 1분봉 · 신호 기록 · 가상 매매."""
+        from ..precursor import DAILY_LABELS, LIVE_LABELS, PATTERN_LABELS, presurge, tier
+        sym = sym.upper()
+        out: dict = {"symbol": sym}
+        info = self.m("SELECT shares, list_date FROM stock_info WHERE symbol=?", (sym,))
+        shares = info[0]["shares"] if info else None
+        out["shares"], out["list_date"] = shares, info[0]["list_date"] if info else None
+        pd = self.m("SELECT d0, score, signals, metrics, close FROM precursor_daily WHERE symbol=? ORDER BY d0 DESC LIMIT 1", (sym,))
+        if pd:
+            r = pd[0]
+            mt, sg = json.loads(r["metrics"] or "{}"), json.loads(r["signals"] or "[]")
+            out["daily"] = {"d0": r["d0"], "score": r["score"], "close": r["close"], "metrics": mt,
+                            "labels": [lab for k, lab in DAILY_LABELS.items() if k in sg],
+                            "patterns": [lab for k, lab in PATTERN_LABELS.items() if k in sg],
+                            "tier": tier(mt, shares, r["close"]),
+                            "turnover_d0": (mt.get("volume") or 0) / shares * 100 if shares else None}
+            lv = self.m("SELECT ts, signals, metrics, alerted FROM precursor_live WHERE d0=? AND symbol=?", (r["d0"], sym))
+            if lv:
+                lm = json.loads(lv[0]["metrics"] or "{}")
+                out["live"] = {"ts": lv[0]["ts"], "alerted": lv[0]["alerted"], "metrics": lm,
+                               "labels": [LIVE_LABELS.get(k, k) for k in json.loads(lv[0]["signals"] or "[]")],
+                               "turnover_today": (lm.get("vol_today") or 0) / shares * 100 if shares else None,
+                               "turnover_3m": (lm.get("vol_3m") or 0) / shares * 100 if shares else None}
+        tg = self.m("SELECT d0, tags, info FROM stock_tags WHERE symbol=? ORDER BY d0 DESC LIMIT 1", (sym,))
+        if tg:
+            out["tags"] = {"d0": tg[0]["d0"], "tags": json.loads(tg[0]["tags"] or "[]"), "info": json.loads(tg[0]["info"] or "{}")}
+        last = self.m("SELECT MAX(trade_date) AS d FROM bars_1m WHERE symbol=?", (sym,))
+        if last and last[0]["d"]:
+            bars = self.m("SELECT ts, open, high, low, close, volume FROM bars_1m WHERE symbol=? AND trade_date=? ORDER BY ts",
+                          (sym, last[0]["d"]))
+            out["intraday"] = {"date": last[0]["d"], "bars": [[b["ts"], b["open"], b["high"], b["low"], b["close"], b["volume"]] for b in bars]}
+        out["events"] = self.m("SELECT ts, kind, text FROM events WHERE symbol=? ORDER BY ts DESC LIMIT 30", (sym,))
+        out["vsignals"] = self.m("SELECT strat, status, opened, closed, entry, exit_price, exit_reason, high, low, last, tp, sl "
+                                 "FROM vsignals WHERE symbol=? ORDER BY id DESC LIMIT 20", (sym,))
+        return out
+
     def dilution(self):
         """SEC_USER_AGENT 가 있으면 공시 판정 (희석 점수·부양 동기). 처음 한 번만 만든다."""
         if not hasattr(self, "_dil"):
@@ -402,6 +439,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/daily": lambda: d.daily(qs.get("s", "")[:12], n("n", 90)),
             "/api/precursor": lambda: __import__("pennybot.precursor", fromlist=["ranked"]).ranked(d.market_db, n("limit", 80)),
             "/api/symbol": lambda: d.symbol(qs.get("s", "")[:12]),
+            "/api/symbol_extra": lambda: d.symbol_extra(qs.get("s", "")[:12]),
             "/api/research_hist": lambda: d.research_hist(),
             "/api/bigruns": lambda: d.bigruns(),
             "/api/chart30": lambda: d.chart30(),

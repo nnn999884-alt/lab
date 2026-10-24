@@ -126,3 +126,12 @@ def test_control_requires_same_origin(server):
     with pytest.raises(urllib.error.HTTPError) as e:
         post(base + "/api/control", {"strategy": "nope", "enabled": True}, origin=base)
     assert e.value.code == 400
+
+
+def test_symbol_extra(server):
+    base, _ = server
+    x = get(base + "/api/symbol_extra?s=penx")
+    assert x["symbol"] == "PENX"
+    assert set(x) >= {"shares", "events", "vsignals"}               # 데모 DB 에 없는 항목(일봉 점수 등)은 빠질 뿐 오류 없음
+    assert isinstance(x["events"], list) and isinstance(x["vsignals"], list)
+    assert get(base + "/api/symbol_extra?s=NOPE")["events"] == []
