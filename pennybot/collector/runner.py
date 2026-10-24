@@ -64,6 +64,9 @@ class Collector:
         self.link = link                  # () -> 대시보드 외부 주소
         self._pre_thread = None
         self._arch_thread = None
+        from pathlib import Path as _P
+        from ..settings import Watcher
+        self._settings = Watcher(str(_P(cfg.db_path).parent))   # 대시보드 설정 탭 (state/settings.json)
         self._pre_tried = None
         self._ev_last: dict = {}                  # (종목, 종류) → 마지막 이벤트 시각
         self._rank_prev: dict = {}                # 랭킹 종류 → {종목: 순위}
@@ -95,6 +98,27 @@ class Collector:
         self._last_session: tuple | None = None
         self._seen_accessions: set[str] = set()
 
+    def _on(self, alert: str) -> bool:
+        """설정 탭의 알림 켜기·끄기."""
+        return bool(self._settings.get()["alerts"].get(alert, True))
+
+    def write_status(self, now: datetime, session: str) -> None:
+        """설정 탭 '시스템 상태' 용: 웹소켓·구독·보유 (state/collector_status.json)."""
+        from pathlib import Path
+        rt = self._rt
+        st = {"ts": iso(now), "session": session, "universe": len(self.universe),
+              "ws": {"on": bool(rt), "connected": bool(rt and rt.connected), "healthy": bool(rt and rt.healthy),
+                     "last_frame_sec": round(rt.clock() - rt.last_frame, 1) if rt and rt.last_frame else None,
+                     "connects": rt.connects if rt else 0, "subscribed": len(rt.desired()) if rt else 0,
+                     "error": rt.last_error if rt else ""},
+              "watch": len(self._rt_syms), "open": sum(len(v) for v in self._vopen.values()),
+              "orders": sum(len(v) for v in self._vorders.values())}
+        p = Path(self.cfg.db_path).parent / "collector_status.json"
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(json.dumps(st, ensure_ascii=False), encoding="utf-8")
+        import os
+        os.replace(tmp, p)
+
     # ---------- 스케줄 ----------
     def _due(self, name: str, now: datetime, every: timedelta) -> bool:
         if now >= self._next.get(name, datetime.min.replace(tzinfo=timezone.utc)):
@@ -123,6 +147,8 @@ class Collector:
         if self._due("universe", now, timedelta(hours=c.universe_refresh_hours)) or not self.universe:
             self._run("universe", self.refresh_universe, now)
 
+        if self._due("status", now, timedelta(seconds=15)):
+            self._run("status", self.write_status, now, session)
         if self._last_session is None:
             self._run("catch_up", self.catch_up_summaries)
             if c.vsignal:                                # 꺼져 있는 사이 애프터장 마감이 지나간 가상 포지션 정리
@@ -752,7 +778,7 @@ class Collector:
         m["presurge"], why = presurge(iso(now), tier_, m.get("price") and m["price"] / (1 + (m.get("chg") or 0) / 100),
                                       dm.get("vol_ratio"), m.get("chg"))
         if not m["presurge"]:
-            if self.notifier:
+            if self.notifier and self._on("burst"):
                 link = None
                 try:
                     link = self.link() if self.link else None
@@ -773,7 +799,7 @@ class Collector:
         except Exception as e:
             log.debug("호가 실패 %s: %s", sym, e)
         m = lv["metrics"]
-        if self.notifier:
+        if self.notifier and self._on("presurge"):
             day = {"score": score, "signals": json.loads(sig or "[]"), "metrics": json.loads(met or "{}")}
             link = None
             try:
@@ -833,7 +859,7 @@ class Collector:
         if len(mins) > 45:
             for k in sorted(mins)[:-40]:
                 mins.pop(k, None)
-        if t - self._rt_fired.get(sym, 0) < 600:
+        if t - self._rt_fired.get(sym, 0) < 600 or not self._settings.get().get("realtime", True):
             return
         d60 = sum(p * v for _, p, v in w)
         v60 = sum(v for _, _, v in w)
@@ -980,7 +1006,7 @@ class Collector:
         if not rows:
             return []
         self._watch_now([r[0] for r in rows])
-        if self.notifier:
+        if self.notifier and self._on("pre_open"):
             self.notifier.send("\n".join(["🌅 프리마켓 개장(04:00 ET) 주목 — 데이마켓에서 움직인 종목", "──────────────"]
                                          + [f"{s} {n} · {px(p)} ({pct(c)})" + (" · 거래 터짐" if b else "") for s, n, p, c, b in rows]
                                          + ["", "개장 순간 한 번에 터지는 경우가 있어 실시간 구독에 고정했습니다"]))
@@ -1115,7 +1141,8 @@ class Collector:
         방금(최근 3분) 일어난 것만 새로 기록한다 (수집기가 늦게 켜졌을 때 지난 신호로 사지 않게)."""
         from ..vstrat import STRATEGIES, plan, signal_k
         store = store or self.store
-        strats = [(k, STRATEGIES[k]) for k in self.cfg.vsignal_strategies if k in STRATEGIES]
+        on = self._settings.get()["strategies"]
+        strats = [(k, STRATEGIES[k]) for k in self.cfg.vsignal_strategies if k in STRATEGIES and on.get(k, True)]
         state = {r[0]: (r[1], r[2]) for r in store.query(
             "SELECT strat, id, status FROM vsignals WHERE symbol=? AND d0=? AND strat IS NOT NULL ORDER BY id", (sym, d0))}
         live = [(k, st) for k, st in strats if k not in state or state[k][1] == "ORDER"]
@@ -1163,7 +1190,7 @@ class Collector:
         from ..trading.strategies import SESSION_KO
         v = self._vrow((store or self.store).query("SELECT * FROM vsignals WHERE id=?", (vid,))[0])
         log.info("가상 %s %s $%.4g (%s)", "지정가 주문" if kind == "order" else "매수 체결", v["symbol"], v["entry"], v["reason"])
-        if not self.notifier:
+        if not self.notifier or not self._on("vtrade"):
             return
         link = self.link() if self.link else None
         name = (self.universe.get(v["symbol"]) or {}).get("name")
@@ -1241,7 +1268,7 @@ class Collector:
                 store.db.execute("UPDATE vsignals SET high=?, low=?, last=?, high_at=? WHERE id=?", (hi, lo, last, hi_at, v["id"]))
         if why:
             v.update(status="CLOSED", closed=iso(now), exit_price=last, exit_reason=why, high=hi, low=lo, last=last, high_at=hi_at)
-            if self.notifier:
+            if self.notifier and self._on("vtrade"):
                 link = self.link() if self.link else None
                 name = (self.universe.get(v["symbol"]) or {}).get("name")
                 self.notifier.send(vsignal_text("sell", v["symbol"], name, v, self.cfg, SESSION_KO.get(session, session)),
@@ -1311,7 +1338,7 @@ class Collector:
             text = (f"🛑 뉴스 대기 거래정지 ({sym} · {name})\n정지 {f(r['halt_ts'])} ET · 마지막 ${last:.4g}" if last else
                     f"🛑 뉴스 대기 거래정지 ({sym} · {name})\n정지 {f(r['halt_ts'])} ET") + \
                    "\n재개 시각이 나오면 다시 알림 · 실시간 구독에 넣었습니다 (급등일 수도, 악재일 수도)"
-        if self.notifier:
+        if self.notifier and self._on("halt"):
             self.notifier.send(text)
         log.info("뉴스 정지 알림 %s (%s)", sym, "재개 예정" if r["resume_ts"] else "정지")
 

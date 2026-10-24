@@ -135,3 +135,12 @@ def test_symbol_extra(server):
     assert set(x) >= {"shares", "events", "vsignals"}               # 데모 DB 에 없는 항목(일봉 점수 등)은 빠질 뿐 오류 없음
     assert isinstance(x["events"], list) and isinstance(x["vsignals"], list)
     assert get(base + "/api/symbol_extra?s=NOPE")["events"] == []
+
+
+def test_settings_endpoint(server):
+    base, tmp = server
+    assert get(base + "/api/settings")["strategies"]["S1"] is True
+    out = post(base + "/api/settings", {"strategies": {"S2": False}}, base)
+    assert out["strategies"]["S2"] is False and get(base + "/api/settings")["strategies"]["S2"] is False
+    with pytest.raises(urllib.error.HTTPError):
+        post(base + "/api/settings", {"realtime": False}, "http://evil.example")   # 다른 출처 거부

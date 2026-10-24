@@ -458,3 +458,16 @@ def test_near_target_pullback_exit(tmp_path):
     assert col._vexit(v, 1.185, 1.195, now) is None                      # +19.5% 고점, 지금 +18.5% (1%p 밀림)
     assert col._vexit(v, 1.175, 1.195, now) == "목표 근처 +19.5% 에서 밀려 정리"   # 2%p 밀림
     assert col._vexit(v, 1.12, 1.15, now) is None                        # +15% 고점은 목표 근처(+18%) 아님
+
+
+def test_settings_toggle_strategy_and_alerts(tmp_path):
+    from pennybot import settings
+    col, st, sent = make(tmp_path)
+    settings.save(str(tmp_path), {"strategies": {"S1": False}, "alerts": {"vtrade": False}})
+    only(col, "S1", "S4")
+    px = [0.9] * 3 + [1.0, 1.10]
+    col._vtrade(T0, "2026-10-22", "PENX", 9, 0.9, bars_of(px), None, "PRE")
+    assert [r[0] for r in st.query("SELECT strat FROM vsignals")] == ["S4"]   # ① 꺼짐
+    assert sent.msgs == []                                                # 가상 매매 알림 꺼짐
+    assert settings.load(str(tmp_path))["vaccount"] == {"capital": 10000, "per_trade": 1000}
+    assert settings.save(str(tmp_path), {"vaccount": {"capital": "5000"}, "bogus": 1})["vaccount"]["capital"] == 5000

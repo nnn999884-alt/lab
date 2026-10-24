@@ -119,10 +119,68 @@ class Data:
             bars = self.m("SELECT ts, open, high, low, close, volume FROM bars_1m WHERE symbol=? AND trade_date=? ORDER BY ts",
                           (sym, last[0]["d"]))
             out["intraday"] = {"date": last[0]["d"], "bars": [[b["ts"], b["open"], b["high"], b["low"], b["close"], b["volume"]] for b in bars]}
-        out["events"] = self.m("SELECT ts, kind, text FROM events WHERE symbol=? ORDER BY ts DESC LIMIT 30", (sym,))
+        # 오늘 흐름 (수집기 1분봉) · 60일 고점·저점 (일봉)
+        if out.get("intraday") and out["intraday"]["bars"]:
+            b = out["intraday"]["bars"]
+            hi, lo, op, last = max(x[2] for x in b), min(x[3] for x in b), b[0][1], b[-1][4]
+            vol = sum(x[5] for x in b)
+            vwap = sum((x[2] + x[3] + x[4]) / 3 * x[5] for x in b) / vol if vol else None
+            out["today"] = {"open": op, "high": hi, "low": lo, "last": last, "vwap": vwap, "volume": vol,
+                            "dollar": sum(x[4] * x[5] for x in b),
+                            "day_pos": (last - lo) / (hi - lo) * 100 if hi > lo else None,
+                            "from_high": (last / hi - 1) * 100 if hi else None, "vs_open": (last / op - 1) * 100 if op else None}
+        d60 = self.m("SELECT high, low FROM daily_bars WHERE symbol=? ORDER BY d DESC LIMIT 60", (sym,))
+        if d60:
+            out["range60"] = {"high": max(r["high"] for r in d60), "low": min(r["low"] for r in d60)}
+        out["events"] = self.m("SELECT ts, kind, text FROM events WHERE symbol=? AND kind != 'filing' ORDER BY ts DESC LIMIT 30", (sym,))
         out["vsignals"] = self.m("SELECT strat, status, opened, closed, entry, exit_price, exit_reason, high, low, last, tp, sl "
                                  "FROM vsignals WHERE symbol=? ORDER BY id DESC LIMIT 20", (sym,))
         return out
+
+    def profile(self, sym: str) -> dict:
+        """회사 개요·실적 발표일 (Nasdaq 공개 데이터, 12시간 캐시)."""
+        import re
+        import time
+        import requests
+        sym = sym.upper()
+        if not re.fullmatch(r"[A-Z.]{1,8}", sym or ""):
+            return {}
+        cache = Path(self.cfg.state_dir) / "profile_cache" / f"{sym}.json"
+        try:
+            if time.time() - cache.stat().st_mtime < 12 * 3600:
+                return json.loads(cache.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            pass
+        h = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
+        get = lambda u: (requests.get(u, headers=h, timeout=10).json() or {}).get("data") or {}
+        out: dict = {"symbol": sym}
+        try:
+            sd = (get(f"https://api.nasdaq.com/api/quote/{sym}/summary?assetclass=stocks").get("summaryData") or {})
+            v = lambda k: (sd.get(k) or {}).get("value")
+            out.update(exchange=v("Exchange"), sector=v("Sector"), industry=v("Industry"), market_cap=v("MarketCap"),
+                       avg_volume=v("AverageVolume"), range52=v("FiftTwoWeekHighLow"), prev_close=v("PreviousClose"))
+            cp = get(f"https://api.nasdaq.com/api/company/{sym}/company-profile")
+            out.update(region=(cp.get("Region") or {}).get("value"), description=(cp.get("CompanyDescription") or {}).get("value"),
+                       company=(cp.get("CompanyName") or {}).get("value"))
+            ed = get(f"https://api.nasdaq.com/api/analyst/{sym}/earnings-date")
+            txt = " ".join(x for x in [ed.get("announcement"), (ed.get("eQRResposeModel") or {}).get("boldText")] if x)
+            m = re.search(r"([A-Z][a-z]{2} \d{1,2}, \d{4})", txt + " " + (ed.get("reportText") or ""))
+            out["earnings"] = m.group(1) if m else None
+        except Exception as e:
+            out["error"] = str(e)[:120]
+        try:
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            cache.write_text(json.dumps(out, ensure_ascii=False), encoding="utf-8")
+        except OSError:
+            pass
+        return out
+
+    def status(self) -> dict:
+        """수집기가 15초마다 남기는 상태 (웹소켓·구독·마지막 체결)."""
+        try:
+            return json.loads((Path(self.cfg.state_dir) / "collector_status.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
 
     def dilution(self):
         """SEC_USER_AGENT 가 있으면 공시 판정 (희석 점수·부양 동기). 처음 한 번만 만든다."""
@@ -440,6 +498,9 @@ class Handler(BaseHTTPRequestHandler):
             "/api/precursor": lambda: __import__("pennybot.precursor", fromlist=["ranked"]).ranked(d.market_db, n("limit", 80)),
             "/api/symbol": lambda: d.symbol(qs.get("s", "")[:12]),
             "/api/symbol_extra": lambda: d.symbol_extra(qs.get("s", "")[:12]),
+            "/api/profile": lambda: d.profile(qs.get("s", "")[:12]),
+            "/api/settings": lambda: __import__("pennybot.settings", fromlist=["load"]).load(d.cfg.state_dir),
+            "/api/status": lambda: d.status(),
             "/api/research_hist": lambda: d.research_hist(),
             "/api/bigruns": lambda: d.bigruns(),
             "/api/chart30": lambda: d.chart30(),
@@ -462,7 +523,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self._authorized():
             return
-        if urlparse(self.path).path != "/api/control":
+        if urlparse(self.path).path not in ("/api/control", "/api/settings"):
             return self._json({"error": "not found"}, 404)
         origin = self.headers.get("Origin") or ""
         host = self.headers.get("Host") or ""
@@ -475,6 +536,11 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
         except ValueError:
             return self._json({"error": "잘못된 JSON"}, 400)
+        if urlparse(self.path).path == "/api/settings":
+            from .. import settings
+            d = settings.save(self.data.cfg.state_dir, body)
+            log.info("설정 변경: %s", body)
+            return self._json(d)
         ctl = self.data.control
         if "kill" in body:
             d = ctl.update(kill=bool(body["kill"]))
