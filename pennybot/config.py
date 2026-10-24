@@ -105,6 +105,8 @@ class CollectorConfig:
     spike_min_dollar: float = 5000.0  # 1분 급등·급락 이벤트: 그 2분 거래대금이 이만큼은 돼야 (얇은 체결 소음 제외)
     precursor_daily_alert: int = 10  # 장 마감 뒤 점수 계산이 끝나면 상위 N종목 목록 알림 (0 = 끔)
     vsignal: bool = True             # 가상 매매 알림 (실제 주문 없음) — 전략 정의는 pennybot/vstrat.py
+    keep_days: int = 20            # 고가 +keep_min_run% 급등주는 이 거래일 수만큼 계속 감시 (며칠 뒤 다시 오르는 경우)
+    keep_min_run: float = 50.0
     vsignal_near_tp: float = 2.0     # 고점 수익이 (익절 − 이만큼)%p 이상 갔다가
     vsignal_near_back: float = 2.0   # 고점 수익보다 이만큼 %p 밀리면 정리 (목표 앞에서 못 뚫고 빠질 때). 0 = 끔
     vsignal_strategies: list = field(default_factory=lambda: ["S1", "S2", "S3", "S4", "S5", "S6"])

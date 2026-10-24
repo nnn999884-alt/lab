@@ -156,3 +156,45 @@ def test_keep_watch_includes_faded_runners(tmp_path):
         rows[sym] = (sym, 1, "[]", "{}", 1.0)
     keep = col._keep_watch("2026-10-22", None, rows)
     assert keep == {"RUNR"}                                    # 어제 +80% 찍고 제자리로 온 종목은 계속 감시
+
+
+def test_runners_and_realtime_rebreak(tmp_path):
+    from datetime import timedelta as td
+    from tests.test_vsignals import T0
+    col, st, sent = make(tmp_path)
+    days = ["2026-10-14", "2026-10-15", "2026-10-16", "2026-10-19", "2026-10-20", "2026-10-21", "2026-10-22"]
+    bars = [(1.0, 1.0, 1.0), (1.0, 2.2, 1.6), (1.6, 1.7, 1.2), (1.2, 1.3, 1.0), (1.0, 1.1, 0.9), (0.9, 1.0, 0.95), (0.95, 1.0, 1.0)]
+    st.put_daily_bars([{"symbol": "PENX", "d": d, "open": 1, "high": h, "low": lo, "close": c, "volume": 1}
+                       for d, (c0, h, c) in zip(days, bars) for lo in [min(c0, c)]])
+    r = col._runners("2026-10-22")["PENX"]
+    assert r["run_d"] == "2026-10-15" and round(r["run_chg"]) == 120 and r["days"] == 6 and r["level"] == 2.2 and r["low"] == 0.9
+    assert col._keep_watch("2026-10-22", None, {"PENX": ("PENX", 1, "[]", "{}", 1.0)}) == {"PENX"}
+
+    class Cal:
+        def classify(self, now):
+            return (None, "PRE")
+
+        def bounds(self, d, s):
+            return None
+    col.cal = Cal()
+    col.clock = lambda: T0
+    col._rb_levels = {"PENX": 2.2}
+    col._rt_seeded.add("PENX")
+    def jobs():
+        out = []
+        while not col._rt_q.empty():
+            out.append(col._rt_q.get_nowait())
+        return [j for j in out if j[0] == "rebreak"]
+    col._on_trade("PENX", 2.1, 50000, t=1000.0)                # 아직 고점 아래
+    assert jobs() == []
+    col._on_trade("PENX", 2.25, 20000, t=1001.0)               # 넘음 + 최근 1분 $15만
+    job, = jobs()
+    assert job[1] == "PENX"
+    col._on_trade("PENX", 2.3, 20000, t=1002.0)                # 한 번만 넘김
+    assert jobs() == []
+    assert col._rebreak(st, T0, "PRE", "PENX", 2.25, job[3], 1.0)
+    msg = [m[0] for m in sent.msgs if m[0].startswith("🚀")][-1]
+    assert msg.startswith("🚀 이전 고점 재돌파 (PENX · 펜엑스) — 6일 전 +120% 급등주") and "$2.20" in msg
+    assert not col._rebreak(st, T0 + td(minutes=5), "PRE", "PENX", 2.4, 9e4, 1.0)   # 하루 한 번
+    from pennybot.precursor import runner_tag
+    assert runner_tag(r) == "🔙 6일 전 +120% 급등주"

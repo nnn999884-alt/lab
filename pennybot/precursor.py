@@ -250,6 +250,28 @@ def reaccel_text(sym: str, name: str | None, r: dict, prev_close: float | None, 
     ])
 
 
+def runner_tag(r: dict) -> str:
+    """'🔙 6일 전 +120% 급등주'."""
+    return f"🔙 {r['days']}일 전 +{r['run_chg']:.0f}% 급등주"
+
+
+def rebreak_text(sym: str, name: str | None, r: dict, price: float, prev_close: float | None, session_ko: str,
+                 dollar_60s: float | None = None, tags: list | None = None) -> str:
+    """며칠 전 급등주가 그 뒤 최고가를 다시 넘는 순간.
+    일봉 (고가 +50% 급등일 751건): 30거래일 안에 다시 +30% 급등일 63% (아무 종목 19%), 그중 절반 넘게 4일 이후.
+    이틀 뒤~20일 안에 그 고점을 다시 넘은 239건: 그날 고가 중앙 +17% 더, 그 뒤 5일 최고 중앙 +16%, 종가까지 위에서 끝난 건 47%."""
+    from .trading.messages import money_s, pct, px
+    chg = (price / prev_close - 1) * 100 if prev_close else None
+    return "\n".join([
+        f"🚀 이전 고점 재돌파 ({sym}" + (f" · {name}" if name else "") + f") — {r['days']}일 전 +{r['run_chg']:.0f}% 급등주",
+        f"💵 {px(price)}" + (f" ({pct(chg)})" if chg is not None else "") + f" · {session_ko}",
+        f"넘은 고점 {px(r['level'])} ({r['run_d'][5:]} 급등 뒤 최고) · 그 뒤 최저 {px(r['low'])} ({(r['low'] / r['level'] - 1) * 100:+.0f}%)",
+        *([f"최근 1분 {money_s(dollar_60s)}"] if dollar_60s else []),
+        *([f"🏷 {' · '.join(tags)}"] if tags else []),
+        "과거: 재돌파한 날 고가 중앙 +17% 더 · 5일 안 최고 중앙 +16% · 종가까지 지킨 건 절반 (47%)",
+    ])
+
+
 def ask_depth(ob: dict, price: float, pct: float = 10.0) -> float | None:
     """호가창 매도 쪽: 현재가 ~ +pct% 안에 걸린 물량의 달러 합 (작을수록 얇다 = 조금만 사도 잘 오른다)."""
     asks = (ob or {}).get("asks") or []

@@ -82,6 +82,9 @@ class Collector:
         self._rt_seeded: set = set()              # 1분봉으로 평소 거래량을 채운 종목
         self._rt_fired: dict = {}                 # 종목 → 마지막 실시간 신호 시각(초)
         self._rt_shares: dict = {}
+        self._rb_levels: dict = {}                # 며칠 전 급등주 → 그 뒤 최고가 (실시간 재돌파 감시선)
+        self._rb_sent: set = set()
+        self._keep_today: set = set()
         self._vopen: dict = {}                    # 종목 → [가상 포지션] (실시간 체결로 익절·손절·목표 근처 밀림 확인)
         self._vhi: dict = {}                      # 가상 포지션 id → 실시간 고점
         self._vorders: dict = {}                  # 종목 → [걸려 있는 가상 지정가 주문]
@@ -806,8 +809,15 @@ class Collector:
                 tiers.setdefault(s, tier(json.loads(all_rows[s][3] or "{}"), shares.get(s), all_rows[s][4]))
                 rows.append(all_rows[s])
         keep = self._keep_watch(d0, trade_date, all_rows)   # 오르고 빠진 종목: 재가속할 수 있으니 계속 감시
+        runners = self._runners(d0)
+        self._rb_levels = {s: r["level"] for s, r in runners.items() if r["days"] >= 1}   # 실시간 재돌파 감시선
+        if getattr(self, "_rb_d0", None) != d0:          # 새 거래일이면 '오늘 보냄' 표시 초기화
+            self._rb_d0, self._rb_sent = d0, set()
         have = {x[0] for x in rows}
-        for s in sorted(keep - have):
+        # 며칠 전 급등주는 실시간 체결로 이미 보고 있으면 1분봉 조회는 건너뜀 (신호가 오면 그때 받는다) — 조회 수 절약
+        rt_ok = bool(self._rt and self._rt.healthy)
+        rt_only = {s for s in keep - have if rt_ok and s not in self._keep_today and s in self._rt_syms}
+        for s in sorted(keep - have - rt_only):
             tiers.setdefault(s, tier(json.loads(all_rows[s][3] or "{}"), shares.get(s), all_rows[s][4]))
             rows.append(all_rows[s])
         ranked_in = set()                            # 목록 밖, 랭킹으로 들어온 종목 (전날 일봉에 티가 안 난 급등)
@@ -849,9 +859,16 @@ class Collector:
                             (["랭킹 진입"] if sym in ranked_in else []) + (["빠른 포착"] if sym in hot else []))
             elif (sym in keep or sym in prev_alert) and not (self._rt and self._rt.healthy):
                 self._reaccel_check(self.store, now, session, d0, sym, today, close, shares.get(sym), start)
+            if sym in self._rb_levels and today and not (self._rt and self._rt.healthy):
+                hi2 = max(b[2] for b in today[-2:])
+                if hi2 > self._rb_levels[sym]:
+                    self._rebreak(self.store, now, session, sym, today[-1][4], sum(b[4] * b[5] for b in today[-2:]), close)
             if self.cfg.vsignal and session != AFTER:      # 가상 매매는 알림과 따로: 1분 거래 터짐 → 아래 지정가
                 self._vtrade(now, d0, sym, score, close, today, shares.get(sym), session, start)
-        self._rt_set([x[0] for x in rows if x[0] in keep] + [x[0] for x in rows if x[0] not in keep])
+        # 구독 우선: 오늘 알림·+30% → 감시 상위 → 며칠 전 급등주 (최근 것부터)
+        old = sorted((s for s in keep if s in runners and s not in self._keep_today), key=lambda s: runners[s]["days"])
+        first = [x[0] for x in rows if x[0] in keep and x[0] not in old]
+        self._rt_set(first + [x[0] for x in rows if x[0] not in keep] + old)
         for r in out:                                    # 루프 도는 사이 실시간 쪽이 보낸 알림 표시를 덮어쓰지 않게
             if not r["alerted"]:
                 r["alerted"] = self._alerted(self.store, d0, r["symbol"])
@@ -874,14 +891,61 @@ class Collector:
                 r = all_rows.get(s)
                 if r and r[4] and mx and mx >= r[4] * 1.3:
                     out.add(s)
-        ds = [d for (d,) in self.store.query("SELECT DISTINCT d FROM daily_bars WHERE d<=? ORDER BY d DESC LIMIT 3", (d0,))]
-        if ds:
-            for (s,) in self.store.query(
-                    """SELECT b.symbol FROM daily_bars b JOIN daily_bars p ON p.symbol=b.symbol
-                         AND p.d=(SELECT MAX(d) FROM daily_bars WHERE symbol=b.symbol AND d<b.d)
-                       WHERE b.d>=? AND p.close>0 AND b.high>=p.close*1.5""", (ds[-1],)):
-                out.add(s)
+        self._keep_today = {s for s in out if s in all_rows}
+        out |= set(self._runners(d0))                    # 며칠 전 급등주 (63% 가 30거래일 안에 또 +30% 급등, 절반 넘게 4일 이후)
         return {s for s in out if s in all_rows}
+
+    def _runners(self, d0: str) -> dict:
+        """최근 keep_days 거래일 안에 고가 +keep_min_run% 찍은 종목 → {급등일, 급등폭, 며칠 전, 그 뒤 최고(=재돌파선), 그 뒤 최저}. 기준일마다 한 번."""
+        c = getattr(self, "_runner_cache", None)
+        if c and c[0] == d0:
+            return c[1]
+        ds = [d for (d,) in self.store.query("SELECT DISTINCT d FROM daily_bars WHERE d<=? ORDER BY d DESC LIMIT ?", (d0, self.cfg.keep_days))]
+        out: dict = {}
+        if ds:
+            idx = {d: i for i, d in enumerate(ds)}
+            k = 1 + self.cfg.keep_min_run / 100
+            for s, d, chg in self.store.query(
+                    """SELECT b.symbol, b.d, (b.high / p.close - 1) * 100 FROM daily_bars b JOIN daily_bars p ON p.symbol=b.symbol
+                         AND p.d=(SELECT MAX(d) FROM daily_bars WHERE symbol=b.symbol AND d<b.d)
+                       WHERE b.d>=? AND b.d<=? AND p.close>0 AND b.high>=p.close*? ORDER BY b.d""", (ds[-1], d0, k)):
+                out[s] = {"run_d": d, "run_chg": chg, "days": idx[d] + 1}      # 가장 최근 급등일 (d0 = 장중 기준 전 거래일 → 1일 전)
+            for s, r in out.items():
+                hl = self.store.query("SELECT MAX(high), MIN(low) FROM daily_bars WHERE symbol=? AND d>=? AND d<=?", (s, r["run_d"], d0))
+                after = self.store.query("SELECT MIN(low) FROM daily_bars WHERE symbol=? AND d>? AND d<=?", (s, r["run_d"], d0))
+                r["level"], r["low"] = hl[0][0], (after[0][0] if after and after[0][0] else hl[0][1])
+        self._runner_cache = (d0, out)
+        return out
+
+    def _rebreak(self, store, now, session, sym: str, price: float, dollar: float | None, pc: float | None) -> bool:
+        """며칠 전 급등주가 그 뒤 최고가를 넘음 → '🚀 이전 고점 재돌파' (하루 한 번, 최근 거래 $2만 이상)."""
+        from ..precursor import alert_buttons, rebreak_text
+        from ..trading.strategies import SESSION_KO
+        r = (getattr(self, "_runner_cache", None) or (None, {}))[1].get(sym)
+        if not r or not r["days"] or price <= r["level"] or (dollar is not None and dollar < 2e4):
+            return False
+        trade_date, _ = self.cal.classify(now)
+        b = self.cal.bounds(trade_date, DAY) if trade_date else None
+        start = iso(b[0]) if b else iso(now - timedelta(hours=12))
+        if store.query("SELECT 1 FROM events WHERE symbol=? AND kind='rebreak' AND ts>=?", (sym, start)):
+            return False
+        if pc is None:
+            row = store.query("SELECT close FROM daily_bars WHERE symbol=? ORDER BY d DESC LIMIT 1", (sym,))
+            pc = row[0][0] if row else None
+        self._event(now, sym, "rebreak", f"🚀 {sym} 이전 고점 재돌파 ({r['days']}일 전 +{r['run_chg']:.0f}% · 고점 ${r['level']:.4g} 넘음)",
+                    (price / pc - 1) * 100 if pc else None)
+        log.info("재돌파 %s $%.4g > $%.4g (%d일 전 급등)", sym, price, r["level"], r["days"])
+        self._fast_hot[1].add(sym)
+        if self.notifier and self._on("rebreak"):
+            link = None
+            try:
+                link = self.link() if self.link else None
+            except Exception:
+                pass
+            oh = self._overhead(store, sym, price)
+            self.notifier.send(rebreak_text(sym, (self.universe.get(sym) or {}).get("name"), r, price, pc, SESSION_KO.get(session, session),
+                                            dollar, [oh] if oh else None), buttons=alert_buttons(sym, link))
+        return True
 
     def _reaccel_check(self, store, now, session, d0, sym, today, pc, shares, start) -> bool:
         """급등 뒤 15% 눌렸다 10% 다시 오르고 최근 2분 거래가 붙으면 '🔁 재가속' (한 파동에 한 번, 20분 간격, 하루 3번까지)."""
@@ -945,7 +1009,10 @@ class Collector:
 
     def _alert(self, store, now, session, sym, score, sig, met, lv, tier_, extra_tags) -> None:
         """거래 터짐 한 건: 급등 전조 조건(presurge)이면 '🚨 급등 전조' 전체, 아니면 '📶 거래 터짐' 짧은 신호 (세션 상관없이)."""
-        from ..precursor import TIER_LABEL, alert_buttons, alert_text, ask_depth, presurge, signal_text
+        from ..precursor import TIER_LABEL, alert_buttons, alert_text, ask_depth, presurge, runner_tag, signal_text
+        r = (getattr(self, "_runner_cache", None) or (None, {}))[1].get(sym)
+        if r and r["days"]:                              # 며칠 전 급등주면 알림에 표시
+            extra_tags = [runner_tag(r)] + list(extra_tags)
         m = lv["metrics"]
         dm = json.loads(met or "{}")
         m["presurge"], why = presurge(iso(now), tier_, m.get("price") and m["price"] / (1 + (m.get("chg") or 0) / 100),
@@ -1034,6 +1101,12 @@ class Collector:
         if len(mins) > 45:
             for k in sorted(mins)[:-40]:
                 mins.pop(k, None)
+        lvl = self._rb_levels.get(sym)
+        if lvl and price > lvl and sym not in self._rb_sent:
+            d = sum(p * v for _, p, v in w)
+            if d >= 2e4:                                 # 체결 한두 건 말고 거래가 붙어서 넘을 때
+                self._rb_sent.add(sym)
+                self._rt_q.put(("rebreak", sym, price, d))
         if t - self._rt_fired.get(sym, 0) < 600 or not self._settings.get().get("realtime", True):
             return
         d60 = sum(p * v for _, p, v in w)
@@ -1068,6 +1141,11 @@ class Collector:
                     self._rt_vclose(store, job[1], job[2])
                 elif job[0] == "vfill":
                     self._rt_vfill(store, job[1], job[2])
+                elif job[0] == "rebreak":
+                    now = self.clock()
+                    _, session = self.cal.classify(now)
+                    if not self._rebreak(store, now, session, job[1], job[2], job[3], None):
+                        self._rb_sent.discard(job[1])    # 오늘 이미 보냈으면 그대로, 조건 미달이면 다음 체결에 다시
                 else:
                     self._rt_alert(store, *job[1:])
             except Exception as e:
