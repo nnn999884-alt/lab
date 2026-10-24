@@ -751,6 +751,20 @@ table.scr { width: 100%; border-collapse: separate; border-spacing: 0; font-size
 @media (max-width: 640px) { .co-sym { font-size: 26px; } .co-price { font-size: 20px; } .kv2-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .shorts-wrap { padding: 12px 14px; margin-top: 12px; } .shorts-wrap > summary { cursor: pointer; list-style: none; display: flex; align-items: baseline; flex-wrap: wrap; color: var(--text-secondary); }
 .shorts-wrap > summary::before { content: "▸"; margin-right: 8px; color: var(--text-muted); } .shorts-wrap[open] > summary::before { content: "▾"; }
+.det-wrap { margin-bottom: 16px; } .det-scroll { max-height: 460px; }
+table.det { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.det th { position: sticky; top: 0; z-index: 1; background: var(--surface); text-align: left; font-size: 11.5px; color: var(--text-muted); font-weight: 600; padding: 6px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+table.det td { padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; white-space: nowrap; cursor: pointer; }
+table.det th.num, table.det td.num { text-align: right; }
+table.det tr:hover td { background: var(--surface-2); }
+table.det tr.det-win td { background: rgba(240, 68, 82, .09); } table.det tr.det-loss td { background: rgba(49, 130, 246, .07); }
+.det-n { font-size: 11.5px; color: var(--text-muted); margin-top: 2px; }
+.det-sym { display: flex; gap: 6px; align-items: center; } .det-sym b { font-family: var(--mono, monospace); font-size: 13.5px; }
+table.det .chips { margin: 0; max-width: 280px; }
+.det-help { margin-top: 8px; font-size: 12px; color: var(--text-secondary); } .det-help summary { cursor: pointer; color: var(--text-muted); }
+.det-help p { margin: 6px 0; line-height: 1.55; }
+@media (max-width: 700px) { table.det td, table.det th { padding: 7px 6px; } table.det .hide-m { display: none; } table.det td { white-space: normal; }
+  .det-wrap .det-scroll { max-height: 62vh !important; overflow-y: auto; } .det-wrap .feed-ctl label { display: inline-flex !important; } .det-et { display: none; } }
 </style>
 </head>
 <body>
@@ -782,6 +796,26 @@ table.scr { width: 100%; border-collapse: separate; border-spacing: 0; font-size
       <div class="kpi"><div class="k">오늘 신호</div><div class="v" id="k-alerts">-</div><div class="n" id="k-alerts-n"></div></div>
       <div class="kpi"><div class="k">가상 매매</div><div class="v" id="k-vs">-</div><div class="n" id="k-vs-n"></div></div>
       <div class="kpi"><div class="k">급등 후보</div><div class="v" id="k-picks">-</div><div class="n" id="k-picks-n"></div></div>
+    </section>
+    <section class="card det-wrap">
+      <div class="pre-head">
+        <h2>🎯 조기 감지 <span class="sub" style="margin:0 0 0 6px;font-weight:400">알림 뜬 순간 가격 → 그 뒤 실제로 얼마나 갔나</span></h2>
+        <div class="feed-ctl">
+          <div class="seg" id="det-filter" role="group" aria-label="알림 종류">
+            <button data-f="pre" aria-pressed="false">🚨 전조만</button>
+            <button data-f="all" aria-pressed="true">전체</button>
+          </div>
+          <label class="sub" style="margin:0"><input type="checkbox" id="det-norun"> 이미 달리던 종목 빼기</label>
+        </div>
+      </div>
+      <p class="sub" id="det-sum" style="margin:2px 0 8px"></p>
+      <div class="tablewrap det-scroll"><table class="det" id="det"></table></div>
+      <details class="det-help"><summary>어떻게 찾나 / 얼마나 맞나</summary>
+        <p>🚨 급등 전조 = 거래대금·회전율이 평소보다 확 붙고 일봉 등급(★)이 받쳐 줄 때. 📶 거래 터짐 = 거래만 터진 짧은 신호.</p>
+        <p><b>결과</b>: 감지가에서 <b>+20% 먼저</b> 갔으면 ✅, <b>−10% 먼저</b> 빠졌으면 ❌ (한 1분봉에서 둘 다 닿으면 ❌로 셈). <b>+30% 찍음</b> = 그날 전일 종가 대비 +30% 를 찍었나.</p>
+        <p><b>과거 확률</b> = 끝난 거래일의 같은 종류 알림 실제 결과. 건수가 적으면 흔들리니 건수도 같이 볼 것. <b>평소</b> = 감시 종목이 아무 날이나 +30% 찍을 확률.</p>
+        <p>"늦음" = 감지 때 벌써 전일 대비 +20% 넘은 종목. "구 규칙" = 10/23 까지 쓰던 옛 전조 조건 (참고용).</p>
+      </details>
     </section>
     <div class="home-grid">
     <section class="card feed-wrap">
@@ -1773,6 +1807,68 @@ function drawFilingsFeed(rows) {
   });
 }
 
+/* ---------- 조기 감지: 알림 → 결과 ---------- */
+let detFilter = "all";
+try { $("det-norun").checked = localStorage.getItem("detNorun") === "1"; } catch (e) {}
+$("det-norun").onchange = () => { try { localStorage.setItem("detNorun", $("det-norun").checked ? "1" : "0"); } catch (e) {} delete _seen.det; loadDet(); };
+document.querySelectorAll("#det-filter button").forEach(b => b.onclick = () => {
+  detFilter = b.dataset.f;
+  document.querySelectorAll("#det-filter button").forEach(x => x.setAttribute("aria-pressed", x === b));
+  delete _seen.det; loadDet();
+});
+const etParts = ts => { const [h, m] = new Date(ts).toLocaleTimeString("en-US", { timeZone: "America/New_York", hour: "2-digit", minute: "2-digit", hour12: false }).split(":"); return [+h % 24, +m]; };
+function etSession(ts) {
+  const [h, m] = etParts(ts), x = h + m / 60;
+  return (x >= 20 || x < 4 ? "데이" : x < 9.5 ? "프리" : x < 16 ? "정규" : "애프터") + " " + String(h).padStart(2, "0") + ":" + String(m).padStart(2, "0") + " ET";
+}
+// 미국 거래일 (전날 20:00 ET 부터) — 지난 거래일 알림은 결과가 확정
+const tradeDay = () => new Date(Date.now() + 4 * 3600e3).toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+const DET_KIND = { precursor: ["🚨 전조", "k-pre"], burst: ["📶 터짐", "k-burst"], old: ["구 규칙", ""] };
+async function loadDet() {
+  const d = await api("/api/detections?hours=36");
+  if (unchanged("det", [d, detFilter, $("det-norun").checked])) return;
+  const st = d.stats || {}, base = st.base || {}, td = tradeDay();
+  const run = r => (r.chg_at || 0) >= 20;
+  const rows = d.rows.filter(r => r.price != null && (detFilter === "all" || r.kind === "precursor") && !($("det-norun").checked && run(r)));
+  const done = d.rows.filter(r => r.result), win = done.filter(r => r.result === "win").length;
+  $("det-sum").textContent = `최근 36시간 ${d.rows.length}건 · 결과 난 ${done.length}건 중 +20% 먼저 ${win}건 · −10% 먼저 ${done.length - win}건`
+    + (base.n ? ` · 평소 +30% 찍을 확률 ${(base.hit30 / base.n * 100).toFixed(1)}%` : "");
+  const t = $("det"); t.replaceChildren();
+  const h = t.createTHead().insertRow();
+  [["감지", ""], ["종목", ""], ["감지가", "num hide-m"], ["지금", "num"], ["결과", ""], ["과거 확률", "num hide-m"], ["특징", "hide-m"]]
+    .forEach(([l, c]) => h.appendChild(el2("th", c, l)));
+  const tb = t.createTBody();
+  if (!rows.length) { const r = tb.insertRow(), c = r.insertCell(); c.colSpan = 7; c.className = "empty";
+    c.textContent = d.rows.length ? "조건에 맞는 감지 없음" : "최근 36시간 감지 없음 — 🚨 급등 전조·📶 거래 터짐 알림이 뜨면 여기서 결과까지 따라갑니다"; return; }
+  const two = (a, b, ca, cb) => { const w = document.createDocumentFragment(); w.append(el2("div", ca || "", a), el2("div", "det-n " + (cb || ""), b)); return w; };
+  rows.slice(0, 60).forEach(r => {
+    const tr = tb.insertRow(); tr.className = r.result === "win" ? "det-win" : r.result === "loss" ? "det-loss" : "";
+    const cell = cls => { const c = tr.insertCell(); c.className = cls || ""; return c; };
+    const hm = new Date(r.ts).toLocaleTimeString("ko-KR", { timeZone: "Asia/Seoul", hour: "2-digit", minute: "2-digit", hour12: false });
+    cell().append(two(kstDay(r.ts) === kstDay(new Date()) ? hm : kst(r.ts).slice(0, 7) + " " + hm, etSession(r.ts), "mono"));
+    const [kl, kc] = DET_KIND[r.kind] || [r.kind, ""];
+    const c1 = cell(), top = el2("div", "det-sym");
+    top.append(el2("b", "", r.symbol), el2("span", "ev-kind " + kc, kl));
+    if (run(r)) top.append(el2("span", "chip", "늦음"));
+    c1.append(top, el2("div", "det-n", r.name || ""));
+    cell("num hide-m").append(two("$" + fmtPx(r.price), "전일 " + fmtPct(r.chg_at), "mono", tone(r.chg_at)));
+    const now = (r.last / r.price - 1) * 100, mx = (r.high / r.price - 1) * 100;
+    const c3 = cell("num"); c3.append(el2("div", "mono " + (tone(now) || ""), "$" + fmtPx(r.last)));
+    const sub = el2("div", "det-n"); sub.append("감지 후 ", el2("span", tone(now) || "", fmtPct(now)), " · 최고 ", el2("span", "pos", fmtPct(mx))); c3.append(sub);
+    const res = r.result === "win" ? ["✅ +20% 먼저", "pos"] : r.result === "loss" ? ["❌ −10% 먼저", "neg"]
+      : r.date < td ? ["둘 다 안 닿음", "det-n"] : ["⏳ 진행 중", "det-n"];
+    cell().append(two(res[0], r.hit30 ? "그날 +30% 찍음" : "", res[1], r.hit30 ? "pos" : ""));
+    const s = st[r.kind + (run(r) ? ":run" : ":early")] || st[r.kind];
+    const c5 = cell("num hide-m");
+    if (s && s.n) c5.append(two(`+30% ${Math.round(s.hit30 / s.n * 100)}% · 먹을 ${Math.round(s.win / s.n * 100)}%`, `과거 ${s.n}건${s.n < 20 ? " (적음)" : ""}`, "mono"));
+    else c5.append(two("-", "끝난 기록 아직 없음"));
+    const c6 = cell("hide-m"), ch = el2("div", "chips");
+    (r.tags || []).slice(0, 5).forEach(x => ch.append(el2("span", "chip", x)));
+    c6.append(ch);
+    tr.onclick = () => { lookup(r.symbol); showTab("symbol"); };
+  });
+}
+
 /* ---------- 오늘 한눈에 ---------- */
 const kstDay = s => new Date(s).toLocaleDateString("ko-KR", { timeZone: "Asia/Seoul" });
 function kpiFeed(rows) {
@@ -2255,7 +2351,7 @@ try { const t = localStorage.getItem("theme"); if (t) document.documentElement.d
 
 // 보이는 탭의 데이터만 받는다 (휴대폰 데이터·배터리 절약)
 const TAB_JOBS = {
-  home: () => [loadFeed(), loadVs(), loadPre()],
+  home: () => [loadDet(), loadFeed(), loadVs(), loadPre()],
   symbol: () => [loadShorts()],
   trade: () => [loadVTrade()],
   settings: () => [loadSettings()],

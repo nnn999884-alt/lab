@@ -137,6 +137,87 @@ class Data:
                                  "FROM vsignals WHERE symbol=? ORDER BY id DESC LIMIT 20", (sym,))
         return out
 
+    # 감지 결과: 감지가에서 +20% 와 −10% 중 어느 쪽이 먼저 / 그날 전일 종가 대비 +30% 도달
+    WIN, LOSS, RUN30 = 1.20, 0.90, 1.30
+
+    def _day_bars(self, sym: str, ts: str):
+        """알림이 난 거래일의 1분봉 (수집기 1분봉, 없으면 연구용 보관본). 거래일 = 전날 20:00 ~ 당일 20:00 ET."""
+        from zoneinfo import ZoneInfo
+        et = ZoneInfo("America/New_York")
+        t = datetime.fromisoformat(ts)
+        d = (t.astimezone(et) + timedelta(hours=4)).date()
+        end = datetime(d.year, d.month, d.day, 20, tzinfo=et).astimezone(timezone.utc)
+        lo, hi = (end - timedelta(hours=24)).isoformat(), end.isoformat()
+        cols = "ts, high, low, close"
+        bars = self.m(f"SELECT {cols} FROM bars_1m WHERE symbol=? AND ts>=? AND ts<? ORDER BY ts", (sym, lo, hi))
+        if not any(b["ts"] <= ts for b in bars):
+            rp = Path(self.cfg.state_dir) / "research.db"
+            if rp.exists():
+                bars = self._q(str(rp), f"SELECT {cols} FROM bars_1m WHERE symbol=? AND ts>=? AND ts<? ORDER BY ts", (sym, lo, hi))
+        return d.isoformat(), bars
+
+    def _outcome(self, sym: str, ts: str) -> dict | None:
+        d, bars = self._day_bars(sym, ts)
+        before = [b for b in bars if b["ts"] <= ts]
+        if not before or before[-1]["ts"] < (datetime.fromisoformat(ts) - timedelta(minutes=30)).isoformat():
+            return None                                     # 감지 때 1분봉이 없으면 감지가를 모른다
+        p0 = before[-1]["close"]
+        pc = self.m("SELECT close FROM daily_bars WHERE symbol=? AND d<? ORDER BY d DESC LIMIT 1", (sym, d))
+        pc = pc[0]["close"] if pc and pc[0]["close"] else None
+        after = bars[len(before):]
+        res, hi, lo = None, p0, p0
+        for b in after:
+            hi, lo = max(hi, b["high"]), min(lo, b["low"])
+            if res is None and b["low"] <= p0 * self.LOSS:      # 한 봉에서 둘 다 닿으면 손실로 (보수적)
+                res = "loss"
+            elif res is None and b["high"] >= p0 * self.WIN:
+                res = "win"
+        day_hi = max(b["high"] for b in bars)
+        return {"date": d, "price": p0, "prev_close": pc, "chg_at": (p0 / pc - 1) * 100 if pc else None,
+                "last": after[-1]["close"] if after else p0, "last_ts": bars[-1]["ts"], "high": hi, "low": lo, "result": res,
+                "hit30": bool(pc and day_hi >= pc * self.RUN30)}
+
+    def detections(self, hours: int = 36) -> dict:
+        """조기 감지 표: 급등 전조·거래 터짐 알림마다 감지가 → 지금·최고, 결과, 과거 같은 알림의 실제 적중률."""
+        since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
+        rows = self.m("SELECT ts, symbol, kind, text FROM events WHERE kind IN ('precursor','burst') AND ts>=? ORDER BY ts DESC LIMIT 200", (since,))
+        names = {r["symbol"]: r["name"] for r in self.m("SELECT symbol, name FROM universe WHERE snapshot_date=(SELECT MAX(snapshot_date) FROM universe)")}
+        out = []
+        for r in rows:
+            o = self._outcome(r["symbol"], r["ts"])
+            kind = "old" if r["kind"] == "precursor" and not r["text"].startswith("🚨") else r["kind"]
+            tg = self.m("SELECT tags FROM stock_tags WHERE symbol=? ORDER BY d0 DESC LIMIT 1", (r["symbol"],))
+            out.append({"ts": r["ts"], "symbol": r["symbol"], "name": names.get(r["symbol"]), "kind": kind, "text": r["text"],
+                        "tags": json.loads(tg[0]["tags"] or "[]") if tg else [], **(o or {})})
+        return {"rows": out, "stats": self.detection_stats()}
+
+    def detection_stats(self) -> dict:
+        """끝난 거래일의 지난 알림 전부로 종류별 적중률 + 감시 종목 평소 확률 (10분 캐시)."""
+        import time
+        c = getattr(self, "_dstats", None)
+        if c and time.time() - c[0] < 600:
+            return c[1]
+        from zoneinfo import ZoneInfo
+        today = (datetime.now(ZoneInfo("America/New_York")) + timedelta(hours=4)).date().isoformat()
+        st: dict = {}
+        for r in self.m("SELECT ts, symbol, kind, text FROM events WHERE kind IN ('precursor','burst')"):
+            o = self._outcome(r["symbol"], r["ts"])
+            if not o or o["date"] >= today:              # 끝난 거래일만
+                continue
+            k = "old" if r["kind"] == "precursor" and not r["text"].startswith("🚨") else r["kind"]
+            for key in (k, k + (":run" if (o["chg_at"] or 0) >= 20 else ":early")):
+                x = st.setdefault(key, {"n": 0, "hit30": 0, "win": 0, "loss": 0})
+                x["n"] += 1
+                x["hit30"] += o["hit30"]
+                x["win"] += o["result"] == "win"
+                x["loss"] += o["result"] == "loss"
+        base = self.m("""SELECT COUNT(*) AS n, SUM(high >= pc * 1.3) AS k FROM (
+                           SELECT high, LAG(close) OVER (PARTITION BY symbol ORDER BY d) AS pc, d FROM daily_bars)
+                         WHERE pc > 0 AND d >= date('now', '-60 day')""")
+        st["base"] = {"n": base[0]["n"] or 0, "hit30": base[0]["k"] or 0}
+        self._dstats = (time.time(), st)
+        return st
+
     def profile(self, sym: str) -> dict:
         """회사 개요·실적 발표일 (Nasdaq 공개 데이터, 12시간 캐시)."""
         import re
@@ -501,6 +582,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/profile": lambda: d.profile(qs.get("s", "")[:12]),
             "/api/settings": lambda: __import__("pennybot.settings", fromlist=["load"]).load(d.cfg.state_dir),
             "/api/status": lambda: d.status(),
+            "/api/detections": lambda: d.detections(n("hours", 36)),
             "/api/research_hist": lambda: d.research_hist(),
             "/api/bigruns": lambda: d.bigruns(),
             "/api/chart30": lambda: d.chart30(),

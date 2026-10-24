@@ -144,3 +144,33 @@ def test_settings_endpoint(server):
     assert out["strategies"]["S2"] is False and get(base + "/api/settings")["strategies"]["S2"] is False
     with pytest.raises(urllib.error.HTTPError):
         post(base + "/api/settings", {"realtime": False}, "http://evil.example")   # 다른 출처 거부
+
+
+def test_detections_track_outcome(server):
+    import sqlite3
+    from datetime import datetime, timedelta, timezone
+    base, tmp = server
+    db = sqlite3.connect(get_market_path(tmp))
+    t0 = (datetime.now(timezone.utc) - timedelta(days=3)).replace(hour=14, minute=0, second=0, microsecond=0)   # 10:00 ET 정규장
+    iso = lambda m: (t0 + timedelta(minutes=m)).isoformat()
+    d = (t0 - timedelta(hours=4)).date().isoformat()
+    prev = (t0 - timedelta(days=1)).date().isoformat()
+    db.execute("INSERT OR REPLACE INTO daily_bars (symbol, d, open, high, low, close, volume) VALUES ('WINR', ?, 1, 1, 1, 1.0, 1)", (prev,))
+    db.execute("INSERT OR REPLACE INTO daily_bars (symbol, d, open, high, low, close, volume) VALUES ('LOSR', ?, 1, 1, 1, 1.0, 1)", (prev,))
+    for sym, path in (("WINR", [(0, 1.10, 1.10, 1.10), (5, 1.35, 1.08, 1.30)]), ("LOSR", [(0, 1.10, 1.10, 1.10), (5, 1.12, 0.95, 0.96)])):
+        for m, hi, lo, c in path:
+            db.execute("INSERT OR REPLACE INTO bars_1m (symbol, ts, trade_date, session, open, high, low, close, volume) VALUES (?,?,?,?,?,?,?,?,1000)",
+                       (sym, iso(m), d, "REGULAR", c, hi, lo, c))
+        db.execute("INSERT OR REPLACE INTO events (ts, symbol, kind, text, value) VALUES (?,?,'burst','📶 test',10)", (iso(0), sym))
+    db.commit()
+    rows = {r["symbol"]: r for r in get(base + "/api/detections?hours=200")["rows"]}
+    w, lz = rows["WINR"], rows["LOSR"]
+    assert w["price"] == 1.10 and w["result"] == "win" and w["hit30"] and abs(w["chg_at"] - 10) < 1e-6
+    assert lz["result"] == "loss" and not lz["hit30"]
+    st = get(base + "/api/detections?hours=200")["stats"]
+    assert st["burst"]["n"] >= 2 and st["burst"]["win"] >= 1 and st["burst"]["loss"] >= 1
+
+
+def get_market_path(tmp):
+    import glob
+    return [p for p in glob.glob(str(tmp / "*.db")) if "market" in p][0]
