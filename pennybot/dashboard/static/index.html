@@ -637,6 +637,25 @@ table.scr { width: 100%; border-collapse: separate; border-spacing: 0; font-size
   .sym-feed .ev { grid-template-columns: 84px minmax(0, 1fr); }
   .sym-feed .ev .lg-x { grid-column: 1 / -1; padding-left: 0; }
 }
+
+/* ---- 매매 탭 ---- */
+.vt-filters { display: flex; flex-wrap: wrap; gap: 8px; }
+.scr-sym-c { font-weight: 700; }
+@media (max-width: 640px) {
+  .vt-filters .seg button { padding: 4px 7px; }
+  #vt-strats td, #vt-strats th, #vt-hist td, #vt-hist th, #vt-open td, #vt-open th { padding: 8px 7px; }
+  #vt-hist td.scr-tags { white-space: normal; min-width: 90px; }
+}
+#vt-strats td:first-child { font-weight: 700; white-space: nowrap; }
+.bot-wrap { padding: 12px 14px; }
+.bot-wrap > summary { cursor: pointer; list-style: none; display: flex; align-items: baseline; flex-wrap: wrap; color: var(--text-secondary); margin: 0; }
+.bot-wrap > summary::before { content: "▸"; margin-right: 8px; color: var(--text-muted); }
+.bot-wrap[open] > summary::before { content: "▾"; }
+.bot-title { font-size: 13px; font-weight: 800; letter-spacing: .6px; }
+.bot-body { margin-top: 12px; }
+.bot-body .card { border-color: var(--border); background: var(--surface-0); }
+.link-btn { background: transparent; border: 0; color: var(--accent); font-weight: 700; font-size: 13px; padding: 4px 6px; cursor: pointer; }
+.vs-mini { font-size: 12.5px; color: var(--text-secondary); margin: -2px 0 6px; }
 </style>
 </head>
 <body>
@@ -700,13 +719,9 @@ table.scr { width: 100%; border-collapse: separate; border-spacing: 0; font-size
         60일 고점 근처는 0점. 🔥 장중(1분마다, 5점 이상): 거래 급증 = 최근 1시간 분당 거래량 3배+, 매수세 유입 = 1시간 +3%·15분 +1.5%, +10% 돌파. 거래 급증+매수세 유입이면 텔레그램 알림.<br>보라 = SEC 공시 태그(ATM 진행·워런트 행사가·최근 공모/공모 대기·액면병합 날짜·상폐 기한·전환사채·현금), 청록 = 일봉 패턴(응축: 최근 10일 변동폭이 평소의 60% 이하·박스 30% 이내 / 매집 의심: 20일 동안 오른 날 거래량이 내린 날의 1.5배+인데 가격은 안 오름 / 바닥 다지기: 크게 빠진 뒤 최근 5일 저점이 앞 5일 저점보다 안 깨짐). 회전율 = 거래량 ÷ 발행주식.</details>
     </section>
     <section class="card vs-wrap">
-      <div class="pre-head"><h2>🧪 가상 매매</h2><span class="sub" id="vs-sum" style="margin:0"></span></div>
-      <details class="sub vs-rule"><summary>전략 규칙 보기</summary><p class="sub" id="vs-rule" style="margin:6px 0 0">신호 = 1분 회전율 0.5%+ 또는 1분 거래대금 $5만+ 가 처음 터진 분. 전략 넷이 각자 사고팔고 애프터장 마감에 정리 (실제 주문 없음).
-        ① VWAP −10% 지정가 → +10% ② 프리 06~09시 바로 → +20% ③ 고점 −30% 지정가 → +20% ④ 신호가 −15% 지정가 → +15%
-        ⑤ 5분 뒤 고점 −10% 눌림 + 거래대금 유지 → 바로, +15% ⑥ 3분 반 뒤 같은 조건 → 그 가격 지정가 3분(돌파면 시장가), +10% · 손절 모두 −35%</p></details>
-      <div class="vs-strats" id="vs-strats"></div>
+      <div class="pre-head"><h2>🧪 가상 매매</h2><button class="link-btn" id="vs-goto">전체 내역 →</button></div>
+      <div class="vs-mini" id="vs-mini"></div>
       <div class="vs-list" id="vs"></div>
-      <button id="vs-more" class="more-btn" hidden>더 보기</button>
     </section>
     </div>
   </div>
@@ -741,6 +756,32 @@ table.scr { width: 100%; border-collapse: separate; border-spacing: 0; font-size
 
   <!-- ===== 매매: 주문·청산·후보 ===== -->
   <div class="tab" data-tab="trade" hidden>
+    <section class="kpis" aria-label="가상 매매 요약">
+      <div class="kpi"><div class="k">누적 성과 (새 전략)</div><div class="v" id="vt-k-all">-</div><div class="n" id="vt-k-all-n"></div></div>
+      <div class="kpi"><div class="k">오늘</div><div class="v" id="vt-k-today">-</div><div class="n" id="vt-k-today-n"></div></div>
+      <div class="kpi"><div class="k">보유 중</div><div class="v" id="vt-k-open">-</div><div class="n" id="vt-k-open-n"></div></div>
+      <div class="kpi"><div class="k">지정가 대기</div><div class="v" id="vt-k-wait">-</div><div class="n">신호 뒤 지정가 유효 시간 안</div></div>
+    </section>
+    <section class="card">
+      <div class="pre-head"><h2>전략별 성적</h2><span class="sub" style="margin:0">실제 주문 없음 · 비용 미반영 · 50건 넘으면 손익분기와 비교</span></div>
+      <div class="scr-wrap"><table class="scr" id="vt-strats"></table></div>
+    </section>
+    <section class="card">
+      <div class="pre-head"><h2>보유 · 지정가 대기</h2><span class="sub" style="margin:0">체결가로 실시간 익절·손절, 애프터장 마감에 정리</span></div>
+      <div class="scr-wrap"><table class="scr" id="vt-open"></table></div>
+    </section>
+    <section class="card">
+      <div class="pre-head"><h2>매매 내역</h2>
+        <div class="vt-filters">
+          <div class="seg" id="vt-strat-f"></div>
+          <div class="seg" id="vt-range"><button data-r="1" aria-pressed="false">오늘</button><button data-r="7" aria-pressed="true">7일</button><button data-r="0" aria-pressed="false">전체</button></div>
+        </div>
+      </div>
+      <div class="scr-wrap"><table class="scr" id="vt-hist"></table></div>
+    </section>
+    <details class="card bot-wrap" id="bot-wrap">
+      <summary><span class="bot-title">모의 계좌 · 매매 봇 (옛 전략)</span><span class="sub" style="margin:0 0 0 8px">계좌·주문·청산·후보·일일 리포트</span></summary>
+      <div class="bot-body">
     <section class="card controls-card controls">
       <h2>매매 조작</h2>
       <button id="kill-btn" class="danger" aria-pressed="false">킬스위치 켜기</button>
@@ -794,7 +835,7 @@ table.scr { width: 100%; border-collapse: separate; border-spacing: 0; font-size
     <section class="card">
       <h2>전략 후보</h2>
       <p class="sub long">최근 스캔에서 검토한 종목과 통과·탈락 사유</p>
-      <div class="filters"><label><input type="checkbox" id="only-ok"> 통과한 후보만</label></div>
+      <div class="filters"><label><input type="checkbox" id="only-ok" checked> 통과한 후보만</label></div>
       <div class="tablewrap" style="max-height:60vh"><table id="signals"></table></div>
     </section>
 
@@ -806,6 +847,8 @@ table.scr { width: 100%; border-collapse: separate; border-spacing: 0; font-size
         <pre id="report-text" class="report">리포트가 아직 없습니다.</pre>
       </div>
     </section>
+      </div>
+    </details>
   </div>
 
   <!-- ===== 분석: 가설 검증·수집 상태 ===== -->
@@ -1584,35 +1627,20 @@ function kpiFeed(rows) {
 }
 
 /* ---------- 가상 매매 기록 ---------- */
-async function loadVs() {
-  const rows = await api("/api/vsignals?limit=100");
+const vret = r => { const px = r.status === "CLOSED" ? r.exit_price : r.last; return px && r.entry ? (px / r.entry - 1) * 100 : null; };
+async function loadVs() {                                   // 홈: 요약 + 보유·대기
+  const rows = await api("/api/vsignals?limit=300");
   if (unchanged("vs", rows)) return;
-  const done = rows.filter(r => r.status === "CLOSED");
-  const ret = r => ((r.status === "CLOSED" ? r.exit_price : r.last) / r.entry - 1) * 100;
-  const wins = done.filter(r => ret(r) > 0).length;
-  $("vs-sum").textContent = done.length ? `끝난 ${done.length}건 · 승률 ${Math.round(wins / done.length * 100)}% · 평균 ${fmtPct(done.reduce((a, r) => a + ret(r), 0) / done.length)}` : "";
+  const nw = rows.filter(r => r.strat), done = nw.filter(r => r.status === "CLOSED");
   const openN = rows.filter(r => r.status === "OPEN").length, waitN = rows.filter(r => r.status === "ORDER").length;
-  const doneNew = done.filter(r => r.strat);
+  const wins = done.filter(r => vret(r) > 0).length, avg = done.length ? done.reduce((a, r) => a + vret(r), 0) / done.length : null;
   $("k-vs").textContent = `보유 ${openN} · 대기 ${waitN}`;
-  $("k-vs-n").textContent = doneNew.length ? `새 전략 끝난 ${doneNew.length}건 · 승률 ${Math.round(doneNew.filter(r => ret(r) > 0).length / doneNew.length * 100)}% · 평균 ${fmtPct(doneNew.reduce((a, r) => a + ret(r), 0) / doneNew.length)}` : "새 전략 기록 아직 없음";
-  // 전략별 성적 (50건 넘었는데 승률이 손익분기 아래면 ⚠)
-  const by = {};
-  rows.forEach(r => { const k = r.strat || "이전"; (by[k] = by[k] || []).push(r); });
-  const sb = $("vs-strats"); sb.replaceChildren();
-  Object.keys(by).sort().forEach(k => {
-    const rs = by[k], d = rs.filter(r => r.status === "CLOSED"), w = d.filter(r => ret(r) > 0).length;
-    const tp = (rs[0].tp || 10), sl = (rs[0].sl || 35), be = (sl + 1) / (tp + sl);
-    const warn = d.length >= 50 && w / d.length < be;
-    const e = document.createElement("div"); e.className = "vs-strat" + (warn ? " warn" : "");
-    e.textContent = `${STRAT_NAME[k] || k} · 끝난 ${d.length}건` + (d.length ? ` · 승률 ${Math.round(w / d.length * 100)}% (분기 ${Math.round(be * 100)}%) · 평균 ${fmtPct(d.reduce((a, r) => a + ret(r), 0) / d.length)}` : "")
-      + ` · 보유 ${rs.filter(r => r.status === "OPEN").length} · 대기 ${rs.filter(r => r.status === "ORDER").length}` + (warn ? " ⚠ 손익분기 아래" : "");
-    sb.appendChild(e);
-  });
-  const rank = r => r.status === "OPEN" ? 0 : r.status === "ORDER" ? 1 : 2;
-  vsRows = [...rows].sort((x, y) => rank(x) - rank(y) || (y.opened > x.opened ? 1 : -1));
+  $("k-vs-n").textContent = done.length ? `끝난 ${done.length}건 · 승률 ${Math.round(wins / done.length * 100)}% · 평균 ${fmtPct(avg)}` : "새 전략 기록 아직 없음";
+  $("vs-mini").textContent = done.length ? `새 전략 끝난 ${done.length}건 · 승률 ${Math.round(wins / done.length * 100)}% · 평균 ${fmtPct(avg)}` : "새 전략(①~⑥) 기록은 월요일 데이마켓부터 쌓입니다";
+  vsRows = rows.filter(r => r.status === "OPEN" || r.status === "ORDER");
   drawVs();
 }
-let vsRows = [], vsShown = 8;
+let vsRows = [], vsShown = 6;
 const STRAT_NAME = { S1: "① VWAP 눌림", S2: "② 프리 추격", S3: "③ 깊은 털기", S4: "④ 신호가 눌림", S5: "⑤ 5분 눌림", S6: "⑥ 3분반 눌림", "이전": "이전 규칙" };
 const untilS = (a, b) => { const m = Math.max(0, Math.round((new Date(b) - new Date(a)) / 60000)); return m >= 60 ? `${Math.floor(m / 60)}시간 ${m % 60}분 뒤` : `${m}분 뒤`; };
 const vsOpen = new Set();
@@ -1620,7 +1648,7 @@ function drawVs() {
   const box = $("vs"); box.replaceChildren();
   const ret = r => ((r.status === "CLOSED" ? r.exit_price : r.last) / r.entry - 1) * 100;
   const span = (cls, text) => { const e = document.createElement("span"); if (cls) e.className = cls; e.textContent = text; return e; };
-  if (!vsRows.length) { const d = document.createElement("div"); d.className = "empty"; d.textContent = "아직 없음 — 장중에 전조가 발동하면 가상 매수가 기록됩니다"; box.appendChild(d); }
+  if (!vsRows.length) { const d = document.createElement("div"); d.className = "empty"; d.textContent = "지금 보유·대기 중인 가상 매매 없음"; box.appendChild(d); }
   vsRows.slice(0, vsShown).forEach(r => {
     const v = ret(r), open = vsOpen.has(r.id), wait = r.status === "ORDER";
     const row = document.createElement("div"); row.className = "vs-row";
@@ -1637,10 +1665,88 @@ function drawVs() {
     row.onclick = () => { open ? vsOpen.delete(r.id) : vsOpen.add(r.id); drawVs(); };
     box.appendChild(row);
   });
-  const more = $("vs-more"), left = vsRows.length - vsShown;
-  more.hidden = left <= 0; more.textContent = `더 보기 (${left}건 더)`;
 }
-$("vs-more").onclick = () => { vsShown += 20; drawVs(); };
+$("vs-goto").onclick = () => showTab("trade");
+
+
+/* ---------- 매매 탭: 가상 매매 ---------- */
+const STRAT_RULE = { S1: "정규장 전 신호 → VWAP −10% 지정가 60분", S2: "06~09시 신호 → 바로 매수", S3: "신호 뒤 고점 −30% 지정가 60분",
+  S4: "신호가 −15% 지정가 30분", S5: "5분 뒤 고점 −10% 눌림 + 거래대금 유지 → 바로", S6: "3분 반 뒤 같은 조건 → 그 가격 지정가 3분 (돌파면 시장가)" };
+let vtRows = [], vtStrat = "all", vtRange = 7;
+const el2 = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+function table2(t, heads, rows, empty) {
+  t.replaceChildren();
+  // heads: [제목, 숫자 열?, 휴대폰에서 숨김?]
+  const h = t.createTHead().insertRow();
+  heads.forEach(([label, num, hm]) => h.appendChild(el2("th", (num ? "num" : "") + (hm ? " hide-m" : ""), label)));
+  const tb = t.createTBody();
+  if (!rows.length) { const r = tb.insertRow(); const c = r.insertCell(); c.colSpan = heads.length; c.className = "empty"; c.textContent = empty; return; }
+  rows.forEach(cells => { const r = tb.insertRow(); cells.forEach(([v, cls], i) => { const c = r.insertCell(); c.textContent = v;
+    c.className = (cls || "") + (heads[i] && heads[i][2] ? " hide-m" : ""); }); });
+}
+const dur = (a, b) => { if (!a || !b) return "-"; const m = Math.max(0, Math.round((new Date(b) - new Date(a)) / 60000)); return m >= 60 ? `${Math.floor(m / 60)}시간 ${m % 60}분` : `${m}분`; };
+async function loadVTrade() {
+  const rows = await api("/api/vsignals?limit=2000");
+  if (unchanged("vt", [rows, vtStrat, vtRange])) return;
+  vtRows = rows;
+  const nw = rows.filter(r => r.strat), done = nw.filter(r => r.status === "CLOSED");
+  const today = kstDay(new Date());
+  const tdone = done.filter(r => kstDay(r.closed) === today);
+  const sum = xs => xs.reduce((a, r) => a + (vret(r) || 0), 0);
+  const winp = xs => xs.length ? Math.round(xs.filter(r => vret(r) > 0).length / xs.length * 100) + "%" : "-";
+  $("vt-k-all").textContent = done.length ? `${done.length}건 · ${winp(done)}` : "-";
+  $("vt-k-all-n").textContent = done.length ? `평균 ${fmtPct(sum(done) / done.length)} · 합계 ${fmtPct(sum(done))}` : "월요일 데이마켓부터 기록";
+  $("vt-k-today").textContent = tdone.length ? `${tdone.length}건 · ${fmtPct(sum(tdone) / tdone.length)}` : "-";
+  $("vt-k-today-n").textContent = `익절 ${tdone.filter(r => (r.exit_reason || "").startsWith("익절")).length} · 손절 ${tdone.filter(r => (r.exit_reason || "").startsWith("손절")).length} · 기타 ${tdone.filter(r => !/^(익절|손절)/.test(r.exit_reason || "")).length}`;
+  const open = rows.filter(r => r.status === "OPEN"), wait = rows.filter(r => r.status === "ORDER");
+  $("vt-k-open").textContent = `${open.length}건`;
+  $("vt-k-open-n").textContent = open.length ? `평가 ${fmtPct(sum(open) / open.length)} (평균)` : "보유 없음";
+  $("vt-k-wait").textContent = `${wait.length}건`;
+  // 전략별 성적
+  const keys = Object.keys(STRAT_RULE).concat(rows.some(r => !r.strat) ? ["이전"] : []);
+  table2($("vt-strats"), [["전략"], ["규칙", 0, 1], ["끝난", 1], ["승률", 1], ["손익분기", 1, 1], ["평균", 1], ["합계", 1, 1], ["최고", 1, 1], ["최악", 1, 1], ["보유", 1, 1], ["대기", 1, 1], ["상태"]],
+    keys.map(k => {
+      const rs = rows.filter(r => (r.strat || "이전") === k), d = rs.filter(r => r.status === "CLOSED");
+      const tp = (rs[0] && rs[0].tp) || ({ S1: 10, S2: 20, S3: 20, S4: 15, S5: 15, S6: 10 }[k] || 15), sl = (rs[0] && rs[0].sl) || 35;
+      const be = (sl + 1) / (tp + sl), w = d.filter(r => vret(r) > 0).length / (d.length || 1);
+      const rets = d.map(vret);
+      const st = k === "이전" ? ["옛 규칙 (참고)", "flat"] : d.length < 50 ? [`표본 부족 (${d.length}/50)`, "flat"] : w < be ? ["⚠ 손익분기 아래", "neg"] : ["정상", "pos"];
+      return [[STRAT_NAME[k] || k], [k === "이전" ? "전조 알림 = 매수 등 예전 방식" : STRAT_RULE[k] + ` · 익절 +${tp}% · 손절 −${sl}%`, "scr-tags"],
+              [d.length, "num"], [d.length ? Math.round(w * 100) + "%" : "-", "num"], [Math.round(be * 100) + "%", "num"],
+              [d.length ? fmtPct(sum(d) / d.length) : "-", "num " + (tone(sum(d)) || "")], [d.length ? fmtPct(sum(d)) : "-", "num " + (tone(sum(d)) || "")],
+              [rets.length ? fmtPct(Math.max(...rets)) : "-", "num " + (rets.length ? tone(Math.max(...rets)) || "" : "")],
+              [rets.length ? fmtPct(Math.min(...rets)) : "-", "num " + (rets.length ? tone(Math.min(...rets)) || "" : "")],
+              [rs.filter(r => r.status === "OPEN").length, "num"], [rs.filter(r => r.status === "ORDER").length, "num"], st];
+    }), "");
+  // 보유·대기
+  table2($("vt-open"), [["종목"], ["전략"], ["상태", 0, 1], ["매수가·지정가", 1], ["현재가", 1, 1], ["수익", 1], ["최고", 1, 1], ["익절가", 1, 1], ["손절가", 1, 1], ["시각", 0, 1]],
+    open.concat(wait).map(r => { const v = r.status === "OPEN" ? vret(r) : null;
+      return [[r.symbol, "scr-sym-c"], [(STRAT_NAME[r.strat] || "이전").split(" ")[0]], [r.status === "OPEN" ? "보유" : "지정가 대기"],
+              [fmtPx(r.entry), "num"], [fmtPx(r.last), "num"], [v == null ? "-" : fmtPct(v), "num " + (tone(v) || "")],
+              [r.status === "OPEN" && r.high ? fmtPct((r.high / r.entry - 1) * 100, 0) : "-", "num"],
+              [r.status === "OPEN" ? fmtPx(r.entry * (1 + (r.tp || 15) / 100)) : "-", "num"], [r.status === "OPEN" ? fmtPx(r.entry * (1 - (r.sl || 35) / 100)) : "-", "num"],
+              [kst(r.opened)]]; }), "지금 보유·대기 중인 가상 매매 없음");
+  // 내역 필터
+  const sf = $("vt-strat-f");
+  if (!sf.childNodes.length) {
+    [["all", "전체"], ...Object.keys(STRAT_RULE).map(k => [k, (STRAT_NAME[k] || k).split(" ")[0]]), ["이전", "이전"]].forEach(([k, l]) => {
+      const b = el2("button", "", l); b.dataset.k = k; b.setAttribute("aria-pressed", k === vtStrat);
+      b.onclick = () => { vtStrat = k; sf.querySelectorAll("button").forEach(x => x.setAttribute("aria-pressed", x === b)); loadVTrade(); };
+      sf.appendChild(b); });
+  }
+  const since = vtRange ? Date.now() - vtRange * 86400000 : 0;
+  const hist = rows.filter(r => r.status === "CLOSED" && (vtStrat === "all" ? !!r.strat : (r.strat || "이전") === vtStrat) && new Date(r.closed) >= since)
+    .sort((a, b) => (b.closed > a.closed ? 1 : -1));
+  table2($("vt-hist"), [["매도 시각"], ["종목"], ["전략"], ["매수가", 1, 1], ["매도가", 1, 1], ["수익", 1], ["최고 (도달)", 1, 1], ["보유", 0, 1], ["사유"]],
+    hist.map(r => { const v = vret(r); const hi = r.high && r.entry ? (r.high / r.entry - 1) * 100 : null;
+      return [[kst(r.closed)], [r.symbol, "scr-sym-c"], [(STRAT_NAME[r.strat] || "이전").split(" ")[0]], [fmtPx(r.entry), "num"], [fmtPx(r.exit_price), "num"],
+              [v == null ? "-" : fmtPct(v), "num " + (tone(v) || "")], [hi == null ? "-" : fmtPct(hi, 0) + (r.high_at ? ` (${dur(r.opened, r.high_at)})` : ""), "num"],
+              [dur(r.opened, r.closed)], [r.exit_reason || "", "scr-tags"]]; }),
+    vtStrat === "all" ? "이 기간에 끝난 새 전략 매매 없음 (이전 규칙 기록은 '이전' 에서)" : "이 기간에 끝난 매매 없음");
+}
+document.querySelectorAll("#vt-range button").forEach(b => b.onclick = () => {
+  vtRange = +b.dataset.r; document.querySelectorAll("#vt-range button").forEach(x => x.setAttribute("aria-pressed", x === b)); loadVTrade(); });
+$("bot-wrap").addEventListener("toggle", () => { if ($("bot-wrap").open) { delete _seen.tables; redrawAll(); } });
 
 /* ---------- 급등 전조 목록 ---------- */
 let preData = null, preFilter = "all", preShown = 40;
@@ -1930,7 +2036,7 @@ try { const t = localStorage.getItem("theme"); if (t) document.documentElement.d
 const TAB_JOBS = {
   home: () => [loadFeed(), loadVs(), loadPre(), loadTables()],
   symbol: () => [loadShorts()],
-  trade: () => [loadTables(), loadEquity(), loadStrategies(), loadReports()],
+  trade: () => [loadVTrade(), loadTables(), loadEquity(), loadStrategies(), loadReports()],
   analysis: () => [loadC30(), loadBig(), loadHist(), loadRunners(), loadCollector(), loadResearch(), loadBacktests()],
 };
 let tab = "home";
