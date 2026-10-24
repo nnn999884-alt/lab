@@ -6,3 +6,7 @@ __pycache__/
 .pytest_cache/
 .venv/
 state_demo/
+
+# 테스트·점검 스크립트가 남기는 파일
+pe.json
+*.tmp
