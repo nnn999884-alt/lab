@@ -847,6 +847,12 @@ table.ra-tbl .num { text-align: right; } table.ra-tbl tr:hover td { background: 
   .dc-oh { font-size: 11.5px; margin-top: 3px; }
 }
 @media (min-width: 701px) { .ro-short { display: none; } }
+.det-stats { display: flex; flex-wrap: wrap; gap: 8px; margin: 4px 0 10px; }
+.det-stat { background: var(--surface-2); border-radius: 10px; padding: 6px 12px; display: flex; flex-direction: column; min-width: 84px; }
+.det-stat .k { font-size: 11px; color: var(--text-muted); } .det-stat .v { font-size: 15px; font-weight: 700; margin-top: 1px; }
+.det-dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 8px 0; }
+.det-dl dt { font-weight: 700; color: var(--text-primary); } .det-dl dd { margin: 0; }
+@media (max-width: 700px) { .det-stat { flex: 1 1 calc(50% - 8px); min-width: 0; } }
 </style>
 </head>
 <body>
@@ -885,24 +891,32 @@ table.ra-tbl .num { text-align: right; } table.ra-tbl tr:hover td { background: 
     </details>
     <section class="card det-wrap">
       <div class="pre-head">
-        <h2>🎯 조기 감지 <span class="sub" style="margin:0 0 0 6px;font-weight:400">알림 뜬 순간 가격 → 그 뒤 실제로 얼마나 갔나</span></h2>
+        <h2>🎯 조기 감지 <span class="sub" style="margin:0 0 0 6px;font-weight:400">알림 성과 추적</span></h2>
         <div class="feed-ctl">
           <div class="seg" id="det-filter" role="group" aria-label="알림 종류">
             <button data-f="pre" aria-pressed="false">🚨 전조만</button>
             <button data-f="all" aria-pressed="true">전체</button>
           </div>
-          <label class="sub" style="margin:0"><input type="checkbox" id="det-norun"> 이미 달리던 종목 빼기</label>
+          <label class="sub" style="margin:0"><input type="checkbox" id="det-norun"> 추격 신호 제외</label>
         </div>
       </div>
-      <p class="sub" id="det-sum" style="margin:2px 0 8px"></p>
+      <div class="det-stats" id="det-sum"></div>
       <div class="tablewrap det-scroll"><table class="det" id="det"></table></div>
-      <details class="det-help"><summary>어떻게 찾나 / 얼마나 맞나</summary>
-        <p>🚨 급등 전조 = 거래대금·회전율이 평소보다 확 붙고 일봉 등급(★)이 받쳐 줄 때. 📶 거래 터짐 = 거래만 터진 짧은 신호.</p>
-        <p><b>결과</b>: 감지가에서 <b>+20% 먼저</b> 갔으면 ✅, <b>−10% 먼저</b> 빠졌으면 ❌ (한 1분봉에서 둘 다 닿으면 ❌로 셈). <b>+30% 찍음</b> = 그날 전일 종가 대비 +30% 를 찍었나.</p>
-        <p><b>과거 확률</b> = 끝난 거래일의 같은 종류 알림 실제 결과. 건수가 적으면 흔들리니 건수도 같이 볼 것. <b>평소</b> = 감시 종목이 아무 날이나 +30% 찍을 확률.</p>
+      <details class="det-help"><summary>용어 · 기준</summary>
+        <dl class="det-dl">
+          <dt>✅ 적중</dt><dd>감지가 대비 +20% 에 −10% 보다 먼저 도달</dd>
+          <dt>❌ 손절</dt><dd>−10% 에 먼저 도달 (같은 1분봉에서 둘 다면 손절로 집계)</dd>
+          <dt>미결</dt><dd>장 마감까지 둘 다 미도달</dd>
+          <dt>적중률</dt><dd>끝난 거래일의 같은 종류 신호 중 적중 비율 (표본 20건 미만은 참고)</dd>
+          <dt>당일 +30%</dt><dd>그날 전일 종가 대비 +30% 이상 도달</dd>
+          <dt>평소 +30%</dt><dd>감시 종목이 임의의 날 +30% 에 도달할 확률 (비교 기준)</dd>
+          <dt>추격</dt><dd>감지 시점에 이미 전일 대비 +20% 이상</dd>
+          <dt>매물대</dt><dd>현재가 ~ +30% 구간에 쌓인 최근 60일 거래량 비중 · 저항 = 가장 가까운 두꺼운 매물 가격</dd>
+        </dl>
+        <p>🚨 급등 전조 = 거래대금·회전율 급증 + 일봉 등급(★). 📶 거래 터짐 = 거래 급증만 확인된 짧은 신호.</p>
         <p>🔁 재가속 = 오늘 급등했던(또는 최근 3일 안에 +50% 찍은) 종목이 고점에서 15% 눌렸다가 저점에서 10% 다시 오르고 거래가 붙은 순간. 오르고 빠진 종목은 감시에서 빼지 않고 계속 봅니다.</p>
         <p>👀 접근 · 🎯 임박 = 최근 20거래일 안에 +50% 급등했던 종목이 그 뒤 최고가의 15% 아래(거래 3배 붙음)·5% 아래까지 올라온 순간 — 넘기 전에 보냄 (그날 돌파 51%·79%). +50% 급등주는 30거래일 안에 또 +30% 급등일이 올 확률 63% (아무 종목 19%).</p>
-        <p>"늦음" = 감지 때 벌써 전일 대비 +20% 넘은 종목. "구 규칙" = 10/23 까지 쓰던 옛 전조 조건 (참고용).</p>
+        <p>이전 규칙 = 10/23 까지 쓰던 전조 조건 (참고용).</p>
       </details>
     </section>
     <div class="home-grid">
@@ -1756,8 +1770,8 @@ async function lookup(sym) {
   else {
     const heavy = oh.near_pct >= 25, light = oh.near_pct < 10;
     const vb2 = mk("div", "verdict " + (heavy ? "v-dn" : light ? "v-up" : "v-mid"));
-    vb2.append(mk("div", "vd-t", heavy ? "🧱 바로 위 매물 무거움" : light ? "🪶 바로 위 매물 가벼움" : "⚖️ 바로 위 매물 보통"),
-      mk("div", "vd-s", `현재가 ~ +30% 구간에 최근 거래량의 ${oh.near_pct.toFixed(0)}% · 과거 일봉: 무거우면 +10% 뚫고 +30% 간 비율 7% (나머지 11%)`));
+    vb2.append(mk("div", "vd-t", heavy ? "🧱 상단 매물대 두꺼움" : light ? "🪶 상단 매물대 얇음" : "⚖️ 상단 매물대 보통"),
+      mk("div", "vd-s", `현재가 ~ +30% 구간 거래량 비중 ${oh.near_pct.toFixed(0)}% · 두꺼운 종목의 +10% → +30% 연장률 7% (그 외 11%)`));
     cO.appendChild(vb2);
     const wrap = mk("div", "oh-wrap");
     const prof = mk("div", "oh-prof");
@@ -1772,11 +1786,11 @@ async function lookup(sym) {
       r.children[1].appendChild(bar); prof.appendChild(r);
     });
     const kv = mk("div", "oh-kv");
-    kvGrid(kv, [["위에 물린 물량", oh.above_pct.toFixed(0) + "%", oh.above_pct >= 60 ? "neg" : ""], ["+30% 안", oh.near_pct.toFixed(0) + "%", heavy ? "neg" : light ? "pos" : ""],
-      ["발행주식 대비", oh.above_x != null ? oh.above_x.toFixed(1) + "배" : null],
-      ["가까운 벽", oh.wall ? `$${fmtPx(oh.wall.lo)} (${fmtPct(oh.wall.dist, 0)})` : "없음", oh.wall && oh.wall.dist < 10 ? "neg" : ""],
-      ["가까운 지지", oh.support ? `$${fmtPx(oh.support.hi)} (${fmtPct(oh.support.dist, 0)})` : "없음"], ["아래 깔린 물량", oh.below_pct.toFixed(0) + "%"]], "kv2-2");
-    kv.appendChild(mk("p", "sub", "빨간 막대 = 현재가보다 비싸게 사서 물린 물량 (오르면 본전 매도가 나오는 자리). 진한 칸 = +30% 안 (급등 한 번에 닿는 벽). 일봉 거래량을 그날 고가~저가에 고르게 나눈 추정치."));
+    kvGrid(kv, [["상단 매물 비중", oh.above_pct.toFixed(0) + "%", oh.above_pct >= 60 ? "neg" : ""], ["+30% 구간", oh.near_pct.toFixed(0) + "%", heavy ? "neg" : light ? "pos" : ""],
+      ["상단 매물 / 발행주식", oh.above_x != null ? oh.above_x.toFixed(1) + "배" : null],
+      ["1차 저항", oh.wall ? `$${fmtPx(oh.wall.lo)} (${fmtPct(oh.wall.dist, 0)})` : "없음", oh.wall && oh.wall.dist < 10 ? "neg" : ""],
+      ["1차 지지", oh.support ? `$${fmtPx(oh.support.hi)} (${fmtPct(oh.support.dist, 0)})` : "없음"], ["하단 매물 비중", oh.below_pct.toFixed(0) + "%"]], "kv2-2");
+    kv.appendChild(mk("p", "sub", "빨강 = 현재가 위 매물(저항), 초록 = 아래 매물(지지), 진한 구간 = 현재가 ~ +30%. 일봉 거래량을 고가~저가에 균등 배분한 추정치."));
     wrap.append(prof, kv); cO.appendChild(wrap);
   }
   // ---- 5 차트
@@ -2015,7 +2029,7 @@ function etSession(ts) {
 }
 // 미국 거래일 (전날 20:00 ET 부터) — 지난 거래일 알림은 결과가 확정
 const tradeDay = () => new Date(Date.now() + 4 * 3600e3).toLocaleDateString("en-CA", { timeZone: "America/New_York" });
-const DET_KIND = { precursor: ["🚨 전조", "k-pre"], burst: ["📶 터짐", "k-burst"], reaccel: ["🔁 재가속", "k-pre"], approach: ["🎯 고점 접근", "k-pre"], old: ["구 규칙", ""] };
+const DET_KIND = { precursor: ["🚨 전조", "k-pre"], burst: ["📶 터짐", "k-burst"], reaccel: ["🔁 재가속", "k-pre"], approach: ["🎯 고점 접근", "k-pre"], old: ["이전 규칙", ""] };
 async function loadDet() {
   const d = await api("/api/detections?hours=36");
   if (unchanged("det", [d, detFilter, $("det-norun").checked])) return;
@@ -2023,11 +2037,15 @@ async function loadDet() {
   const run = r => (r.chg_at || 0) >= 20;
   const rows = d.rows.filter(r => r.price != null && (detFilter === "all" || r.kind === "precursor") && !($("det-norun").checked && run(r)));
   const done = d.rows.filter(r => r.result), win = done.filter(r => r.result === "win").length;
-  $("det-sum").textContent = `최근 36시간 ${d.rows.length}건 · 결과 난 ${done.length}건 중 +20% 먼저 ${win}건 · −10% 먼저 ${done.length - win}건`
-    + (base.n ? ` · 평소 +30% 찍을 확률 ${(base.hit30 / base.n * 100).toFixed(1)}%` : "");
+  const sumBox = $("det-sum"); sumBox.replaceChildren();
+  const stat = (k, v, cls) => { const x = mk("div", "det-stat"); x.append(mk("span", "k", k), mk("span", "v mono " + (cls || ""), v)); sumBox.appendChild(x); };
+  stat("최근 36시간", `${d.rows.length}건`);
+  stat("적중 / 손절", `${win} / ${done.length - win}`);
+  stat("적중률", done.length ? `${Math.round(win / done.length * 100)}%` : "-", done.length ? (win / done.length >= 0.5 ? "pos" : "neg") : "");
+  if (base.n) stat("평소 +30%", `${(base.hit30 / base.n * 100).toFixed(1)}%`);
   const t = $("det"); t.replaceChildren();
   const h = t.createTHead().insertRow();
-  [["감지", ""], ["종목", ""], ["감지가", "num hide-m"], ["지금", "num"], ["결과", ""], ["과거 확률", "num hide-m"], ["특징", "hide-m"]]
+  [["감지", ""], ["종목", ""], ["감지가", "num hide-m"], ["지금", "num"], ["결과", ""], ["과거 적중률", "num hide-m"], ["특징", "hide-m"]]
     .forEach(([l, c]) => h.appendChild(el2("th", c, l)));
   const tb = t.createTBody();
   if (!rows.length) { const r = tb.insertRow(), c = r.insertCell(); c.colSpan = 7; c.className = "empty";
@@ -2042,21 +2060,21 @@ async function loadDet() {
     const [kl, kc] = DET_KIND[r.kind] || [r.kind, ""];
     const c1 = cell(), top = el2("div", "det-sym");
     top.append(el2("b", "", r.symbol), el2("span", "ev-kind " + kc, kl));
-    if (run(r)) top.append(el2("span", "chip", "늦음"));
+    if (run(r)) top.append(el2("span", "chip", "추격"));
     c1.append(top, el2("div", "det-n", r.name || ""));
     cell("num hide-m").append(two("$" + fmtPx(r.price), "전일 " + fmtPct(r.chg_at), "mono", tone(r.chg_at)));
     const now = (r.last / r.price - 1) * 100, mx = (r.high / r.price - 1) * 100;
     const c3 = cell("num"); c3.append(el2("div", "mono " + (tone(now) || ""), "$" + fmtPx(r.last)));
     const sub = el2("div", "det-n"); sub.append("감지 후 ", el2("span", tone(now) || "", fmtPct(now)), " · 최고 ", el2("span", "pos", fmtPct(mx))); c3.append(sub);
-    const res = r.result === "win" ? ["✅ +20% 먼저", "pos"] : r.result === "loss" ? ["❌ −10% 먼저", "neg"]
-      : r.date < td ? ["둘 다 안 닿음", "det-n"] : ["⏳ 진행 중", "det-n"];
-    cell().append(two(res[0], r.hit30 ? "그날 +30% 찍음" : "", res[1], r.hit30 ? "pos" : ""));
+    const res = r.result === "win" ? ["✅ 적중", "pos"] : r.result === "loss" ? ["❌ 손절", "neg"]
+      : r.date < td ? ["미결", "det-n"] : ["⏳ 진행 중", "det-n"];
+    cell().append(two(res[0], r.hit30 ? "당일 +30%" : "", res[1], r.hit30 ? "pos" : ""));
     const s = st[r.kind + (run(r) ? ":run" : ":early")] || st[r.kind];
     const c5 = cell("num hide-m");
-    if (s && s.n) c5.append(two(`+30% ${Math.round(s.hit30 / s.n * 100)}% · 먹을 ${Math.round(s.win / s.n * 100)}%`, `과거 ${s.n}건${s.n < 20 ? " (적음)" : ""}`, "mono"));
-    else c5.append(two("-", "끝난 기록 아직 없음"));
+    if (s && s.n) c5.append(two(`${Math.round(s.win / s.n * 100)}%`, `${s.n}건 · 당일 +30% ${Math.round(s.hit30 / s.n * 100)}%${s.n < 20 ? " · 표본 적음" : ""}`, "mono"));
+    else c5.append(two("-", "집계 전"));
     const c6 = cell("hide-m"), ch = el2("div", "chips");
-    if (r.overhead) ch.append(el2("span", "chip " + (/무거움/.test(r.overhead) ? "oh-hi" : /가벼움/.test(r.overhead) ? "oh-lo" : ""), r.overhead.replace(" · 벽", " · 벽")));
+    if (r.overhead) ch.append(el2("span", "chip " + (/두꺼움/.test(r.overhead) ? "oh-hi" : /얇음/.test(r.overhead) ? "oh-lo" : ""), r.overhead));
     (r.tags || []).slice(0, 4).forEach(x => ch.append(el2("span", "chip", x)));
     c6.append(ch);
     tr.onclick = () => { lookup(r.symbol); showTab("symbol"); };
@@ -2073,19 +2091,19 @@ function detCards(t, rows, st, run) {
     const now = (r.last / r.price - 1) * 100, mx = (r.high / r.price - 1) * 100;
     const top = mk("div", "dc-top");
     const id = mk("div", "dc-id"); const [kl, kc] = DET_KIND[r.kind] || [r.kind, ""];
-    id.append(mk("b", "mono", r.symbol), mk("span", "ev-kind " + kc, kl)); if (run(r)) id.append(mk("span", "chip", "늦음"));
+    id.append(mk("b", "mono", r.symbol), mk("span", "ev-kind " + kc, kl)); if (run(r)) id.append(mk("span", "chip", "추격"));
     const px = mk("div", "dc-px"); px.append(mk("span", "mono " + (tone(now) || ""), "$" + fmtPx(r.last)), mk("span", "mono dc-chg " + (tone(now) || ""), fmtPct(now)));
     top.append(id, px); c.appendChild(top);
     if (r.name) c.appendChild(mk("div", "det-n", r.name));
     const hm = new Date(r.ts).toLocaleTimeString("ko-KR", { timeZone: "Asia/Seoul", hour: "2-digit", minute: "2-digit", hour12: false });
-    c.appendChild(mk("div", "dc-meta", `${kstDay(r.ts) === kstDay(new Date()) ? hm : kst(r.ts).slice(0, 7) + " " + hm} · ${etSession(r.ts).replace(" ET", "")} · 감지 $${fmtPx(r.price)} (전일 ${fmtPct(r.chg_at)}) · 최고 ${fmtPct(mx)}`));
-    const res = r.result === "win" ? ["✅ +20% 먼저", "pos"] : r.result === "loss" ? ["❌ −10% 먼저", "neg"] : r.date < tradeDay() ? ["둘 다 안 닿음", ""] : ["⏳ 진행 중", ""];
+    c.appendChild(mk("div", "dc-meta", `${kstDay(r.ts) === kstDay(new Date()) ? hm : kst(r.ts).slice(0, 7) + " " + hm} (${etSession(r.ts).replace(" ET", " ET")}) · 감지가 $${fmtPx(r.price)} · 이후 최고 ${fmtPct(mx)}`));
+    const res = r.result === "win" ? ["✅ 적중", "pos"] : r.result === "loss" ? ["❌ 손절", "neg"] : r.date < tradeDay() ? ["미결", ""] : ["⏳ 진행 중", ""];
     const s = st[r.kind + (run(r) ? ":run" : ":early")] || st[r.kind];
     const bot = mk("div", "dc-bot");
-    bot.append(mk("span", "dc-res " + res[1], res[0] + (r.hit30 ? " · 그날 +30%" : "")));
-    if (s && s.n) bot.append(mk("span", "det-n", `과거 ${s.n}건: +30% ${Math.round(s.hit30 / s.n * 100)}% · 먹을 ${Math.round(s.win / s.n * 100)}%`));
+    bot.append(mk("span", "dc-res " + res[1], res[0] + (r.hit30 ? " · 당일 +30%" : "")));
+    if (s && s.n) bot.append(mk("span", "det-n", `과거 적중률 ${Math.round(s.win / s.n * 100)}% (${s.n}건)`));
     c.appendChild(bot);
-    if (r.overhead) c.appendChild(mk("div", "dc-oh " + (/무거움/.test(r.overhead) ? "neg" : /가벼움/.test(r.overhead) ? "pos" : ""), r.overhead));
+    if (r.overhead) c.appendChild(mk("div", "dc-oh " + (/두꺼움/.test(r.overhead) ? "neg" : /얇음/.test(r.overhead) ? "pos" : ""), r.overhead));
     c.onclick = () => { lookup(r.symbol); showTab("symbol"); };
     box.appendChild(c);
   });

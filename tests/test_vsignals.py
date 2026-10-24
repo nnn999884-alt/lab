@@ -356,7 +356,7 @@ def test_burst_sends_signal_or_presurge(tmp_path):
     assert sent.msgs[-1][0].startswith("📶 거래 터짐 (PENX · 펜엑스)")
     t7 = datetime(2026, 10, 23, 11, 0, tzinfo=timezone.utc)               # 07:00 ET + $1 + 60배 → 급등 전조
     col._alert(st, t7, "PRE", "PENX", 7, "[]", json.dumps({"dd60": -80, "vol_ratio": 60, "spikes60": 2}), lv, 0, ["⚡ 실시간"])
-    assert sent.msgs[-1][0].startswith("🚨 급등 전조 (PENX · 펜엑스)") and "+30% 먼저 약 50%" in sent.msgs[-1][0]
+    assert sent.msgs[-1][0].startswith("🚨 급등 전조 (PENX · 펜엑스)") and "+30% 선도달 약 50%" in sent.msgs[-1][0]
 
 
 def test_report_counts_rejected_symbols_once():

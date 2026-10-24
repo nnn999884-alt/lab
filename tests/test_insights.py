@@ -12,9 +12,9 @@ def test_overhead_profile():
     p = overhead.profile(bars, 1.0, shares=1e7)
     assert p["above_pct"] > 80 and p["near_pct"] < 10 and p["wall"]["lo"] > 1.8
     assert p["above_x"] > 3                                   # 발행주식 1천만 × 4배 넘게 위에 물림
-    assert overhead.label(p).startswith("위 +30% 매물 가벼움")
+    assert overhead.label(p).startswith("매물대 얇음")
     near = overhead.profile(bars, 1.75, shares=1e7)           # $1.75 → +30% 안에 $2 매물대
-    assert near["near_pct"] > 25 and "무거움" in overhead.label(near)
+    assert near["near_pct"] > 25 and "두꺼움" in overhead.label(near)
     assert overhead.profile([], 1.0) is None
 
 

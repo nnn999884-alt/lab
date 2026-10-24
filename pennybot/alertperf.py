@@ -95,7 +95,7 @@ def summary_text(day_rows: list[dict], st: dict, date: str) -> str | None:
     rs = [r for r in day_rows if r.get("price") is not None and r["kind"] != "old"]
     if not rs:
         return None
-    lines = [f"📊 오늘 알림 성과 ({date})"]
+    lines = [f"📊 오늘 알림 성과 ({date})", "적중 = 감지가 +20% 선도달 · 손절 = −10% 선도달"]
     for k, lab in (("precursor", "🚨 급등 전조"), ("burst", "📶 거래 터짐"), ("reaccel", "🔁 재가속"), ("approach", "👀🎯 고점 접근")):
         g = [r for r in rs if r["kind"] == k]
         if not g:
@@ -104,8 +104,8 @@ def summary_text(day_rows: list[dict], st: dict, date: str) -> str | None:
         lz = sum(r["result"] == "loss" for r in g)
         h = sum(r["hit30"] for r in g)
         s = st.get(k) or {}
-        hist = f" · 누적 {s['n']}건 +20% 먼저 {s['win'] / s['n'] * 100:.0f}%" if s.get("n") else ""
-        lines.append(f"{lab} {len(g)}건 — ✅ +20% 먼저 {w} · ❌ −10% 먼저 {lz} · 그날 +30% {h}{hist}")
+        hist = f" · 누적 적중률 {s['win'] / s['n'] * 100:.0f}% ({s['n']}건)" if s.get("n") else ""
+        lines.append(f"{lab} {len(g)}건 — ✅ 적중 {w} · ❌ 손절 {lz} · 당일 +30% {h}{hist}")
     best = sorted(rs, key=lambda r: -(r["high"] / r["price"]))[:3]
     if best:
         lines.append("")
@@ -117,5 +117,5 @@ def summary_text(day_rows: list[dict], st: dict, date: str) -> str | None:
     late = [r for r in rs if (r["chg_at"] or 0) >= 20]
     if late:
         lw = sum(r["result"] == "win" for r in late)
-        lines.append(f"\n늦은 신호 (감지 때 이미 +20%↑) {len(late)}건 중 +20% 더 간 것 {lw}건")
+        lines.append(f"\n추격 신호 (감지 시 이미 +20%↑) {len(late)}건 중 적중 {lw}건")
     return "\n".join(lines)

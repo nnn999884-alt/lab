@@ -112,5 +112,5 @@ def text(b: dict) -> str:
         L.append("\n✂️ 오늘 액면병합: " + " · ".join(s["symbol"] for s in b["splits"]))
     p = b.get("perf")
     if p and p["n"]:
-        L.append(f"\n📊 어제 알림 {p['n']}건: ✅ +20% 먼저 {p['win']} · ❌ −10% 먼저 {p['loss']} · 그날 +30% {p['hit30']}")
+        L.append(f"\n📊 어제 알림 {p['n']}건: ✅ 적중 {p['win']} · ❌ 손절 {p['loss']} · 당일 +30% {p['hit30']}")
     return "\n".join(L)

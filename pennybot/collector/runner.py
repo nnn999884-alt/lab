@@ -1002,7 +1002,7 @@ class Collector:
         return True
 
     def _overhead(self, store, sym: str, price) -> str | None:
-        """'위 +30% 매물 무거움 35% · 벽 $2.09 (+3%)' — +10% 뚫은 뒤 +30% 간 비율: 무거움 7% vs 나머지 11% (일봉 8.5천 건)."""
+        """'매물대 두꺼움 35% · 저항 $2.09 (+3%)' — +10% 돌파 뒤 +30% 연장률: 두꺼움 7% vs 그 외 11% (일봉 8.5천 건)."""
         from .. import overhead
         try:
             return overhead.label(overhead.for_symbol(self._mq(store), sym, price))
@@ -1023,8 +1023,8 @@ class Collector:
                 c = self._perf_cache = (time.time(), {})
         s = c[1].get(kind) or {}
         if s.get("n", 0) >= 20:
-            return f" (실제 지난 {s['n']}건: +20% 먼저 {s['win'] / s['n'] * 100:.0f}% · 그날 +30% {s['hit30'] / s['n'] * 100:.0f}%)"
-        return " (연구: +30% 먼저 약 50%)"
+            return f" (과거 {s['n']}건 적중률 {s['win'] / s['n'] * 100:.0f}% · 당일 +30% {s['hit30'] / s['n'] * 100:.0f}%)"
+        return " (연구: +30% 선도달 약 50%)"
 
     def _alert(self, store, now, session, sym, score, sig, met, lv, tier_, extra_tags) -> None:
         """거래 터짐 한 건: 급등 전조 조건(presurge)이면 '🚨 급등 전조' 전체, 아니면 '📶 거래 터짐' 짧은 신호 (세션 상관없이)."""

@@ -72,9 +72,9 @@ def label(p: dict | None) -> str | None:
     if not p:
         return None
     n = p["near_pct"]
-    s = ("위 +30% 매물 가벼움" if n < 10 else "위 +30% 매물 보통" if n < 25 else "위 +30% 매물 무거움") + f" {n:.0f}%"
+    s = ("매물대 얇음" if n < 10 else "매물대 보통" if n < 25 else "매물대 두꺼움") + f" {n:.0f}%"
     if p.get("wall"):
-        s += f" · 벽 ${p['wall']['lo']:.4g} ({p['wall']['dist']:+.0f}%)"
+        s += f" · 저항 ${p['wall']['lo']:.4g} ({p['wall']['dist']:+.0f}%)"
     return s
 
 
