@@ -330,3 +330,38 @@ def test_realtime_alert_sends(tmp_path):
     assert len(sent.msgs) == 1 and "⚡ 실시간 1분 $80K · 회전율 7.0%" in sent.msgs[0][0]
     col._rt_alert(st, "PENX", 90000.0, 80000.0, 1.10)                    # 하루 한 번
     assert len(sent.msgs) == 1
+
+
+def test_presurge_rule():
+    from pennybot.precursor import presurge
+    t7 = "2026-10-23T11:10:00+00:00"                                      # 07:10 ET
+    assert presurge(t7, 0, 1.5, 3, 12) == (True, ["프리 06~09시", "$2 미만"])
+    assert presurge(t7, 0, 3.0, 80, 12)[0]                                # 전날 거래량 80배
+    assert not presurge(t7, 0, 3.0, 10, 12)[0]                            # $3 · 10배 · ★ 없음
+    assert not presurge(t7, 3, 1.5, 80, 3)[0]                             # +3% (아직 +5% 아님)
+    assert not presurge("2026-10-23T14:10:00+00:00", 3, 1.5, 80, 12)[0]   # 10:10 ET 정규장
+
+
+def test_burst_sends_signal_or_presurge(tmp_path):
+    col, st, sent = make(tmp_path)
+
+    class C:
+        def orderbook(self, sym):
+            return {"asks": []}
+    col.c = C()
+    lv = {"signals": ["burst"], "metrics": {"price": 1.2, "chg": 20.0, "dollar_3m": 9e4, "dollar_today": 3e5,
+                                            "vol_x": 8, "grade": "A", "grade_why": []}}
+    t4 = datetime(2026, 10, 23, 8, 0, tzinfo=timezone.utc)                # 04:00 ET → 짧은 신호
+    col._alert(st, t4, "PRE", "PENX", 7, "[]", json.dumps({"dd60": -80, "vol_ratio": 60}), lv, 0, ["⚡ 실시간"])
+    assert sent.msgs[-1][0].startswith("📶 거래 터짐 (PENX · 펜엑스)")
+    t7 = datetime(2026, 10, 23, 11, 0, tzinfo=timezone.utc)               # 07:00 ET + $1 + 60배 → 급등 전조
+    col._alert(st, t7, "PRE", "PENX", 7, "[]", json.dumps({"dd60": -80, "vol_ratio": 60, "spikes60": 2}), lv, 0, ["⚡ 실시간"])
+    assert sent.msgs[-1][0].startswith("🚨 급등 전조 (PENX · 펜엑스)") and "과거 +30% 먼저 약 50%" in sent.msgs[-1][0]
+
+
+def test_report_counts_rejected_symbols_once():
+    from pennybot.trading.report import _short
+    assert _short("토스 거래대금 상위, 이미 +30.2% (늦음)") == "이미 많이 오름"
+    assert _short("호재 공시, 고점 대비 밀림") == "고점 대비 밀림"
+    assert _short("가격범위 밖 $9.5400") == "가격범위 밖"
+    assert _short("희석 위험 100점 (ATM 진행 중, 증자 등록)") == "희석 위험"

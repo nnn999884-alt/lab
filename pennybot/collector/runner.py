@@ -716,7 +716,7 @@ class Collector:
                 lv["signals"].append("burst")
                 lv["metrics"]["grade"], lv["metrics"]["grade_why"] = alert_grade(
                     today[k][0], tiers[sym], close, json.loads(met or "{}").get("vol_ratio"))
-            fire = (burst and in_hours(today[k][0], "pre") and sym not in prev_alert and not self._alerted(self.store, d0, sym)
+            fire = (burst and sym not in prev_alert and not self._alerted(self.store, d0, sym)
                     and not (self._rt and self._rt.healthy))   # 실시간 체결이 살아 있으면 알림은 실시간 쪽이 맡는다
             out.append({"d0": d0, "symbol": sym, "ts": iso(now), "signals": json.dumps(lv["signals"]),
                         "metrics": json.dumps(lv["metrics"]), "alerted": iso(now) if fire else prev_alert.get(sym)})
@@ -737,8 +737,28 @@ class Collector:
         return r[0][0] if r else None
 
     def _alert(self, store, now, session, sym, score, sig, met, lv, tier_, extra_tags) -> None:
-        """급등 전조 알림 한 건 (호가창 두께 조회 → 텔레그램 → 피드 이벤트)."""
-        from ..precursor import TIER_LABEL, alert_buttons, alert_text, ask_depth
+        """거래 터짐 한 건: 급등 전조 조건(presurge)이면 '🚨 급등 전조' 전체, 아니면 '📶 거래 터짐' 짧은 신호 (세션 상관없이)."""
+        from ..precursor import TIER_LABEL, alert_buttons, alert_text, ask_depth, presurge, signal_text
+        m = lv["metrics"]
+        dm = json.loads(met or "{}")
+        m["presurge"], why = presurge(iso(now), tier_, m.get("price") and m["price"] / (1 + (m.get("chg") or 0) / 100),
+                                      dm.get("vol_ratio"), m.get("chg"))
+        if not m["presurge"]:
+            if self.notifier:
+                link = None
+                try:
+                    link = self.link() if self.link else None
+                except Exception:
+                    pass
+                from ..trading.strategies import SESSION_KO
+                self.notifier.send(signal_text(sym, (self.universe.get(sym) or {}).get("name"), lv, SESSION_KO.get(session, session),
+                                               extra_tags + ([TIER_LABEL[tier_]] if tier_ else [])),
+                                   buttons=alert_buttons(sym, link))
+            log.info("거래 터짐 신호 %s (%s)", sym, session)
+            self._event(now, sym, "burst", f"📶 {sym} 거래 터짐 ({m.get('chg', 0):+.1f}% · 3분 ${m.get('dollar_3m', 0) / 1e3:.0f}K)",
+                        m.get("chg"))
+            return
+        m["grade_why"] = why
         from ..trading.strategies import SESSION_KO
         try:
             lv["metrics"]["ask10"] = ask_depth(self.c.orderbook(sym), lv["metrics"].get("price"))
@@ -758,13 +778,13 @@ class Collector:
             self.notifier.send(alert_text(sym, (self.universe.get(sym) or {}).get("name"), day, lv,
                                           SESSION_KO.get(session, session), link, now,
                                           shares=sh[0][0] if sh and sh[0][0] else None,
-                                          tags=[f"{m['grade']}급" + (f" ({' · '.join(m['grade_why'])})" if m["grade_why"] else "")]
+                                          tags=["근거: " + " · ".join(m["grade_why"]) + " (과거 +30% 먼저 약 50%)"]
                                           + ([TIER_LABEL[tier_]] if tier_ else []) + extra_tags
                                           + (["호가 얇음"] if (m.get("ask10") or 9e18) < (m.get("dollar_3m") or 0) else [])
                                           + (json.loads(tg[0][0]) if tg else []) + pats),
                                buttons=alert_buttons(sym, link))
-        log.info("급등 전조 알림 %s %s급 (%s)", sym, m["grade"], ", ".join(lv["signals"]))
-        self._event(now, sym, "precursor", f"🔥 {sym} 급등 전조 {m['grade']}급 (1분 거래 터짐 · "
+        log.info("급등 전조 알림 %s (%s)", sym, " · ".join(m["grade_why"]))
+        self._event(now, sym, "precursor", f"🚨 {sym} 급등 전조 ({' · '.join(m['grade_why'])} · "
                     f"{m.get('chg', 0):+.1f}% · 3분 ${m.get('dollar_3m', 0) / 1e3:.0f}K)", m.get("chg"))
 
     # ---------- 실시간: 웹소켓 체결 → 최근 60초 거래대금·회전율·평소 대비 거래량 → 바로 알림 (등락률은 안 봄) ----------
@@ -838,7 +858,7 @@ class Collector:
         from ..trading.messages import money_s
         now = self.clock()
         trade_date, session = self.cal.classify(now)
-        if session not in (DAY, PRE, REGULAR):
+        if session not in (DAY, PRE, REGULAR, AFTER):
             return
         d0 = store.query("SELECT MAX(d0) FROM precursor_daily")
         if not d0 or not d0[0][0]:
@@ -934,11 +954,9 @@ class Collector:
         lv["metrics"]["session"] = session
         t_ = tier(dm, shares, pc)
         lv["metrics"]["grade"], lv["metrics"]["grade_why"] = alert_grade(iso(now), t_, pc, dm.get("vol_ratio"))
-        fire = in_hours(iso(now), "pre")
         store.put_precursor_live([{"d0": d0, "symbol": sym, "ts": iso(now), "signals": json.dumps(lv["signals"]),
-                                   "metrics": json.dumps(lv["metrics"]), "alerted": iso(now) if fire else None}])
-        if fire:
-            self._alert(store, now, session, sym, score, sig, met, lv, t_, tags or ["빠른 포착"])
+                                   "metrics": json.dumps(lv["metrics"]), "alerted": iso(now)}])
+        self._alert(store, now, session, sym, score, sig, met, lv, t_, tags or ["빠른 포착"])
         return True
 
     # ---------- 가상 매수·매도 (알림만, 실제 주문 없음) ----------

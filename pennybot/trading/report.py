@@ -49,7 +49,7 @@ def build(journal, trade_date: str, now: datetime, mismatch: dict | None = None)
                         (mode, _utc(now - timedelta(hours=24))))
     sig = journal.q("SELECT ok, reason, symbol FROM signals WHERE trade_date=?", (trade_date,))
     picked = {s["symbol"] for s in sig if s["ok"]}
-    reasons = Counter(_short(s["reason"]) for s in sig if not s["ok"])
+    reasons = Counter(r for r, _ in {(_short(s["reason"]), s["symbol"]) for s in sig if not s["ok"]})   # 종목 수 (스캔마다 세지 않게)
     left = journal.open_trades()
     best = max(closed, key=lambda r: r["pnl"] or 0, default=None)
     worst = min(closed, key=lambda r: r["pnl"] or 0, default=None)
@@ -68,9 +68,18 @@ def build(journal, trade_date: str, now: datetime, mismatch: dict | None = None)
             "worst": worst and {"symbol": worst["symbol"], "pnl": worst["pnl"], "pnl_pct": worst["pnl_pct"]}}
 
 
+SHORT = (("늦음", "이미 많이 오름"), ("고점 대비 밀림", "고점 대비 밀림"), ("가격범위 밖", "가격범위 밖"), ("희석 위험", "희석 위험"),
+         ("희석/상폐", "희석·상폐 공시"), ("스프레드", "스프레드 넓음"), ("호가 없음", "호가 없음"), ("펌프", "펌프 위험"),
+         ("이미 보유", "이미 보유·매매"))
+
+
 def _short(reason: str | None) -> str:
-    """탈락 사유를 묶기 좋게: 숫자·종목별 세부는 떼어낸다."""
-    r = (reason or "").split(" (")[0].split(":")[0]
+    """탈락 사유를 묶기 좋게: '토스 거래대금 상위, 이미 +30% (늦음)' 처럼 붙은 앞말·숫자는 떼어낸다."""
+    r = reason or ""
+    for key, lab in SHORT:
+        if key in r:
+            return lab
+    r = r.split(", ")[-1].split(" (")[0].split(":")[0]
     return "".join(ch for ch in r if not ch.isdigit() and ch not in "+-.%$").strip() or "기타"
 
 
@@ -108,7 +117,7 @@ def render(rep: dict) -> str:
     L.append(f"후보 {rep['candidates']}개 / 검토 {rep['scanned']}개" +
              (f", 매수 미체결 {rep['canceled_entries']}건" if rep["canceled_entries"] else ""))
     if rep["top_rejections"]:
-        L.append("주요 탈락: " + ", ".join(f"{r} {n}" for r, n in rep["top_rejections"][:3]))
+        L.append("주요 탈락 (종목 수): " + " · ".join(f"{r} {n}" for r, n in rep["top_rejections"][:3]))
     warn = []
     if rep["open"]:
         warn.append("아직 보유 " + ", ".join(f"{o['symbol']} {o['remaining']}주" for o in rep["open"]))

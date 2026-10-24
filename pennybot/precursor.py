@@ -182,6 +182,31 @@ def alert_grade(ts: str, tier_: int, price: float | None, vol_ratio: float | Non
     return ("A" if len(why) >= 2 else "B" if why else "C"), why
 
 
+def presurge(ts: str, tier_: int, price: float | None, vol_ratio: float | None, chg: float | None) -> tuple[bool, list[str]]:
+    """'진짜 급등 전조' — 거래가 붙었다는 것만으로는 안 보내고, 장중 재학습(첫 1분 터짐 476건)에서 성과가 확인된 조합만:
+    동부 06~09시에 터지고 전날 대비 +5%↑ 이면서 ($2 미만 · 전날 거래량 50배+ · ★★★ 중 하나).
+    이 조합은 +30% 가 −20% 보다 먼저 온 비율 약 50% (앞 기간 59~70% / 뒤 42~45%), 전체 평균은 26%."""
+    from .sessions import ET
+    t = datetime.fromisoformat(ts).astimezone(ET)
+    why = [w for ok, w in ((price and price < 2, "$2 미만"), ((vol_ratio or 0) >= 50, "전날 거래량 50배+"),
+                           (tier_ == 3, "★★★")) if ok]
+    ok = 6 <= t.hour < 9 and (chg or 0) >= 5 and bool(why)
+    return ok, (["프리 06~09시"] + why) if ok else why
+
+
+def signal_text(sym: str, name: str | None, lv: dict, session_ko: str, tags: list | None = None) -> str:
+    """거래 터짐 신호 (세션 상관없이, 짧게). 급등 전조 조건까지 맞으면 alert_text 를 대신 보낸다."""
+    from .trading.messages import money_s, pct, px
+    m = lv["metrics"]
+    return "\n".join([
+        f"📶 거래 터짐 ({sym}" + (f" · {name}" if name else "") + ")",
+        f"💵 {px(m.get('price'))} ({pct(m.get('chg'))}) · {session_ko}",
+        f"3분 {money_s(m.get('dollar_3m'))} · 오늘 {money_s(m.get('dollar_today'))}",
+        *([f"🏷 {' · '.join(tags)}"] if tags else []),
+        "급등 전조 조건(프리 06~09시 + $2 미만/거래량 50배+/★★★)은 아님 — 참고용",
+    ])
+
+
 def ask_depth(ob: dict, price: float, pct: float = 10.0) -> float | None:
     """호가창 매도 쪽: 현재가 ~ +pct% 안에 걸린 물량의 달러 합 (작을수록 얇다 = 조금만 사도 잘 오른다)."""
     asks = (ob or {}).get("asks") or []
@@ -221,7 +246,7 @@ def alert_text(sym: str, name: str | None, day: dict, lv: dict, session_ko: str,
     t = (now or datetime.now(timezone.utc)).astimezone(KST)
     g = m.get("grade")
     return "\n".join([
-        (f"{ {'A': '🅰', 'B': '🅱', 'C': '©'}.get(g, '')} {g}급 " if g else "") + f"⚡ 급등 전조 ({sym}" + (f" · {name}" if name else "") + ")",
+        f"🚨 급등 전조 ({sym}" + (f" · {name}" if name else "") + ")",
         "──────────────",
         f"💵 현재 {px(m['price'])} ({pct(m['chg'])}) · {session_ko}",
         f"현재 상태: {j['state']}",
