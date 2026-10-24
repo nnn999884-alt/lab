@@ -753,7 +753,7 @@ table.scr { width: 100%; border-collapse: separate; border-spacing: 0; font-size
 .shorts-wrap > summary::before { content: "▸"; margin-right: 8px; color: var(--text-muted); } .shorts-wrap[open] > summary::before { content: "▾"; }
 .det-wrap { margin-bottom: 16px; } .det-scroll { max-height: 460px; }
 table.det { width: 100%; border-collapse: collapse; font-size: 13px; }
-table.det th { position: sticky; top: 0; z-index: 1; background: var(--surface); text-align: left; font-size: 11.5px; color: var(--text-muted); font-weight: 600; padding: 6px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+table.det th { position: sticky; top: 0; z-index: 1; background: var(--surface-1); text-align: left; font-size: 11.5px; color: var(--text-muted); font-weight: 600; padding: 6px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
 table.det td { padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; white-space: nowrap; cursor: pointer; }
 table.det th.num, table.det td.num { text-align: right; }
 table.det tr:hover td { background: var(--surface-2); }
@@ -831,7 +831,9 @@ table.ra-tbl .num { text-align: right; } table.ra-tbl tr:hover td { background: 
   table.t2c td.empty::before { content: none; }
   .tablewrap:has(> table.t2c) { overflow-x: visible; }
   /* 조기 감지 카드 */
-  .det-scroll:has(.dc-list) { max-height: 70vh !important; }
+  .det-scroll:has(.dc-list) { max-height: none !important; overflow: visible; }
+  .dc-more { width: 100%; margin-top: 8px; }
+  .ro-long { display: none; } .ro-short { white-space: nowrap; }
   table.det:has(.dc-list) { display: block; }
   .dc-list { display: flex; flex-direction: column; }
   .dc { padding: 10px 4px; border-bottom: 1px solid var(--border); cursor: pointer; min-width: 0; }
@@ -844,6 +846,7 @@ table.ra-tbl .num { text-align: right; } table.ra-tbl tr:hover td { background: 
   .dc-res { font-size: 12.5px; font-weight: 600; }
   .dc-oh { font-size: 11.5px; margin-top: 3px; }
 }
+@media (min-width: 701px) { .ro-short { display: none; } }
 </style>
 </head>
 <body>
@@ -856,7 +859,7 @@ table.ra-tbl .num { text-align: right; } table.ra-tbl tr:hover td { background: 
     <span class="pill" id="trader-hb">매매 엔진 -</span>
     <span class="pill" id="collector-hb">수집기 -</span>
     <span class="spacer"></span>
-    <span class="readonly-note">외부 주소 · 보기 전용 (조작은 텔레그램 /정지 /청산 확인)</span>
+    <span class="readonly-note"><span class="ro-long">외부 주소 · 보기 전용 (조작은 텔레그램 /정지 /청산 확인)</span><span class="ro-short" title="외부 주소 · 보기 전용 (조작은 텔레그램 /정지 /청산 확인)">👁 보기 전용</span></span>
   </header>
 
   <div class="warnbox" id="mismatch"></div>
@@ -2061,10 +2064,11 @@ async function loadDet() {
 }
 
 // 휴대폰: 알림 한 건 = 카드 한 장 (종목·지금가 / 시각·감지가·최고 / 결과·과거 확률)
+let detShown = 10;
 function detCards(t, rows, st, run) {
   t.replaceChildren();
   const box = mk("div", "dc-list"); t.appendChild(box);
-  rows.slice(0, 40).forEach(r => {
+  rows.slice(0, detShown).forEach(r => {
     const c = mk("div", "dc " + (r.result === "win" ? "det-win" : r.result === "loss" ? "det-loss" : ""));
     const now = (r.last / r.price - 1) * 100, mx = (r.high / r.price - 1) * 100;
     const top = mk("div", "dc-top");
@@ -2085,6 +2089,11 @@ function detCards(t, rows, st, run) {
     c.onclick = () => { lookup(r.symbol); showTab("symbol"); };
     box.appendChild(c);
   });
+  if (rows.length > detShown) {
+    const more = mk("button", "more-btn dc-more", `더 보기 (${rows.length - detShown}건 더)`);
+    more.onclick = e => { e.stopPropagation(); detShown += 10; delete _seen.det; loadDet(); };
+    box.appendChild(more);
+  }
 }
 PHONE.addEventListener("change", () => { delete _seen.det; loadDet(); });
 
