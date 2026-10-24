@@ -814,6 +814,36 @@ table.ra-tbl .num { text-align: right; } table.ra-tbl tr:hover td { background: 
 .pc-name { font-size: 12px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pc-meta { font-size: 11.5px; color: var(--text-secondary); margin-top: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pc-r { text-align: right; flex: none; } .pc-px { font-size: 14.5px; font-weight: 600; } .pc-chg { font-size: 13px; margin-top: 2px; }
+/* ===== 휴대폰 정리: 표 → 카드, 글자 안 넘치게 ===== */
+@media (max-width: 700px) {
+  .kpi { padding: 12px 14px; } .kpi .v { font-size: 16px; white-space: normal; line-height: 1.25; }
+  .kpi .n { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; font-size: 11.5px; }
+  table.t2c, table.t2c tbody { display: block; width: 100%; }
+  table.t2c thead { display: none; }
+  table.t2c tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 2px 12px; padding: 10px 2px; border-bottom: 1px solid var(--border); }
+  table.t2c td { display: flex; justify-content: space-between; gap: 8px; padding: 2px 0 !important; border: 0 !important; text-align: right; min-width: 0;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12.5px; }
+  table.t2c td::before { content: attr(data-label); color: var(--text-muted); font-size: 11.5px; text-align: left; flex: none; }
+  table.t2c td:first-child { grid-column: 1 / -1; font-weight: 700; font-size: 14px; justify-content: flex-start; text-align: left; }
+  table.t2c td:first-child::before { content: none; }
+  table.t2c td.hide-m { display: none !important; }
+  table.t2c td.empty { grid-column: 1 / -1; justify-content: center; }
+  table.t2c td.empty::before { content: none; }
+  .tablewrap:has(> table.t2c) { overflow-x: visible; }
+  /* 조기 감지 카드 */
+  .det-scroll:has(.dc-list) { max-height: 70vh !important; }
+  table.det:has(.dc-list) { display: block; }
+  .dc-list { display: flex; flex-direction: column; }
+  .dc { padding: 10px 4px; border-bottom: 1px solid var(--border); cursor: pointer; min-width: 0; }
+  .dc.det-win { background: rgba(240, 68, 82, .08); } .dc.det-loss { background: rgba(49, 130, 246, .06); }
+  .dc-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .dc-id { display: flex; gap: 6px; align-items: center; min-width: 0; flex-wrap: wrap; } .dc-id b { font-size: 14.5px; }
+  .dc-px { display: flex; gap: 8px; align-items: baseline; flex: none; font-weight: 600; } .dc-chg { font-size: 12.5px; }
+  .dc-meta { font-size: 11.5px; color: var(--text-secondary); margin-top: 3px; line-height: 1.45; }
+  .dc-bot { display: flex; justify-content: space-between; gap: 8px; margin-top: 4px; flex-wrap: wrap; align-items: baseline; }
+  .dc-res { font-size: 12.5px; font-weight: 600; }
+  .dc-oh { font-size: 11.5px; margin-top: 3px; }
+}
 </style>
 </head>
 <body>
@@ -1966,6 +1996,7 @@ async function loadAccount() {
 }
 
 /* ---------- 조기 감지: 알림 → 결과 ---------- */
+const PHONE = matchMedia("(max-width: 700px)");          // 휴대폰 화면 (표 대신 카드)
 let detFilter = "all";
 try { $("det-norun").checked = localStorage.getItem("detNorun") === "1"; } catch (e) {}
 $("det-norun").onchange = () => { try { localStorage.setItem("detNorun", $("det-norun").checked ? "1" : "0"); } catch (e) {} delete _seen.det; loadDet(); };
@@ -1999,6 +2030,7 @@ async function loadDet() {
   if (!rows.length) { const r = tb.insertRow(), c = r.insertCell(); c.colSpan = 7; c.className = "empty";
     c.textContent = d.rows.length ? "조건에 맞는 감지 없음" : "최근 36시간 감지 없음 — 🚨 급등 전조·📶 거래 터짐 알림이 뜨면 여기서 결과까지 따라갑니다"; return; }
   const two = (a, b, ca, cb) => { const w = document.createDocumentFragment(); w.append(el2("div", ca || "", a), el2("div", "det-n " + (cb || ""), b)); return w; };
+  if (PHONE.matches) { detCards(t, rows, st, run); return; }
   rows.slice(0, 60).forEach(r => {
     const tr = tb.insertRow(); tr.className = r.result === "win" ? "det-win" : r.result === "loss" ? "det-loss" : "";
     const cell = cls => { const c = tr.insertCell(); c.className = cls || ""; return c; };
@@ -2027,6 +2059,34 @@ async function loadDet() {
     tr.onclick = () => { lookup(r.symbol); showTab("symbol"); };
   });
 }
+
+// 휴대폰: 알림 한 건 = 카드 한 장 (종목·지금가 / 시각·감지가·최고 / 결과·과거 확률)
+function detCards(t, rows, st, run) {
+  t.replaceChildren();
+  const box = mk("div", "dc-list"); t.appendChild(box);
+  rows.slice(0, 40).forEach(r => {
+    const c = mk("div", "dc " + (r.result === "win" ? "det-win" : r.result === "loss" ? "det-loss" : ""));
+    const now = (r.last / r.price - 1) * 100, mx = (r.high / r.price - 1) * 100;
+    const top = mk("div", "dc-top");
+    const id = mk("div", "dc-id"); const [kl, kc] = DET_KIND[r.kind] || [r.kind, ""];
+    id.append(mk("b", "mono", r.symbol), mk("span", "ev-kind " + kc, kl)); if (run(r)) id.append(mk("span", "chip", "늦음"));
+    const px = mk("div", "dc-px"); px.append(mk("span", "mono " + (tone(now) || ""), "$" + fmtPx(r.last)), mk("span", "mono dc-chg " + (tone(now) || ""), fmtPct(now)));
+    top.append(id, px); c.appendChild(top);
+    if (r.name) c.appendChild(mk("div", "det-n", r.name));
+    const hm = new Date(r.ts).toLocaleTimeString("ko-KR", { timeZone: "Asia/Seoul", hour: "2-digit", minute: "2-digit", hour12: false });
+    c.appendChild(mk("div", "dc-meta", `${kstDay(r.ts) === kstDay(new Date()) ? hm : kst(r.ts).slice(0, 7) + " " + hm} · ${etSession(r.ts).replace(" ET", "")} · 감지 $${fmtPx(r.price)} (전일 ${fmtPct(r.chg_at)}) · 최고 ${fmtPct(mx)}`));
+    const res = r.result === "win" ? ["✅ +20% 먼저", "pos"] : r.result === "loss" ? ["❌ −10% 먼저", "neg"] : r.date < tradeDay() ? ["둘 다 안 닿음", ""] : ["⏳ 진행 중", ""];
+    const s = st[r.kind + (run(r) ? ":run" : ":early")] || st[r.kind];
+    const bot = mk("div", "dc-bot");
+    bot.append(mk("span", "dc-res " + res[1], res[0] + (r.hit30 ? " · 그날 +30%" : "")));
+    if (s && s.n) bot.append(mk("span", "det-n", `과거 ${s.n}건: +30% ${Math.round(s.hit30 / s.n * 100)}% · 먹을 ${Math.round(s.win / s.n * 100)}%`));
+    c.appendChild(bot);
+    if (r.overhead) c.appendChild(mk("div", "dc-oh " + (/무거움/.test(r.overhead) ? "neg" : /가벼움/.test(r.overhead) ? "pos" : ""), r.overhead));
+    c.onclick = () => { lookup(r.symbol); showTab("symbol"); };
+    box.appendChild(c);
+  });
+}
+PHONE.addEventListener("change", () => { delete _seen.det; loadDet(); });
 
 /* ---------- 오늘 한눈에 ---------- */
 const kstDay = s => new Date(s).toLocaleDateString("ko-KR", { timeZone: "Asia/Seoul" });
@@ -2088,14 +2148,14 @@ const STRAT_RULE = { S1: "정규장 전 신호 → VWAP −10% 지정가 60분",
 let vtRows = [], vtStrat = "all", vtRange = 7, vtSettings = null;
 const el2 = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 function table2(t, heads, rows, empty) {
-  t.replaceChildren();
+  t.replaceChildren(); t.classList.add("t2c");          // 휴대폰: 줄마다 카드로 (CSS)
   // heads: [제목, 숫자 열?, 휴대폰에서 숨김?]
   const h = t.createTHead().insertRow();
   heads.forEach(([label, num, hm]) => h.appendChild(el2("th", (num ? "num" : "") + (hm ? " hide-m" : ""), label)));
   const tb = t.createTBody();
   if (!rows.length) { const r = tb.insertRow(); const c = r.insertCell(); c.colSpan = heads.length; c.className = "empty"; c.textContent = empty; return; }
   rows.forEach(cells => { const r = tb.insertRow(); cells.forEach(([v, cls], i) => { const c = r.insertCell(); c.textContent = v;
-    c.className = (cls || "") + (heads[i] && heads[i][2] ? " hide-m" : ""); }); });
+    c.className = (cls || "") + (heads[i] && heads[i][2] ? " hide-m" : ""); if (heads[i]) c.dataset.label = heads[i][0]; }); });
 }
 const dur = (a, b) => { if (!a || !b) return "-"; const m = Math.max(0, Math.round((new Date(b) - new Date(a)) / 60000)); return m >= 60 ? `${Math.floor(m / 60)}시간 ${m % 60}분` : `${m}분`; };
 async function loadVTrade() {
@@ -2267,7 +2327,6 @@ const PRE_COLS = [
   ["sc", "점수", x => x.score, v => v, 0, 1],
   ["tag", "태그", x => 0, null, 0, 0],
 ];
-const PHONE = matchMedia("(max-width: 700px)");
 PHONE.addEventListener("change", () => { if (preData) drawPre(); });
 // 휴대폰: 가로로 잘리는 표 대신 한 종목 한 줄 카드 (정렬은 고르기 상자)
 function drawPreCards(box, rows) {
