@@ -19,7 +19,8 @@ def build(mq, market_db: str, rq=None, now: datetime | None = None) -> dict:
     now = now or datetime.now(timezone.utc)
     t = now.astimezone(ET)
     out: dict = {"ts": now.isoformat(), "date": alertperf.trade_day(now)}
-    names = {r["symbol"]: r["name"] for r in mq("SELECT symbol, name FROM universe WHERE snapshot_date=(SELECT MAX(snapshot_date) FROM universe)")}
+    names = {r["symbol"]: r["name"] for r in mq("SELECT symbol, name FROM stock_info WHERE name IS NOT NULL AND name != ''")}
+    names.update({r["symbol"]: r["name"] for r in mq("SELECT symbol, name FROM universe WHERE name IS NOT NULL ORDER BY snapshot_date")})
     nm = lambda s: names.get(s) or ""
 
     # 어제 급등 TOP (최근 일봉 날짜, 전일 종가 대비 고가·종가)

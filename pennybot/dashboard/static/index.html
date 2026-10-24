@@ -199,7 +199,7 @@ td .chip, td .ev-kind, td .det-res, td .oh-tag { vertical-align: middle; }
 .br-r { flex: none; font-size: 11.5px; } .br-r.gold { color: var(--warn); } .br-e { color: var(--text-3); cursor: default !important; }
 .bot-body { padding: 0 14px 14px; } .bot-body .card { background: var(--panel-2); }
 
-.home-cols { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 14px; align-items: start; }
+.home-cols { display: grid; grid-template-columns: minmax(0, 1fr) clamp(400px, 31vw, 600px); gap: 14px; align-items: start; }
 .home-main, .home-side { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 .home-main > section, .home-side > section { margin: 0; }
 .home-side { position: sticky; top: 66px; max-height: calc(100vh - 80px); overflow-y: auto; scrollbar-width: thin; }
@@ -217,6 +217,7 @@ table.det td.c-k .chip { margin-left: 4px; } table.det td.c-oh { width: 100%; }
 table.det tr.det-win td { background: color-mix(in srgb, var(--up) 5%, transparent); } table.det tr.det-loss td { background: color-mix(in srgb, var(--down) 4%, transparent); }
 table.det caption.empty { caption-side: top; padding: 18px; }
 @media (max-width: 1699px) { table.det .w-lg { display: none; } }
+@media (max-width: 1500px) { table.det .oh-w { display: none; } }
 .det-res { display: inline-block; min-width: 44px; text-align: center; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }
 .r-win { background: var(--up-soft); color: var(--up); } .r-loss { background: var(--down-soft); color: var(--down); }
 .r-none { background: var(--panel-2); color: var(--text-3); } .r-live { background: var(--warn-soft); color: var(--warn); }
@@ -1874,7 +1875,8 @@ async function loadDet() {
     const oc = td("c-oh");
     if (r.overhead) { const thick = /두꺼움/.test(r.overhead), thin = /얇음/.test(r.overhead);
       const wall = r.overhead.match(/저항 \$[\d.]+ \(([^)]+)\)/);       // 표에는 짧게: '두꺼움 40% · 저항 +5%' (가격은 툴팁)
-      const tag = el2("span", "oh-tag " + (thick ? "oh-hi" : thin ? "oh-lo" : ""), r.overhead.replace(/^매물대 /, "").replace(/ · 저항 .*/, "") + (wall ? ` · 저항 ${wall[1]}` : ""));
+      const tag = el2("span", "oh-tag " + (thick ? "oh-hi" : thin ? "oh-lo" : ""), r.overhead.replace(/^매물대 /, "").replace(/ · 저항 .*/, ""));
+      if (wall) tag.appendChild(el2("span", "oh-w", ` · 저항 ${wall[1]}`));             // 좁은 화면에선 숨기고 툴팁으로
       tag.title = r.overhead; oc.appendChild(tag); }
     tr.onclick = () => { lookup(r.symbol); showTab("symbol"); };
   });

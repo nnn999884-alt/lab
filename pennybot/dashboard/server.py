@@ -152,7 +152,9 @@ class Data:
         from .. import alertperf, overhead
         since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
         out = alertperf.rows(self.m, self._rq(), since, limit=200)
-        names = {r["symbol"]: r["name"] for r in self.m("SELECT symbol, name FROM universe WHERE snapshot_date=(SELECT MAX(snapshot_date) FROM universe)")}
+        names = {r["symbol"]: r["name"] for r in self.m("SELECT symbol, name FROM stock_info WHERE name IS NOT NULL AND name != ''")}
+        names.update({r["symbol"]: r["name"] for r in self.m(        # 유니버스에서 빠진 종목도 이름이 나오게: 종목 정보 → 지난 유니버스 → 최신 유니버스 순으로 덮어씀
+            "SELECT symbol, name FROM universe WHERE name IS NOT NULL ORDER BY snapshot_date")})
         for r in out:
             tg = self.m("SELECT tags FROM stock_tags WHERE symbol=? ORDER BY d0 DESC LIMIT 1", (r["symbol"],))
             r["name"] = names.get(r["symbol"])
