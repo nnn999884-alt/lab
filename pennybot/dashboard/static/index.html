@@ -13,37 +13,37 @@
   color-scheme: light;
   --bg: #f4f5f7; --panel: #ffffff; --panel-2: #f6f7f9; --line: #e3e6ea; --line-2: #eef0f3;
   --text: #11151b; --text-2: #4b5462; --text-3: #848c99;
-  --accent: #5b7fd6; --accent-soft: rgba(91, 127, 214, .10);
-  --up: #d0646a; --down: #4f7fcc; --up-soft: rgba(208, 100, 106, .10); --down-soft: rgba(79, 127, 204, .10);
-  --warn: #b3843a; --warn-soft: rgba(179, 132, 58, .13); --good: #4d9a78; --good-soft: rgba(77, 154, 120, .12);
-  --violet: #8a7bd1; --violet-soft: rgba(138, 123, 209, .12); --teal: #4c9e96; --teal-soft: rgba(76, 158, 150, .12);
+  --accent: #4a76e0; --accent-soft: rgba(74, 118, 224, .10);
+  --up: #db4f57; --down: #3d73d9; --up-soft: rgba(219, 79, 87, .10); --down-soft: rgba(61, 115, 217, .10);
+  --warn: #bf8a2e; --warn-soft: rgba(191, 138, 46, .13); --good: #2f9a6c; --good-soft: rgba(47, 154, 108, .12);
+  --violet: #7d6bdc; --violet-soft: rgba(125, 107, 220, .12); --teal: #2d998f; --teal-soft: rgba(45, 153, 143, .12);
   --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   /* 차트 스크립트가 읽는 이름 */
   --surface-0: var(--bg); --surface-1: var(--panel); --surface-2: var(--panel-2); --border: var(--line);
   --text-primary: var(--text); --text-secondary: var(--text-2); --text-muted: var(--text-3);
-  --grid: #eceef1; --axis: #b5bcc6; --series-1: #5b7fd6; --series-2: #d58a63; --series-3: #4d9a78; --series-4: #b3843a;
+  --grid: #eceef1; --axis: #b5bcc6; --series-1: #4a76e0; --series-2: #dd7a4a; --series-3: #2f9a6c; --series-4: #bf8a2e;
   --critical: var(--up); --warning: var(--warn);
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
   --bg: #0b0d11; --panel: #12151b; --panel-2: #181c23; --line: #232832; --line-2: #1b1f27;
   --text: #e8ebf0; --text-2: #a8b0bd; --text-3: #6d7584;
-  --accent: #8aa4e8; --accent-soft: rgba(138, 164, 232, .13);
-  --up: #e8878c; --down: #7fa6e6; --up-soft: rgba(232, 135, 140, .13); --down-soft: rgba(127, 166, 230, .13);
-  --warn: #d9b47a; --warn-soft: rgba(217, 180, 122, .14); --good: #7cc4a2; --good-soft: rgba(124, 196, 162, .13);
-  --violet: #b3a8ec; --violet-soft: rgba(179, 168, 236, .14); --teal: #7cc4bc; --teal-soft: rgba(124, 196, 188, .13);
-  --grid: #1e232c; --axis: #4b5361; --series-1: #8aa4e8; --series-2: #e0a07c; --series-3: #7cc4a2; --series-4: #d9b47a;
+  --accent: #739bf2; --accent-soft: rgba(115, 155, 242, .13);
+  --up: #f26b72; --down: #6597f0; --up-soft: rgba(242, 107, 114, .13); --down-soft: rgba(101, 151, 240, .13);
+  --warn: #e8b05a; --warn-soft: rgba(232, 176, 90, .14); --good: #56c48f; --good-soft: rgba(86, 196, 143, .13);
+  --violet: #a99cf5; --violet-soft: rgba(169, 156, 245, .14); --teal: #4fc2b6; --teal-soft: rgba(79, 194, 182, .13);
+  --grid: #1e232c; --axis: #4b5361; --series-1: #739bf2; --series-2: #ec8c5c; --series-3: #56c48f; --series-4: #e8b05a;
 }
 @media (prefers-color-scheme: dark) {
   :root:where(:not([data-theme="light"])) {
     color-scheme: dark;
     --bg: #0b0d11; --panel: #12151b; --panel-2: #181c23; --line: #232832; --line-2: #1b1f27;
     --text: #e8ebf0; --text-2: #a8b0bd; --text-3: #6d7584;
-    --accent: #8aa4e8; --accent-soft: rgba(138, 164, 232, .13);
-    --up: #e8878c; --down: #7fa6e6; --up-soft: rgba(232, 135, 140, .13); --down-soft: rgba(127, 166, 230, .13);
-    --warn: #d9b47a; --warn-soft: rgba(217, 180, 122, .14); --good: #7cc4a2; --good-soft: rgba(124, 196, 162, .13);
-    --violet: #b3a8ec; --violet-soft: rgba(179, 168, 236, .14); --teal: #7cc4bc; --teal-soft: rgba(124, 196, 188, .13);
-    --grid: #1e232c; --axis: #4b5361; --series-1: #8aa4e8; --series-2: #e0a07c; --series-3: #7cc4a2; --series-4: #d9b47a;
+    --accent: #739bf2; --accent-soft: rgba(115, 155, 242, .13);
+    --up: #f26b72; --down: #6597f0; --up-soft: rgba(242, 107, 114, .13); --down-soft: rgba(101, 151, 240, .13);
+    --warn: #e8b05a; --warn-soft: rgba(232, 176, 90, .14); --good: #56c48f; --good-soft: rgba(86, 196, 143, .13);
+    --violet: #a99cf5; --violet-soft: rgba(169, 156, 245, .14); --teal: #4fc2b6; --teal-soft: rgba(79, 194, 182, .13);
+    --grid: #1e232c; --axis: #4b5361; --series-1: #739bf2; --series-2: #ec8c5c; --series-3: #56c48f; --series-4: #e8b05a;
   }
 }
 
@@ -212,11 +212,11 @@ td .chip, td .ev-kind, td .det-res, td .oh-tag { vertical-align: middle; }
 .det-scroll { max-height: 470px; overflow: auto; margin: 0 -14px; }
 table.det td.c-t { color: var(--text-2); } .det-sess { margin-left: 6px; font-family: inherit; font-size: 11px; color: var(--text-3); }
 table.det td.c-s b { font-size: 12.5px; margin-right: 6px; }
-.det-name { color: var(--text-3); font-size: 11px; display: inline-block; max-width: 150px; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
+.det-name { color: var(--text-3); font-size: 11.5px; display: inline-block; max-width: 140px; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
 table.det td.c-k .chip { margin-left: 4px; } table.det td.c-oh { width: 100%; }
 table.det tr.det-win td { background: color-mix(in srgb, var(--up) 5%, transparent); } table.det tr.det-loss td { background: color-mix(in srgb, var(--down) 4%, transparent); }
 table.det caption.empty { caption-side: top; padding: 18px; }
-@media (max-width: 1699px) { table.det .w-lg, table.det .det-name { display: none; } }
+@media (max-width: 1699px) { table.det .w-lg { display: none; } }
 .det-res { display: inline-block; min-width: 44px; text-align: center; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }
 .r-win { background: var(--up-soft); color: var(--up); } .r-loss { background: var(--down-soft); color: var(--down); }
 .r-none { background: var(--panel-2); color: var(--text-3); } .r-live { background: var(--warn-soft); color: var(--warn); }
@@ -549,6 +549,14 @@ table.ca-tbl tr.off .ca-fill { opacity: .35; }
   .sym-tabs .ic { display: none; }
   button, .seg button { min-height: 32px; }
 }
+/* 티커 옆 회사명 */
+.nm { color: var(--text-3); font-size: 12px; font-weight: 500; min-width: 0; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: inherit; }
+.dc-id { flex-wrap: nowrap !important; } .dc-id .ev-kind, .dc-id .chip { flex: none; }
+.pc-top { flex-wrap: nowrap !important; } .pc-top .tg { flex: none; }
+.scr-sym { display: flex; align-items: baseline; gap: 7px; white-space: nowrap; }
+.scr-sym .scr-name { display: inline-block; max-width: 150px; font-size: 11.5px; font-weight: 500; letter-spacing: 0; vertical-align: bottom;
+  font-family: "Pretendard Variable", Pretendard, -apple-system, "Segoe UI", "Noto Sans KR", sans-serif; }
+@media (max-width: 700px) { .nm { max-width: 120px; } }
 </style>
 </head>
 <body>
@@ -1882,11 +1890,11 @@ function detCards(t, rows, st, run) {
     const now = (r.last / r.price - 1) * 100, mx = (r.high / r.price - 1) * 100;
     const top = mk("div", "dc-top");
     const id = mk("div", "dc-id"); const [kl, kc] = DET_KIND[r.kind] || [r.kind, ""];
-    id.append(mk("b", "mono", r.symbol), mk("span", "ev-kind " + kc, kl)); if (run(r)) id.append(mk("span", "chip", "추격"));
+    id.append(mk("b", "mono", r.symbol), mk("span", "nm", r.name || ""), mk("span", "ev-kind " + kc, kl)); if (run(r)) id.append(mk("span", "chip", "추격"));
     const px = mk("div", "dc-px"); px.append(mk("span", "mono " + (tone(now) || ""), "$" + fmtPx(r.last)), mk("span", "mono dc-chg " + (tone(now) || ""), fmtPct(now)));
     top.append(id, px); c.appendChild(top);
     const hm = new Date(r.ts).toLocaleTimeString("ko-KR", { timeZone: "Asia/Seoul", hour: "2-digit", minute: "2-digit", hour12: false });
-    c.appendChild(mk("div", "dc-meta", `${kstDay(r.ts) === kstDay(new Date()) ? hm : kst(r.ts).slice(0, 7) + " " + hm} ${etSession(r.ts).split(" ")[0]} · 감지 $${fmtPx(r.price)} · 최고 ${fmtPct(mx)}` + (r.name ? ` · ${r.name}` : "")));
+    c.appendChild(mk("div", "dc-meta", `${kstDay(r.ts) === kstDay(new Date()) ? hm : kst(r.ts).slice(0, 7) + " " + hm} ${etSession(r.ts).split(" ")[0]} · 감지 $${fmtPx(r.price)} · 최고 ${fmtPct(mx)}`));
     const res = r.result === "win" ? ["적중", "r-win"] : r.result === "loss" ? ["손절", "r-loss"] : r.date < tradeDay() ? ["미결", "r-none"] : ["진행 중", "r-live"];
     const s = st[r.kind + (run(r) ? ":run" : ":early")] || st[r.kind];
     const bot = mk("div", "dc-bot"), left = mk("div", "dc-tags");
@@ -2164,10 +2172,10 @@ function drawPreCards(box, rows) {
     const it = mk("div", "pc-it" + (x.live.length ? " live" : "") + (chg > 0 ? " h-up" : chg < 0 ? " h-dn" : ""));
     it.style.setProperty("--heat", Math.min(1, Math.abs(chg || 0) / 30).toFixed(2));
     const l = mk("div", "pc-l");
-    const top = mk("div", "pc-top"); top.append(mk("b", "mono", x.symbol));
+    const top = mk("div", "pc-top"); top.append(mk("b", "mono", x.symbol), mk("span", "nm", x.name || ""));
     if (x.tier) top.append(mk("span", "tg tg-tier", "★".repeat(x.tier)));
     x.live_labels.slice(0, 1).forEach(lb => top.append(mk("span", "tg tg-live", lb.replace(/^[^\p{L}]+/u, ""))));
-    l.append(top, mk("div", "pc-name", x.name || ""));
+    l.append(top);
     const m = [`전날 ${val("vr", x)}`];
     if (x.turnover_today != null) m.push(`회전 ${val("tt", x)}`);
     if ((x.live_m || {}).vol_x != null) m.push(`1시간 ${val("vx", x)}`);
@@ -2215,8 +2223,8 @@ function drawPre() {
       td.className = (num ? "num" : "") + (mob ? "" : " hide-m") + (k === "sym" ? " sticky" : "");
       if (k === "sym") {
         const a = document.createElement("div"); a.className = "scr-sym"; a.textContent = x.symbol;
-        const n = document.createElement("div"); n.className = "scr-name"; n.textContent = x.name || "";
-        td.append(a, n);
+        const n = document.createElement("span"); n.className = "scr-name"; n.textContent = x.name || "";
+        a.appendChild(n); td.appendChild(a); td.title = x.name || "";
       } else if (k === "sig") {
         if (x.tier) { const b = document.createElement("span"); b.className = "tg tg-tier"; b.textContent = "★".repeat(x.tier); td.appendChild(b); }
         x.live_labels.slice(0, 1).forEach(l => { const b = document.createElement("span"); b.className = "tg tg-live"; b.textContent = l.replace(/^[^\p{L}]+/u, ""); td.appendChild(b); });
