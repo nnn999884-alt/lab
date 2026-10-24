@@ -207,6 +207,49 @@ def signal_text(sym: str, name: str | None, lv: dict, session_ko: str, tags: lis
     ])
 
 
+# 재가속: 급등 뒤 고점에서 15% 눌렸다가 저점에서 10% 다시 오른 순간.
+# 보관 1분봉 (그날 +30% 찍은 종목·일 1.6만 건 중 1,619건): 53% 가 그날 앞 고점을 다시 뚫었고 그 뒤 평균 최고 +41%.
+# 단, 그 자리에서 사면 −10% 먼저 54% · +20% 먼저 28% — 흔들림이 커서 타이트한 손절로는 못 먹는다.
+REACCEL_DROP, REACCEL_BOUNCE = 15.0, 10.0
+
+
+def reaccel(bars: list[tuple], since: str, price: float | None = None,
+            drop: float = REACCEL_DROP, bounce: float = REACCEL_BOUNCE) -> dict | None:
+    """bars: (ts, o, h, l, c, v). since 이후 고점 → drop% 눌림 → 그 저점에서 bounce% 반등이면 그 값들."""
+    hi, hi_ts, lo, lo_ts = 0.0, None, None, None
+    for b in bars:
+        if b[0] < since:
+            continue
+        if lo is None:
+            if b[2] > hi:
+                hi, hi_ts = b[2], b[0]
+            if hi and b[3] <= hi * (1 - drop / 100):
+                lo, lo_ts = b[3], b[0]
+        elif b[3] < lo:
+            lo, lo_ts = b[3], b[0]
+    if lo is None:
+        return None
+    p = price if price is not None else bars[-1][4]
+    if p < lo * (1 + bounce / 100):
+        return None
+    return {"high": hi, "high_ts": hi_ts, "low": lo, "low_ts": lo_ts, "price": p,
+            "drop": (lo / hi - 1) * 100, "bounce": (p / lo - 1) * 100, "to_high": (hi / p - 1) * 100}
+
+
+def reaccel_text(sym: str, name: str | None, r: dict, prev_close: float | None, session_ko: str, n: int,
+                 dollar_2m: float | None = None, tags: list | None = None) -> str:
+    from .trading.messages import money_s, pct, px
+    chg = (r["price"] / prev_close - 1) * 100 if prev_close else None
+    return "\n".join([
+        f"🔁 재가속 ({sym}" + (f" · {name}" if name else "") + f") — 오늘 {n}번째",
+        f"💵 {px(r['price'])}" + (f" ({pct(chg)})" if chg is not None else "") + f" · {session_ko}",
+        f"고점 {px(r['high'])} → 저점 {px(r['low'])} ({r['drop']:+.0f}%) → 지금 저점 대비 {r['bounce']:+.0f}%",
+        f"앞 고점까지 {r['to_high']:+.0f}%" + (f" · 최근 2분 {money_s(dollar_2m)}" if dollar_2m else ""),
+        *([f"🏷 {' · '.join(tags)}"] if tags else []),
+        "과거: 이 모양 53% 가 앞 고점 다시 돌파 (평균 최고 +41%) · 흔들림 커서 손절 넓게",
+    ])
+
+
 def ask_depth(ob: dict, price: float, pct: float = 10.0) -> float | None:
     """호가창 매도 쪽: 현재가 ~ +pct% 안에 걸린 물량의 달러 합 (작을수록 얇다 = 조금만 사도 잘 오른다)."""
     asks = (ob or {}).get("asks") or []

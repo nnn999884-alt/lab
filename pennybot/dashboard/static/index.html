@@ -867,6 +867,7 @@ table.ra-tbl .num { text-align: right; } table.ra-tbl tr:hover td { background: 
         <p>🚨 급등 전조 = 거래대금·회전율이 평소보다 확 붙고 일봉 등급(★)이 받쳐 줄 때. 📶 거래 터짐 = 거래만 터진 짧은 신호.</p>
         <p><b>결과</b>: 감지가에서 <b>+20% 먼저</b> 갔으면 ✅, <b>−10% 먼저</b> 빠졌으면 ❌ (한 1분봉에서 둘 다 닿으면 ❌로 셈). <b>+30% 찍음</b> = 그날 전일 종가 대비 +30% 를 찍었나.</p>
         <p><b>과거 확률</b> = 끝난 거래일의 같은 종류 알림 실제 결과. 건수가 적으면 흔들리니 건수도 같이 볼 것. <b>평소</b> = 감시 종목이 아무 날이나 +30% 찍을 확률.</p>
+        <p>🔁 재가속 = 오늘 급등했던(또는 최근 3일 안에 +50% 찍은) 종목이 고점에서 15% 눌렸다가 저점에서 10% 다시 오르고 거래가 붙은 순간. 오르고 빠진 종목은 감시에서 빼지 않고 계속 봅니다.</p>
         <p>"늦음" = 감지 때 벌써 전일 대비 +20% 넘은 종목. "구 규칙" = 10/23 까지 쓰던 옛 전조 조건 (참고용).</p>
       </details>
     </section>
@@ -1839,8 +1840,8 @@ function candleChart(box, bars, { height = 240, ma = [5, 20], log = false, label
 
 /* ---------- 방금 일어난 일 ---------- */
 let feedFilter = "hot", feedSeen = null;
-const HOT = k => k === "precursor" || k === "burst" || k === "halt" || k === "spike_up";   // '중요' 보기 (+ 호재 공시)
-const KIND = k => k === "precursor" ? ["급등 전조", "k-pre"] : k === "burst" ? ["거래 터짐", "k-burst"] : k === "halt" ? ["정지", "k-halt"]
+const HOT = k => k === "precursor" || k === "burst" || k === "reaccel" || k === "halt" || k === "spike_up";   // '중요' 보기 (+ 호재 공시)
+const KIND = k => k === "precursor" ? ["급등 전조", "k-pre"] : k === "burst" ? ["거래 터짐", "k-burst"] : k === "reaccel" ? ["재가속", "k-pre"] : k === "halt" ? ["정지", "k-halt"]
   : k === "spike_up" ? ["급등", "k-up"] : k === "spike_dn" ? ["급락", "k-dn"] : k.startsWith("rank:") ? ["랭킹", "k-rank"]
   : k === "filing" ? ["공시", ""] : [k, ""];
 function beep() {
@@ -1979,7 +1980,7 @@ function etSession(ts) {
 }
 // 미국 거래일 (전날 20:00 ET 부터) — 지난 거래일 알림은 결과가 확정
 const tradeDay = () => new Date(Date.now() + 4 * 3600e3).toLocaleDateString("en-CA", { timeZone: "America/New_York" });
-const DET_KIND = { precursor: ["🚨 전조", "k-pre"], burst: ["📶 터짐", "k-burst"], old: ["구 규칙", ""] };
+const DET_KIND = { precursor: ["🚨 전조", "k-pre"], burst: ["📶 터짐", "k-burst"], reaccel: ["🔁 재가속", "k-pre"], old: ["구 규칙", ""] };
 async function loadDet() {
   const d = await api("/api/detections?hours=36");
   if (unchanged("det", [d, detFilter, $("det-norun").checked])) return;
@@ -2181,6 +2182,7 @@ $("bot-wrap").addEventListener("toggle", () => { if ($("bot-wrap").open) { delet
 const ALERT_KO = { presurge: ["🚨 급등 전조", "프리 06~09시 + $2 미만/거래량 50배+/★★★ 인 첫 거래 터짐"],
   burst: ["📶 거래 터짐 신호", "모든 세션, 1분 거래대금·회전율 터짐"], halt: ["🛑 뉴스 대기 거래정지", "정지 직후 + 재개 시각 공개 때"],
   pre_open: ["🌅 프리 개장 주목", "동부 03:55, 데이마켓에서 움직인 종목"], vtrade: ["🧪 가상 매매", "지정가 주문·체결·매도"],
+  reaccel: ["🔁 재가속", "급등 뒤 15% 눌렸다 10% 다시 오르고 거래가 붙을 때 (한 파동 한 번, 하루 3번까지)"],
   briefing: ["🗞 장 시작 전 브리핑", "동부 03:45, 어제 급등·오늘 후보·밤사이 정지·공시"], perf: ["📊 알림 성과 요약", "애프터장 마감 뒤, 오늘 알림이 실제로 얼마나 갔나"] };
 async function postSettings(patch) {
   const r = await fetch("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });

@@ -805,6 +805,11 @@ class Collector:
             if s in all_rows:
                 tiers.setdefault(s, tier(json.loads(all_rows[s][3] or "{}"), shares.get(s), all_rows[s][4]))
                 rows.append(all_rows[s])
+        keep = self._keep_watch(d0, trade_date, all_rows)   # 오르고 빠진 종목: 재가속할 수 있으니 계속 감시
+        have = {x[0] for x in rows}
+        for s in sorted(keep - have):
+            tiers.setdefault(s, tier(json.loads(all_rows[s][3] or "{}"), shares.get(s), all_rows[s][4]))
+            rows.append(all_rows[s])
         ranked_in = set()                            # 목록 밖, 랭킹으로 들어온 종목 (전날 일봉에 티가 안 난 급등)
         if self.cfg.precursor_rank_max:
             for r in self._rank_entrants(d0, {x[0] for x in rows}, all_rows):
@@ -842,9 +847,11 @@ class Collector:
             if fire:
                 self._alert(self.store, now, session, sym, score, sig, met, lv, tiers[sym],
                             (["랭킹 진입"] if sym in ranked_in else []) + (["빠른 포착"] if sym in hot else []))
+            elif (sym in keep or sym in prev_alert) and not (self._rt and self._rt.healthy):
+                self._reaccel_check(self.store, now, session, d0, sym, today, close, shares.get(sym), start)
             if self.cfg.vsignal and session != AFTER:      # 가상 매매는 알림과 따로: 1분 거래 터짐 → 아래 지정가
                 self._vtrade(now, d0, sym, score, close, today, shares.get(sym), session, start)
-        self._rt_set([x[0] for x in rows])
+        self._rt_set([x[0] for x in rows if x[0] in keep] + [x[0] for x in rows if x[0] not in keep])
         for r in out:                                    # 루프 도는 사이 실시간 쪽이 보낸 알림 표시를 덮어쓰지 않게
             if not r["alerted"]:
                 r["alerted"] = self._alerted(self.store, d0, r["symbol"])
@@ -854,6 +861,62 @@ class Collector:
     def _alerted(store, d0: str, sym: str):
         r = store.query("SELECT alerted FROM precursor_live WHERE d0=? AND symbol=? AND alerted IS NOT NULL", (d0, sym))
         return r[0][0] if r else None
+
+    def _keep_watch(self, d0: str, trade_date, all_rows: dict) -> set:
+        """오르고 빠졌다고 감시에서 빼지 않는다: 오늘 알림 나간 종목 · 오늘 전일 대비 +30% 찍은 종목 ·
+        최근 3거래일 안에 고가 +50% 찍은 종목 (2일차·3일차 재가속). 일봉 점수(all_rows)가 있는 것만."""
+        out = {s for (s,) in self.store.query("SELECT symbol FROM precursor_live WHERE d0=? AND alerted IS NOT NULL", (d0,))}
+        if self._fast_hot[0] == d0:
+            out |= set(self._fast_hot[1])
+        td = trade_date.isoformat() if trade_date else None
+        if td:
+            for s, mx in self.store.query("SELECT symbol, MAX(last) FROM prices WHERE trade_date=? GROUP BY symbol", (td,)):
+                r = all_rows.get(s)
+                if r and r[4] and mx and mx >= r[4] * 1.3:
+                    out.add(s)
+        ds = [d for (d,) in self.store.query("SELECT DISTINCT d FROM daily_bars WHERE d<=? ORDER BY d DESC LIMIT 3", (d0,))]
+        if ds:
+            for (s,) in self.store.query(
+                    """SELECT b.symbol FROM daily_bars b JOIN daily_bars p ON p.symbol=b.symbol
+                         AND p.d=(SELECT MAX(d) FROM daily_bars WHERE symbol=b.symbol AND d<b.d)
+                       WHERE b.d>=? AND p.close>0 AND b.high>=p.close*1.5""", (ds[-1],)):
+                out.add(s)
+        return {s for s in out if s in all_rows}
+
+    def _reaccel_check(self, store, now, session, d0, sym, today, pc, shares, start) -> bool:
+        """급등 뒤 15% 눌렸다 10% 다시 오르고 최근 2분 거래가 붙으면 '🔁 재가속' (한 파동에 한 번, 20분 간격, 하루 3번까지)."""
+        from ..precursor import reaccel, reaccel_text
+        from ..trading.strategies import SESSION_KO
+        if len(today) < 5:
+            return False
+        evs = [r[0] for r in store.query("SELECT ts FROM events WHERE symbol=? AND kind='reaccel' AND ts>=? ORDER BY ts", (sym, start))]
+        if len(evs) >= 3 or (evs and now - datetime.fromisoformat(evs[-1]) < timedelta(minutes=20)):
+            return False
+        alerted = self._alerted(store, d0, sym)
+        since = max([x for x in (start, alerted, evs[-1] if evs else None) if x])  # 직전 알림 뒤의 고점부터 다시 센다
+        r = reaccel(today, since)
+        if not r:
+            return False
+        last2 = today[-2:]
+        d2, v2 = sum(b[4] * b[5] for b in last2), sum(b[5] for b in last2)
+        if not (d2 >= 5e4 or (shares and v2 / shares * 100 >= 0.5)):
+            return False                                 # 반등에 거래가 안 붙으면 아직
+        n = len(evs) + 1
+        self._event(now, sym, "reaccel", f"🔁 {sym} 재가속 {n}번째 (고점 ${r['high']:.4g} → {r['drop']:+.0f}% → 반등 {r['bounce']:+.0f}%"
+                    f" · 2분 ${d2 / 1e3:.0f}K)", (r["price"] / pc - 1) * 100 if pc else None)
+        log.info("재가속 %s %d번째 (눌림 %.0f%% → 반등 %.0f%%)", sym, n, r["drop"], r["bounce"])
+        self._fast_hot[1].add(sym)
+        if self.notifier and self._on("reaccel"):
+            from ..precursor import alert_buttons
+            link = None
+            try:
+                link = self.link() if self.link else None
+            except Exception:
+                pass
+            oh = self._overhead(store, sym, r["price"])
+            self.notifier.send(reaccel_text(sym, (self.universe.get(sym) or {}).get("name"), r, pc, SESSION_KO.get(session, session), n,
+                                            d2, [oh] if oh else None), buttons=alert_buttons(sym, link))
+        return True
 
     def _overhead(self, store, sym: str, price) -> str | None:
         """'위 +30% 매물 무거움 35% · 벽 $2.09 (+3%)' — +10% 뚫은 뒤 +30% 간 비율: 무거움 7% vs 나머지 11% (일봉 8.5천 건)."""
@@ -1193,7 +1256,8 @@ class Collector:
         if check and not (d2 >= 5e4 or (shares and 0.5 <= v2 / shares * 100 <= 1000)):
             return False                                 # 거래가 얇음
         self._fast_hot[1].add(sym)                       # 다음 1분 감시·가상 매매에 넣는다
-        if self._alerted(store, d0, sym):
+        if self._alerted(store, d0, sym):                # 오늘 이미 알림 → 눌렸다 다시 붙는 거면 재가속 알림
+            self._reaccel_check(store, now, session, d0, sym, today, pc, shares, start)
             return True
         row = store.query("SELECT symbol, score, signals, metrics, close FROM precursor_daily WHERE d0=? AND symbol=?", (d0, sym))
         if not row:

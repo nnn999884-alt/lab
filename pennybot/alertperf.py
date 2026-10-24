@@ -10,7 +10,7 @@ from zoneinfo import ZoneInfo
 
 ET = ZoneInfo("America/New_York")
 WIN, LOSS, RUN30 = 1.20, 0.90, 1.30
-KINDS = ("precursor", "burst")
+KINDS = ("precursor", "burst", "reaccel")
 
 
 def trade_day(t: datetime) -> str:
@@ -61,7 +61,7 @@ def outcome(mq, rq, sym: str, ts: str) -> dict | None:
 
 
 def rows(mq, rq, since: str, until: str | None = None, limit: int = 300) -> list[dict]:
-    ev = mq("SELECT ts, symbol, kind, text FROM events WHERE kind IN ('precursor','burst') AND ts>=? AND ts<? "
+    ev = mq("SELECT ts, symbol, kind, text FROM events WHERE kind IN ('precursor','burst','reaccel') AND ts>=? AND ts<? "
             "ORDER BY ts DESC LIMIT ?", (since, until or "9999", limit))
     out = []
     for r in ev:
@@ -96,7 +96,7 @@ def summary_text(day_rows: list[dict], st: dict, date: str) -> str | None:
     if not rs:
         return None
     lines = [f"📊 오늘 알림 성과 ({date})"]
-    for k, lab in (("precursor", "🚨 급등 전조"), ("burst", "📶 거래 터짐")):
+    for k, lab in (("precursor", "🚨 급등 전조"), ("burst", "📶 거래 터짐"), ("reaccel", "🔁 재가속")):
         g = [r for r in rs if r["kind"] == k]
         if not g:
             continue

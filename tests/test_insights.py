@@ -95,3 +95,64 @@ def test_write_account(tmp_path):
     col.c = Bad()
     col.write_account(T)                                      # 실패하면 꺼지고 조용히
     assert col._acct_off
+
+
+def test_reaccel_shape():
+    from pennybot.precursor import reaccel
+    t = lambda k: f"2026-10-23T08:{k:02d}:00+00:00"
+    bars = [(t(0), 1, 1.0, 1.0, 1.0, 1), (t(1), 1, 2.0, 1.8, 1.9, 1), (t(2), 1, 1.9, 1.6, 1.65, 1), (t(3), 1, 1.8, 1.65, 1.78, 1)]
+    r = reaccel(bars, t(0))
+    assert r and r["high"] == 2.0 and r["low"] == 1.6 and round(r["drop"]) == -20 and round(r["bounce"]) == 11
+    assert reaccel(bars[:3], t(0)) is None                     # 아직 반등 10% 안 됨
+    assert reaccel(bars, t(3)) is None                         # 고점·눌림 뒤부터 세면 새 파동 없음
+
+
+def test_realtime_reaccel_after_alert(tmp_path):
+    from datetime import timedelta as td
+    from tests.test_vsignals import T0
+    col, st, sent = make(tmp_path)
+    st.put_precursor_daily([{"d0": "2026-10-22", "symbol": "PENX", "score": 7, "close": 1.0, "created": "x", "signals": "[]",
+                             "metrics": json.dumps({"dd60": -80, "vol_ratio": 60})}])
+    st.put_daily_bars([{"symbol": "PENX", "d": "2026-10-22", "open": 1, "high": 1, "low": 1, "close": 1.0, "volume": 1}])
+    path = [(1.0, 1.1, 1.08)] * 3
+
+    class C:
+        def candles(self, sym, interval, count, before=None):
+            return {"candles": [{"timestamp": (T0 + td(minutes=k)).isoformat(), "openPrice": o, "highPrice": h,
+                                 "lowPrice": min(o, c), "closePrice": c, "volume": 50000} for k, (o, h, c) in enumerate(path)]}
+
+        def orderbook(self, sym):
+            return {"asks": []}
+
+    class Cal:
+        def classify(self, now):
+            return (None, "PRE")
+
+        def bounds(self, d, s):
+            return None
+    col.c, col.cal = C(), Cal()
+    col.clock = lambda: T0 + td(minutes=3)
+    col._rt_shares = {"PENX": 1e6}
+    col._rt_alert(st, "PENX", 80000.0, 70000.0, 1.08)          # 첫 알림 (가상 매매 알림은 세지 않음)
+    alerts = lambda: [m[0] for m in sent.msgs if m[0].startswith(("📶", "🚨", "🔁"))]
+    assert len(alerts()) == 1
+    # 2.0 까지 갔다가 1.6 (−20%) → 1.8 (저점 +12%) 다시 붙음
+    path += [(1.1, 2.0, 1.9), (1.9, 1.9, 1.7), (1.7, 1.7, 1.6), (1.6, 1.62, 1.62), (1.62, 1.8, 1.8)]
+    col.clock = lambda: T0 + td(minutes=9)
+    col._rt_alert(st, "PENX", 90000.0, 80000.0, 1.8)
+    assert len(alerts()) == 2 and alerts()[-1].startswith("🔁 재가속 (PENX · 펜엑스) — 오늘 1번째")
+    assert st.query("SELECT COUNT(*) FROM events WHERE kind='reaccel'")[0][0] == 1
+    col.clock = lambda: T0 + td(minutes=12)
+    col._rt_alert(st, "PENX", 90000.0, 80000.0, 1.85)          # 20분 안 → 또 안 보냄
+    assert len(alerts()) == 2
+
+
+def test_keep_watch_includes_faded_runners(tmp_path):
+    col, st, sent = make(tmp_path)
+    rows = {}
+    for sym, hi in (("RUNR", 1.8), ("FLAT", 1.05)):
+        st.put_daily_bars([{"symbol": sym, "d": "2026-10-21", "open": 1, "high": 1, "low": 1, "close": 1.0, "volume": 1},
+                           {"symbol": sym, "d": "2026-10-22", "open": 1, "high": hi, "low": 0.9, "close": 1.0, "volume": 1}])
+        rows[sym] = (sym, 1, "[]", "{}", 1.0)
+    keep = col._keep_watch("2026-10-22", None, rows)
+    assert keep == {"RUNR"}                                    # 어제 +80% 찍고 제자리로 온 종목은 계속 감시
