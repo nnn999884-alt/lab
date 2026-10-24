@@ -836,7 +836,8 @@ table.ra-tbl .num { text-align: right; } table.ra-tbl tr:hover td { background: 
   .ro-long { display: none; } .ro-short { white-space: nowrap; }
   table.det:has(.dc-list) { display: block; }
   .dc-list { display: flex; flex-direction: column; }
-  .dc { padding: 10px 4px; border-bottom: 1px solid var(--border); cursor: pointer; min-width: 0; }
+  .dc { padding: 8px 2px; border-bottom: 1px solid var(--border); cursor: pointer; min-width: 0; }
+  .dc-tags { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; } .dc-meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .dc.det-win { background: rgba(240, 68, 82, .08); } .dc.det-loss { background: rgba(49, 130, 246, .06); }
   .dc-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
   .dc-id { display: flex; gap: 6px; align-items: center; min-width: 0; flex-wrap: wrap; } .dc-id b { font-size: 14.5px; }
@@ -852,7 +853,30 @@ table.ra-tbl .num { text-align: right; } table.ra-tbl tr:hover td { background: 
 .det-stat .k { font-size: 11px; color: var(--text-muted); } .det-stat .v { font-size: 15px; font-weight: 700; margin-top: 1px; }
 .det-dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 8px 0; }
 .det-dl dt { font-weight: 700; color: var(--text-primary); } .det-dl dd { margin: 0; }
-@media (max-width: 700px) { .det-stat { flex: 1 1 calc(50% - 8px); min-width: 0; } }
+@media (max-width: 700px) { .det-stats { gap: 6px; flex-wrap: nowrap; } .det-stat { flex: 1 1 0; min-width: 0; padding: 5px 8px; }
+  .det-stat .k { font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .det-stat .v { font-size: 13.5px; } }
+/* 조기 감지 표: 촘촘하게 */
+table.det { font-size: 12.5px; }
+table.det th, table.det td { padding: 6px 8px; vertical-align: middle; white-space: nowrap; }
+table.det th { font-size: 11px; }
+table.det td.c-t { color: var(--text-secondary); } .det-sess { margin-left: 6px; font-family: inherit; font-size: 11px; color: var(--text-muted); }
+table.det td.c-s b { font-size: 13px; margin-right: 6px; } .det-name { color: var(--text-muted); font-size: 11.5px; display: inline-block; max-width: 150px;
+  overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
+table.det td.c-k .chip { margin-left: 4px; }
+table.det td.c-oh { width: 100%; }
+.det-res { display: inline-block; min-width: 44px; text-align: center; padding: 1px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 700; }
+.r-win { background: rgba(240, 68, 82, .16); color: var(--up); } .r-loss { background: rgba(49, 130, 246, .16); color: var(--down); }
+.r-none { background: var(--surface-2); color: var(--text-muted); } .r-live { background: rgba(250, 178, 25, .14); color: var(--warning); }
+.det-30 { margin-left: 6px; font-size: 11px; color: var(--up); font-weight: 700; }
+.det-n2 { color: var(--text-muted); font-size: 11px; font-family: inherit; }
+.oh-tag { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11.5px; border: 1px solid var(--border); color: var(--text-secondary); }
+.oh-tag.oh-hi { border-color: var(--critical); color: var(--text-primary); background: rgba(240, 68, 82, .12); }
+.oh-tag.oh-lo { border-color: #14b8a6; color: var(--text-primary); background: rgba(20, 184, 166, .12); }
+table.det caption.empty { caption-side: top; padding: 18px; color: var(--text-muted); }
+table.det tr.det-win td { background: rgba(240, 68, 82, .05); } table.det tr.det-loss td { background: rgba(49, 130, 246, .04); }
+/* 급등 후보 표도 간격 줄임 */
+.scr td { padding: 6px 9px; } .scr th { padding: 6px 9px; }
+.scr th, .scr th.num, table.det th { font-family: inherit !important; letter-spacing: 0; }   /* 한글 머리글이 고정폭 글꼴로 벌어지지 않게 */
 </style>
 </head>
 <body>
@@ -2033,7 +2057,7 @@ const DET_KIND = { precursor: ["🚨 전조", "k-pre"], burst: ["📶 터짐", "
 async function loadDet() {
   const d = await api("/api/detections?hours=36");
   if (unchanged("det", [d, detFilter, $("det-norun").checked])) return;
-  const st = d.stats || {}, base = st.base || {}, td = tradeDay();
+  const st = d.stats || {}, base = st.base || {}, td_ = tradeDay();
   const run = r => (r.chg_at || 0) >= 20;
   const rows = d.rows.filter(r => r.price != null && (detFilter === "all" || r.kind === "precursor") && !($("det-norun").checked && run(r)));
   const done = d.rows.filter(r => r.result), win = done.filter(r => r.result === "win").length;
@@ -2044,39 +2068,38 @@ async function loadDet() {
   stat("적중률", done.length ? `${Math.round(win / done.length * 100)}%` : "-", done.length ? (win / done.length >= 0.5 ? "pos" : "neg") : "");
   if (base.n) stat("평소 +30%", `${(base.hit30 / base.n * 100).toFixed(1)}%`);
   const t = $("det"); t.replaceChildren();
-  const h = t.createTHead().insertRow();
-  [["감지", ""], ["종목", ""], ["감지가", "num hide-m"], ["지금", "num"], ["결과", ""], ["과거 적중률", "num hide-m"], ["특징", "hide-m"]]
-    .forEach(([l, c]) => h.appendChild(el2("th", c, l)));
-  const tb = t.createTBody();
-  if (!rows.length) { const r = tb.insertRow(), c = r.insertCell(); c.colSpan = 7; c.className = "empty";
-    c.textContent = d.rows.length ? "조건에 맞는 감지 없음" : "최근 36시간 감지 없음 — 🚨 급등 전조·📶 거래 터짐 알림이 뜨면 여기서 결과까지 따라갑니다"; return; }
-  const two = (a, b, ca, cb) => { const w = document.createDocumentFragment(); w.append(el2("div", ca || "", a), el2("div", "det-n " + (cb || ""), b)); return w; };
+  if (!rows.length) { t.appendChild(el2("caption", "empty",
+    d.rows.length ? "조건에 맞는 감지 없음" : "최근 36시간 감지 없음 — 🚨 급등 전조·📶 거래 터짐 알림이 뜨면 여기서 결과까지 추적합니다")); return; }
   if (PHONE.matches) { detCards(t, rows, st, run); return; }
+  // 열: [제목, 클래스] — 숫자는 오른쪽 정렬, 마지막 '매물대' 만 남는 폭을 쓴다
+  const COLS = [["시각", "c-t"], ["종목", "c-s"], ["신호", "c-k"], ["감지가", "num"], ["현재가", "num"], ["감지 후", "num"], ["최고", "num"],
+                ["결과", "c-r"], ["과거 적중률", "num"], ["매물대", "c-oh"]];
+  const h = t.createTHead().insertRow();
+  COLS.forEach(([l, c]) => h.appendChild(el2("th", c, l)));
+  const tb = t.createTBody();
   rows.slice(0, 60).forEach(r => {
     const tr = tb.insertRow(); tr.className = r.result === "win" ? "det-win" : r.result === "loss" ? "det-loss" : "";
-    const cell = cls => { const c = tr.insertCell(); c.className = cls || ""; return c; };
+    const td = (cls, text) => { const c = tr.insertCell(); c.className = cls || ""; if (text != null) c.textContent = text; return c; };
     const hm = new Date(r.ts).toLocaleTimeString("ko-KR", { timeZone: "Asia/Seoul", hour: "2-digit", minute: "2-digit", hour12: false });
-    cell().append(two(kstDay(r.ts) === kstDay(new Date()) ? hm : kst(r.ts).slice(0, 7) + " " + hm, etSession(r.ts), "mono"));
+    const tc = td("c-t mono", kstDay(r.ts) === kstDay(new Date()) ? hm : kst(r.ts).slice(0, 7) + " " + hm);
+    tc.appendChild(el2("span", "det-sess", etSession(r.ts).split(" ")[0])); tc.title = etSession(r.ts);
+    const sc = td("c-s"); sc.append(el2("b", "mono", r.symbol), el2("span", "det-name", r.name || "")); sc.title = r.name || "";
     const [kl, kc] = DET_KIND[r.kind] || [r.kind, ""];
-    const c1 = cell(), top = el2("div", "det-sym");
-    top.append(el2("b", "", r.symbol), el2("span", "ev-kind " + kc, kl));
-    if (run(r)) top.append(el2("span", "chip", "추격"));
-    c1.append(top, el2("div", "det-n", r.name || ""));
-    cell("num hide-m").append(two("$" + fmtPx(r.price), "전일 " + fmtPct(r.chg_at), "mono", tone(r.chg_at)));
+    const kcell = td("c-k"); kcell.appendChild(el2("span", "ev-kind " + kc, kl)); if (run(r)) kcell.appendChild(el2("span", "chip det-chase", "추격"));
+    const pc = td("num mono", "$" + fmtPx(r.price)); pc.title = "전일 대비 " + fmtPct(r.chg_at);
     const now = (r.last / r.price - 1) * 100, mx = (r.high / r.price - 1) * 100;
-    const c3 = cell("num"); c3.append(el2("div", "mono " + (tone(now) || ""), "$" + fmtPx(r.last)));
-    const sub = el2("div", "det-n"); sub.append("감지 후 ", el2("span", tone(now) || "", fmtPct(now)), " · 최고 ", el2("span", "pos", fmtPct(mx))); c3.append(sub);
-    const res = r.result === "win" ? ["✅ 적중", "pos"] : r.result === "loss" ? ["❌ 손절", "neg"]
-      : r.date < td ? ["미결", "det-n"] : ["⏳ 진행 중", "det-n"];
-    cell().append(two(res[0], r.hit30 ? "당일 +30%" : "", res[1], r.hit30 ? "pos" : ""));
-    const s = st[r.kind + (run(r) ? ":run" : ":early")] || st[r.kind];
-    const c5 = cell("num hide-m");
-    if (s && s.n) c5.append(two(`${Math.round(s.win / s.n * 100)}%`, `${s.n}건 · 당일 +30% ${Math.round(s.hit30 / s.n * 100)}%${s.n < 20 ? " · 표본 적음" : ""}`, "mono"));
-    else c5.append(two("-", "집계 전"));
-    const c6 = cell("hide-m"), ch = el2("div", "chips");
-    if (r.overhead) ch.append(el2("span", "chip " + (/두꺼움/.test(r.overhead) ? "oh-hi" : /얇음/.test(r.overhead) ? "oh-lo" : ""), r.overhead));
-    (r.tags || []).slice(0, 4).forEach(x => ch.append(el2("span", "chip", x)));
-    c6.append(ch);
+    td("num mono", "$" + fmtPx(r.last));
+    td("num mono " + (tone(now) || ""), fmtPct(now));
+    td("num mono " + (mx > 0 ? "pos" : ""), fmtPct(mx));
+    const res = r.result === "win" ? ["적중", "r-win"] : r.result === "loss" ? ["손절", "r-loss"] : r.date < td_ ? ["미결", "r-none"] : ["진행 중", "r-live"];
+    const rc = td("c-r"); rc.appendChild(el2("span", "det-res " + res[1], res[0])); if (r.hit30) rc.appendChild(el2("span", "det-30", "+30%"));
+    const s_ = st[r.kind + (run(r) ? ":run" : ":early")] || st[r.kind];
+    const hc = td("num mono");
+    if (s_ && s_.n) { hc.append(`${Math.round(s_.win / s_.n * 100)}%`, el2("span", "det-n2", ` ${s_.n}건`)); hc.title = `${s_.n}건 · 당일 +30% ${Math.round(s_.hit30 / s_.n * 100)}%${s_.n < 20 ? " · 표본 적음" : ""}`; }
+    else hc.textContent = "-";
+    const oc = td("c-oh");
+    if (r.overhead) { const thick = /두꺼움/.test(r.overhead), thin = /얇음/.test(r.overhead);
+      oc.appendChild(el2("span", "oh-tag " + (thick ? "oh-hi" : thin ? "oh-lo" : ""), r.overhead.replace(/^매물대 /, ""))); }
     tr.onclick = () => { lookup(r.symbol); showTab("symbol"); };
   });
 }
@@ -2094,16 +2117,17 @@ function detCards(t, rows, st, run) {
     id.append(mk("b", "mono", r.symbol), mk("span", "ev-kind " + kc, kl)); if (run(r)) id.append(mk("span", "chip", "추격"));
     const px = mk("div", "dc-px"); px.append(mk("span", "mono " + (tone(now) || ""), "$" + fmtPx(r.last)), mk("span", "mono dc-chg " + (tone(now) || ""), fmtPct(now)));
     top.append(id, px); c.appendChild(top);
-    if (r.name) c.appendChild(mk("div", "det-n", r.name));
     const hm = new Date(r.ts).toLocaleTimeString("ko-KR", { timeZone: "Asia/Seoul", hour: "2-digit", minute: "2-digit", hour12: false });
-    c.appendChild(mk("div", "dc-meta", `${kstDay(r.ts) === kstDay(new Date()) ? hm : kst(r.ts).slice(0, 7) + " " + hm} (${etSession(r.ts).replace(" ET", " ET")}) · 감지가 $${fmtPx(r.price)} · 이후 최고 ${fmtPct(mx)}`));
-    const res = r.result === "win" ? ["✅ 적중", "pos"] : r.result === "loss" ? ["❌ 손절", "neg"] : r.date < tradeDay() ? ["미결", ""] : ["⏳ 진행 중", ""];
+    c.appendChild(mk("div", "dc-meta", `${kstDay(r.ts) === kstDay(new Date()) ? hm : kst(r.ts).slice(0, 7) + " " + hm} ${etSession(r.ts).split(" ")[0]} · 감지 $${fmtPx(r.price)} · 최고 ${fmtPct(mx)}` + (r.name ? ` · ${r.name}` : "")));
+    const res = r.result === "win" ? ["적중", "r-win"] : r.result === "loss" ? ["손절", "r-loss"] : r.date < tradeDay() ? ["미결", "r-none"] : ["진행 중", "r-live"];
     const s = st[r.kind + (run(r) ? ":run" : ":early")] || st[r.kind];
-    const bot = mk("div", "dc-bot");
-    bot.append(mk("span", "dc-res " + res[1], res[0] + (r.hit30 ? " · 당일 +30%" : "")));
-    if (s && s.n) bot.append(mk("span", "det-n", `과거 적중률 ${Math.round(s.win / s.n * 100)}% (${s.n}건)`));
+    const bot = mk("div", "dc-bot"), left = mk("div", "dc-tags");
+    left.append(mk("span", "det-res " + res[1], res[0]));
+    if (r.hit30) left.append(mk("span", "det-30", "+30%"));
+    if (r.overhead) left.append(mk("span", "oh-tag " + (/두꺼움/.test(r.overhead) ? "oh-hi" : /얇음/.test(r.overhead) ? "oh-lo" : ""), r.overhead.replace(/^매물대 /, "매물 ").replace(/ · 저항 .*/, "")));
+    bot.append(left);
+    if (s && s.n) bot.append(mk("span", "det-n2", `적중률 ${Math.round(s.win / s.n * 100)}% · ${s.n}건`));
     c.appendChild(bot);
-    if (r.overhead) c.appendChild(mk("div", "dc-oh " + (/두꺼움/.test(r.overhead) ? "neg" : /얇음/.test(r.overhead) ? "pos" : ""), r.overhead));
     c.onclick = () => { lookup(r.symbol); showTab("symbol"); };
     box.appendChild(c);
   });
@@ -2402,7 +2426,9 @@ function drawPre() {
   const wrap = document.createElement("div"); wrap.className = "scr-wrap";
   const t = document.createElement("table"); t.className = "scr";
   const thead = t.createTHead().insertRow();
-  PRE_COLS.forEach(([k, h, , , mob, num]) => {
+  const shown = rows.slice(0, preShown);
+  const cols = PRE_COLS.filter(([k, , f, , , num]) => !num || k === "px" || shown.some(x => f(x) != null));   // 전부 '-' 인 숫자 열은 뺀다
+  cols.forEach(([k, h, , , mob, num]) => {
     const th = document.createElement("th"); th.textContent = h + (preSort.k === k ? (preSort.dir > 0 ? " ▲" : " ▼") : "");
     th.className = (num ? "num" : "") + (mob ? "" : " hide-m") + (k === "sym" ? " sticky" : "");
     if (k !== "tag") th.onclick = () => { preSort = preSort.k === k ? { k, dir: -preSort.dir } : { k, dir: k === "sym" ? 1 : -1 }; drawPre(); };
@@ -2415,7 +2441,7 @@ function drawPre() {
     const heat = chg == null ? 0 : Math.max(-1, Math.min(1, chg / 30));
     tr.style.setProperty("--heat", Math.abs(heat).toFixed(2));
     tr.className = (heat > 0 ? "h-up" : heat < 0 ? "h-dn" : "") + (x.live.length ? " live" : "");
-    PRE_COLS.forEach(([k, , f, fmt, mob, num]) => {
+    cols.forEach(([k, , f, fmt, mob, num]) => {
       const td = tr.insertCell();
       td.className = (num ? "num" : "") + (mob ? "" : " hide-m") + (k === "sym" ? " sticky" : "");
       if (k === "sym") {
