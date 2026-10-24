@@ -87,7 +87,7 @@ class CollectorConfig:
     candle_sync_minutes: int = 30    # 감시 종목 1분봉 동기화 주기 (세션 종료 시에도 실행)
     ranking_poll_minutes: int = 10   # 휴장·애프터마켓
     ranking_poll_live_seconds: int = 60   # 데이·프리·정규장: 랭킹이 계속 바뀌므로 1분마다
-    edgar_poll_minutes: int = 5
+    edgar_poll_minutes: int = 1
     runner_min_pct: float = 30.0     # 정규장 종가 기준 이만큼 오른 종목을 급등주로 기록
     news_poll_minutes: int = 2
     precursor: bool = True           # 급등 전조 점수 (일봉: 장 마감 후 전 종목, 장중: 점수 높은 종목 1분마다)
@@ -96,8 +96,11 @@ class CollectorConfig:
     precursor_rank_max: int = 40     # 목록 밖이라도 지금 랭킹(급등률·거래대금·거래량)에 든 종목을 이만큼 더 장중 감시
     fast_scan_seconds: int = 10      # 거래대금·거래량 실시간 랭킹을 이 간격으로 봐서 새로 든 종목을 바로 실시간 구독 (0 = 끔)
     realtime_alerts: bool = True     # 웹소켓 체결로 실시간 알림 (계정당 연결 2개 중 1개 사용, 끊기면 1분 확인으로 대체)
+    halt_alerts: bool = True         # 뉴스 대기 거래정지가 뜨면 바로 알림 + 실시간 구독 (재개 순간 거래 터짐을 잡게)
+    pre_open_watch: bool = True      # 03:55 ET: 데이마켓에서 움직인 종목을 '프리 개장 주목' 으로 다시 알리고 실시간 구독 고정
     rt_min_dollar: float = 5e4       # 최근 60초 거래대금 이상이거나
-    rt_min_turnover: float = 0.5     # 최근 60초 회전율(%) 이상이고
+    rt_min_turnover: float = 0.5     # 최근 60초 회전율(%) 이상이고 (이때도 거래대금은 rt_min_turn_dollar 이상)
+    rt_min_turn_dollar: float = 1e4  # 발행주식이 아주 적으면 $2천으로도 회전율이 차서 — 회전율 조건의 최소 거래대금
     rt_surge: float = 5.0            # 최근 60초 거래량이 그 종목 직전 30분 분당 평균의 이만큼 배 이상이면 알림 (등락률은 안 봄)
     spike_min_dollar: float = 5000.0  # 1분 급등·급락 이벤트: 그 2분 거래대금이 이만큼은 돼야 (얇은 체결 소음 제외)
     precursor_daily_alert: int = 10  # 장 마감 뒤 점수 계산이 끝나면 상위 N종목 목록 알림 (0 = 끔)
@@ -106,7 +109,7 @@ class CollectorConfig:
     archive_1m: bool = True          # 정규장이 끝나면 오늘 감시·매매한 종목의 하루치 1분봉을 research.db 에 저장 (나중에 검증·보완용)
     short_data: bool = True          # 공매도(FINRA)·대차(IBKR)·SSR·Reg SHO·거래정지 수집
     borrow_poll_minutes: int = 30    # IBKR 대차 파일은 15분마다 갱신
-    halts_poll_minutes: int = 2
+    halts_poll_minutes: int = 1
     short_daily_poll_minutes: int = 60   # FINRA·SSR·Reg SHO 일별 파일 (나오면 한 번만 저장)
     news_feeds: list = field(default_factory=list)   # 비우면 news.DEFAULT_FEEDS
     universe_refresh_hours: int = 24

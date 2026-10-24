@@ -365,3 +365,46 @@ def test_report_counts_rejected_symbols_once():
     assert _short("호재 공시, 고점 대비 밀림") == "고점 대비 밀림"
     assert _short("가격범위 밖 $9.5400") == "가격범위 밖"
     assert _short("희석 위험 100점 (ATM 진행 중, 증자 등록)") == "희석 위험"
+
+
+def test_news_halt_alert_and_resume(tmp_path):
+    col, st, sent = make(tmp_path)
+    st.put_precursor_daily([{"d0": "2026-10-22", "symbol": "PENX", "score": 7, "close": 1.0, "created": "x", "signals": "[]", "metrics": "{}"}])
+
+    class Short:
+        rows = [{"symbol": "PENX", "halt_ts": "2026-10-23T08:40:00-04:00", "reason": "T1", "reason_ko": "뉴스·재개 대기", "resume_ts": None},
+                {"symbol": "PENX", "halt_ts": "2026-10-23T09:00:00-04:00", "reason": "LUDP", "reason_ko": "변동성 정지(LULD)", "resume_ts": None}]
+
+        def halts(self):
+            return self.rows
+    col.short = Short()
+    col.clock = lambda: T0
+    col.poll_halts()
+    assert len(sent.msgs) == 1 and sent.msgs[0][0].startswith("🛑 뉴스 대기 거래정지 (PENX · 펜엑스)") and "08:40 ET" in sent.msgs[0][0]
+    assert "PENX" in col._fast_hot[1]                                    # 실시간 구독에 들어감
+    col.poll_halts()                                                      # 같은 정지 → 다시 안 보냄
+    assert len(sent.msgs) == 1
+    Short.rows = [dict(Short.rows[0], resume_ts="2026-10-23T09:50:00-04:00")]
+    col.poll_halts()
+    assert sent.msgs[-1][0].startswith("▶ PENX 펜엑스 거래 재개 예정 09:50 ET")
+
+
+def test_pre_open_watch_once(tmp_path):
+    col, st, sent = make(tmp_path)
+    col.universe = {"PENX": {"name": "펜엑스", "last": 1.3}, "FLAT": {"name": "평평", "last": 1.0}, "BRST": {"name": "터짐", "last": 1.02}}
+    st.put_precursor_daily([{"d0": "2026-10-22", "symbol": s, "score": 7, "close": 1.0, "created": "x", "signals": "[]", "metrics": "{}"}
+                            for s in col.universe])
+    st.put_daily_bars([{"symbol": s, "d": "2026-10-22", "open": 1, "high": 1, "low": 1, "close": 1.0, "volume": 1} for s in col.universe])
+    st.put_precursor_live([{"d0": "2026-10-22", "symbol": "BRST", "ts": "x", "signals": "[]", "metrics": "{}",
+                            "alerted": "2026-10-23T03:00:00+00:00"}])
+
+    class Cal:
+        def bounds(self, d, s):
+            return (datetime(2026, 10, 23, 0, 0, tzinfo=timezone.utc),)
+    col.cal = Cal()
+    t = datetime(2026, 10, 23, 7, 50, tzinfo=timezone.utc)               # 03:50 ET → 아직
+    assert col.pre_open_watch(t, "d") == []
+    t = datetime(2026, 10, 23, 7, 56, tzinfo=timezone.utc)               # 03:56 ET
+    assert col.pre_open_watch(t, "d") == ["PENX", "BRST"]                 # +30% 와 데이마켓 거래 터짐, FLAT 은 빠짐
+    assert sent.msgs[-1][0].startswith("🌅 프리마켓 개장(04:00 ET) 주목")
+    assert col.pre_open_watch(t, "d") == []                               # 하루 한 번

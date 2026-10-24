@@ -150,6 +150,8 @@ class Collector:
                 self._run("halts", self.poll_halts)
         if c.precursor:
             self._run("precursor_daily", self.ensure_precursor_daily, trade_date, session)
+            if c.pre_open_watch and session == DAY:
+                self._run("pre_open", self.pre_open_watch, now, trade_date)
             if session in (DAY, PRE, REGULAR) and self._due("precursor_live", now, timedelta(seconds=60)):
                 self._run("precursor_live", self.poll_precursor_live, now, trade_date, session)
         if session == CLOSED:
@@ -820,7 +822,8 @@ class Collector:
         d60 = sum(p * v for _, p, v in w)
         v60 = sum(v for _, _, v in w)
         sh = self._rt_shares.get(sym)
-        if not (d60 >= self.cfg.rt_min_dollar or (sh and self.cfg.rt_min_turnover <= v60 / sh * 100 <= 1000)):
+        if not (d60 >= self.cfg.rt_min_dollar or (sh and d60 >= self.cfg.rt_min_turn_dollar
+                                                    and self.cfg.rt_min_turnover <= v60 / sh * 100 <= 1000)):
             return
         base = sum(v for k, v in mins.items() if m - 31 <= k <= m - 2) / 30   # 직전 30분 분당 평균 (지금 분·직전 분 제외)
         if sym not in self._rt_seeded or v60 < self.cfg.rt_surge * max(base, 1.0):
@@ -870,6 +873,56 @@ class Collector:
         tag = f"⚡ 실시간 1분 {money_s(d60)}" + (f" · 회전율 {v60 / sh * 100:.1f}%" if sh else "")
         log.info("실시간 거래 터짐 %s 60초 $%.0f 회전율 %s", sym, d60, f"{v60 / sh * 100:.2f}%" if sh else "-")
         self._fast_confirm(now, trade_date, session, store, d0, sym, pc, check=False, tags=[tag])
+
+    def _watch_now(self, symbols, store=None) -> None:
+        """종목을 지금 바로 실시간 구독·1분 감시·가상 매매 대상에 넣는다 (일봉 점수가 없으면 계산)."""
+        store = store or self.store
+        d0 = store.query("SELECT MAX(d0) FROM precursor_daily")
+        if not d0 or not d0[0][0]:
+            return
+        d0 = d0[0][0]
+        if self._fast_hot[0] != d0:
+            self._fast_hot = (d0, set())
+        self._fast_hot[1].update(symbols)
+        for s in symbols:
+            if not store.query("SELECT 1 FROM precursor_daily WHERE d0=? AND symbol=?", (d0, s)):
+                row = self._precursor_row(s, d0, store, src="fast")
+                if row:
+                    store.put_precursor_daily([row])
+        self._rt_set(list(self._rt_syms))
+
+    def pre_open_watch(self, now: datetime, trade_date) -> list[str]:
+        """동부 03:55 (데이마켓 끝나기 직전) 한 번: 데이마켓에서 거래가 터졌거나 +15% 넘게 오른 종목 → '프리 개장 주목' 알림.
+        10/23 LABT 는 데이마켓 23:03 에 +20% 였다가 04:01 프리 개장 1분 만에 +122% — 개장 순간에 끝나는 경우가 있다."""
+        from ..trading.messages import pct, px
+        t = now.astimezone(ET)
+        if not (t.hour == 3 and t.minute >= 55) or getattr(self, "_pre_open_sent", None) == trade_date:
+            return []
+        self._pre_open_sent = trade_date
+        d0 = self.store.query("SELECT MAX(d0) FROM precursor_daily")
+        if not d0 or not d0[0][0]:
+            return []
+        d0 = d0[0][0]
+        day_start = self.cal.bounds(trade_date, DAY)
+        start = iso(day_start[0]) if day_start else iso(now - timedelta(hours=8))
+        burst = {r[0] for r in self.store.query("SELECT symbol FROM precursor_live WHERE d0=? AND alerted>=?", (d0, start))}
+        pcs = dict(self.store.query("SELECT symbol, close FROM daily_bars WHERE d=?", (d0,)))
+        rows = []
+        for s, v in self.universe.items():
+            pc, last = pcs.get(s), v.get("last")
+            if pc and last and (s in burst or last >= pc * 1.15):
+                rows.append((s, v.get("name") or "", last, (last / pc - 1) * 100, s in burst))
+        rows.sort(key=lambda r: -r[3])
+        rows = rows[:15]
+        if not rows:
+            return []
+        self._watch_now([r[0] for r in rows])
+        if self.notifier:
+            self.notifier.send("\n".join(["🌅 프리마켓 개장(04:00 ET) 주목 — 데이마켓에서 움직인 종목", "──────────────"]
+                                         + [f"{s} {n} · {px(p)} ({pct(c)})" + (" · 거래 터짐" if b else "") for s, n, p, c, b in rows]
+                                         + ["", "개장 순간 한 번에 터지는 경우가 있어 실시간 구독에 고정했습니다"]))
+        log.info("프리 개장 주목 %d종목: %s", len(rows), ", ".join(r[0] for r in rows))
+        return [r[0] for r in rows]
 
     # ---------- 랭킹 훑기: 거래대금·거래량 실시간 랭킹에 새로 든 종목을 바로 실시간 구독 ----------
     def _fast_loop(self) -> None:
@@ -1140,7 +1193,33 @@ class Collector:
             for r in new:
                 if not r["resume_ts"]:
                     self._event(self.clock(), r["symbol"], "halt", f"⏸ {r['symbol']} 거래정지 ({r['reason_ko']})")
+                if self.cfg.halt_alerts and "뉴스" in (r["reason_ko"] or ""):
+                    self._halt_alert(r)
             log.info("거래정지 %d건: %s", len(new), ", ".join(f"{r['symbol']}({r['reason_ko']})" for r in new[:10]))
+
+    def _halt_alert(self, r: dict) -> None:
+        """뉴스 대기 거래정지 → 바로 알림, 재개 시각이 나오면 한 번 더. 정지된 종목은 실시간 구독에 넣어 재개 순간 거래 터짐을 잡는다.
+        10/23: 뉴스 정지 3건 중 BOLT(재개 1분 만에 +57%, 고가 +86%)·AIOK(+267%) 급등, CATX 는 −29% — 방향은 뉴스 내용에 달림."""
+        sym = r["symbol"]
+        key = (sym, r["halt_ts"], bool(r["resume_ts"]))
+        sent = getattr(self, "_halt_sent", set())
+        if key in sent:
+            return
+        sent.add(key)
+        self._halt_sent = sent
+        self._watch_now([sym])
+        f = lambda ts: datetime.fromisoformat(ts).astimezone(ET).strftime("%H:%M") if ts else "?"
+        name = (self.universe.get(sym) or {}).get("name") or ""
+        last = (self.universe.get(sym) or {}).get("last")
+        if r["resume_ts"]:
+            text = f"▶ {sym} {name} 거래 재개 예정 {f(r['resume_ts'])} ET (정지 {f(r['halt_ts'])} · {r['reason_ko']})\n재개 순간 거래가 터지면 바로 알림"
+        else:
+            text = (f"🛑 뉴스 대기 거래정지 ({sym} · {name})\n정지 {f(r['halt_ts'])} ET · 마지막 ${last:.4g}" if last else
+                    f"🛑 뉴스 대기 거래정지 ({sym} · {name})\n정지 {f(r['halt_ts'])} ET") + \
+                   "\n재개 시각이 나오면 다시 알림 · 실시간 구독에 넣었습니다 (급등일 수도, 악재일 수도)"
+        if self.notifier:
+            self.notifier.send(text)
+        log.info("뉴스 정지 알림 %s (%s)", sym, "재개 예정" if r["resume_ts"] else "정지")
 
     def backfill_details(self, days: int = 14, limit: int = 300) -> None:
         """세부 숫자(가격·주식 수·워런트·Form 4 거래)가 없는 최근 공시를 채운다 (예전에 받은 공시용, 시작할 때 한 번)."""
