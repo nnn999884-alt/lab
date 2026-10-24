@@ -13,37 +13,37 @@
   color-scheme: light;
   --bg: #f4f5f7; --panel: #ffffff; --panel-2: #f6f7f9; --line: #e3e6ea; --line-2: #eef0f3;
   --text: #11151b; --text-2: #4b5462; --text-3: #848c99;
-  --accent: #2f6fed; --accent-soft: rgba(47, 111, 237, .09);
-  --up: #e5343f; --down: #2563eb; --up-soft: rgba(229, 52, 63, .09); --down-soft: rgba(37, 99, 235, .09);
-  --warn: #c98200; --warn-soft: rgba(201, 130, 0, .12); --good: #14915c; --good-soft: rgba(20, 145, 92, .11);
-  --violet: #7258e8; --violet-soft: rgba(114, 88, 232, .11); --teal: #0f9488; --teal-soft: rgba(15, 148, 136, .11);
+  --accent: #5b7fd6; --accent-soft: rgba(91, 127, 214, .10);
+  --up: #d0646a; --down: #4f7fcc; --up-soft: rgba(208, 100, 106, .10); --down-soft: rgba(79, 127, 204, .10);
+  --warn: #b3843a; --warn-soft: rgba(179, 132, 58, .13); --good: #4d9a78; --good-soft: rgba(77, 154, 120, .12);
+  --violet: #8a7bd1; --violet-soft: rgba(138, 123, 209, .12); --teal: #4c9e96; --teal-soft: rgba(76, 158, 150, .12);
   --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   /* 차트 스크립트가 읽는 이름 */
   --surface-0: var(--bg); --surface-1: var(--panel); --surface-2: var(--panel-2); --border: var(--line);
   --text-primary: var(--text); --text-secondary: var(--text-2); --text-muted: var(--text-3);
-  --grid: #eceef1; --axis: #b5bcc6; --series-1: #2f6fed; --series-2: #e8682f; --series-3: #14915c; --series-4: #c98200;
+  --grid: #eceef1; --axis: #b5bcc6; --series-1: #5b7fd6; --series-2: #d58a63; --series-3: #4d9a78; --series-4: #b3843a;
   --critical: var(--up); --warning: var(--warn);
 }
 :root[data-theme="dark"] {
   color-scheme: dark;
   --bg: #0b0d11; --panel: #12151b; --panel-2: #181c23; --line: #232832; --line-2: #1b1f27;
   --text: #e8ebf0; --text-2: #a8b0bd; --text-3: #6d7584;
-  --accent: #5b8dff; --accent-soft: rgba(91, 141, 255, .13);
-  --up: #ff5260; --down: #4d8dff; --up-soft: rgba(255, 82, 96, .13); --down-soft: rgba(77, 141, 255, .13);
-  --warn: #f2a93b; --warn-soft: rgba(242, 169, 59, .14); --good: #2fc37f; --good-soft: rgba(47, 195, 127, .13);
-  --violet: #a594ff; --violet-soft: rgba(165, 148, 255, .14); --teal: #2cc4b4; --teal-soft: rgba(44, 196, 180, .13);
-  --grid: #1e232c; --axis: #4b5361; --series-1: #5b8dff; --series-2: #f07a3f; --series-3: #2fc37f; --series-4: #f2a93b;
+  --accent: #8aa4e8; --accent-soft: rgba(138, 164, 232, .13);
+  --up: #e8878c; --down: #7fa6e6; --up-soft: rgba(232, 135, 140, .13); --down-soft: rgba(127, 166, 230, .13);
+  --warn: #d9b47a; --warn-soft: rgba(217, 180, 122, .14); --good: #7cc4a2; --good-soft: rgba(124, 196, 162, .13);
+  --violet: #b3a8ec; --violet-soft: rgba(179, 168, 236, .14); --teal: #7cc4bc; --teal-soft: rgba(124, 196, 188, .13);
+  --grid: #1e232c; --axis: #4b5361; --series-1: #8aa4e8; --series-2: #e0a07c; --series-3: #7cc4a2; --series-4: #d9b47a;
 }
 @media (prefers-color-scheme: dark) {
   :root:where(:not([data-theme="light"])) {
     color-scheme: dark;
     --bg: #0b0d11; --panel: #12151b; --panel-2: #181c23; --line: #232832; --line-2: #1b1f27;
     --text: #e8ebf0; --text-2: #a8b0bd; --text-3: #6d7584;
-    --accent: #5b8dff; --accent-soft: rgba(91, 141, 255, .13);
-    --up: #ff5260; --down: #4d8dff; --up-soft: rgba(255, 82, 96, .13); --down-soft: rgba(77, 141, 255, .13);
-    --warn: #f2a93b; --warn-soft: rgba(242, 169, 59, .14); --good: #2fc37f; --good-soft: rgba(47, 195, 127, .13);
-    --violet: #a594ff; --violet-soft: rgba(165, 148, 255, .14); --teal: #2cc4b4; --teal-soft: rgba(44, 196, 180, .13);
-    --grid: #1e232c; --axis: #4b5361; --series-1: #5b8dff; --series-2: #f07a3f; --series-3: #2fc37f; --series-4: #f2a93b;
+    --accent: #8aa4e8; --accent-soft: rgba(138, 164, 232, .13);
+    --up: #e8878c; --down: #7fa6e6; --up-soft: rgba(232, 135, 140, .13); --down-soft: rgba(127, 166, 230, .13);
+    --warn: #d9b47a; --warn-soft: rgba(217, 180, 122, .14); --good: #7cc4a2; --good-soft: rgba(124, 196, 162, .13);
+    --violet: #b3a8ec; --violet-soft: rgba(179, 168, 236, .14); --teal: #7cc4bc; --teal-soft: rgba(124, 196, 188, .13);
+    --grid: #1e232c; --axis: #4b5361; --series-1: #8aa4e8; --series-2: #e0a07c; --series-3: #7cc4a2; --series-4: #d9b47a;
   }
 }
 
@@ -71,7 +71,7 @@ button { font: inherit; font-size: 12.5px; color: var(--text); background: var(-
 button:hover { background: var(--panel-2); }
 button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 button.danger { color: var(--up); border-color: color-mix(in srgb, var(--up) 45%, var(--line)); }
-button.active { background: var(--up); border-color: var(--up); color: #fff; }
+button.active { background: var(--up-soft); border-color: var(--up); color: var(--up); }
 input, select { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line); border-radius: 7px; padding: 5px 9px; }
 .seg { display: inline-flex; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 2px; gap: 2px; }
 .seg button { border: 0; background: transparent; border-radius: 6px; padding: 3px 10px; font-size: 12px; font-weight: 600; color: var(--text-2); }
@@ -127,7 +127,7 @@ body.readonly .controls, body.readonly .strat button { display: none; }
 .chips { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
 .chip { display: inline-block; font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 5px; background: var(--panel-2); color: var(--text-2);
   border: 1px solid var(--line); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chip.live { background: var(--up); border-color: var(--up); color: #fff; }
+.chip.live { background: var(--up-soft); border-color: transparent; color: var(--up); }
 .chip.vol { background: var(--warn-soft); border-color: transparent; color: var(--warn); }
 .chip.filing { background: var(--violet-soft); border-color: transparent; color: var(--violet); }
 .chip.pattern { background: var(--teal-soft); border-color: transparent; color: var(--teal); }
@@ -152,8 +152,8 @@ td.num, th.num { text-align: right; }
 tbody tr { cursor: pointer; } tbody tr:hover td { background: var(--panel-2); }
 .scr th { cursor: pointer; user-select: none; } .scr th:hover { color: var(--text); }
 .scr td.pos, .scr td.neg { font-weight: 700; }
-.scr tr.h-up td { background: rgba(229, 52, 63, calc(var(--heat) * .09)); }
-.scr tr.h-dn td { background: rgba(37, 99, 235, calc(var(--heat) * .07)); }
+.scr tr.h-up td { background: color-mix(in srgb, var(--up) calc(var(--heat) * 9%), transparent); }
+.scr tr.h-dn td { background: color-mix(in srgb, var(--down) calc(var(--heat) * 7%), transparent); }
 .scr td.sticky, .scr th.sticky { position: sticky; left: 0; z-index: 1; background: var(--panel); }
 .scr th.sticky { z-index: 2; }
 .scr tr.live td.sticky { box-shadow: inset 2px 0 0 var(--up); }
@@ -446,7 +446,7 @@ table.det caption.empty { caption-side: top; padding: 18px; }
   .pc-sort { font-size: 12.5px; padding: 5px 8px; }
   .pc-list { display: flex; flex-direction: column; margin: 0 -12px; }
   .pc-it { display: flex; justify-content: space-between; gap: 10px; padding: 9px 12px; border-bottom: 1px solid var(--line-2); cursor: pointer; }
-  .pc-it.h-up { background: linear-gradient(90deg, transparent, rgba(229, 52, 63, calc(var(--heat) * .14))); }
+  .pc-it.h-up { background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--up) calc(var(--heat) * 12%), transparent)); }
   .pc-it.live { box-shadow: inset 2px 0 0 var(--warn); }
   .pc-l { min-width: 0; flex: 1; } .pc-top { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; } .pc-top b { font-size: 14px; }
   .pc-name { font-size: 11.5px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -529,6 +529,26 @@ table.ca-tbl tr.off .ca-fill { opacity: .35; }
   .sym-tabs { margin-bottom: -13px; }
   .det-scroll { max-height: none; min-height: 0; }
 }
+/* ---------- 휴대폰 보완 ---------- */
+.m-tabs { display: none; }
+@media (max-width: 700px) {
+  #main-tabs, #side-tabs { display: none !important; }
+  .m-tabs { display: flex; order: 0; position: sticky; top: 48px; z-index: 25; background: var(--bg); padding-top: 8px; margin: 0 -12px -1px; padding-left: 12px; padding-right: 12px; gap: 3px; }
+  .m-tabs button { flex: 1; justify-content: center; padding: 9px 0; font-size: 13px; }
+  .det-wrap, .pre-wrap, .feed-wrap, .fil-wrap, .vs-wrap { order: 1 !important; border-top-left-radius: 0; border-top-right-radius: 0; }
+  /* 위 요약: 옆으로 넘기는 한 줄 */
+  .kpis { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; margin-bottom: 10px; }
+  .kpis::-webkit-scrollbar, .ptabs::-webkit-scrollbar { display: none; }
+  .kpi { flex: 0 0 44%; scroll-snap-align: start; border-top: 0 !important; border-left: 1px solid var(--line-2) !important; }
+  .kpi:first-child { border-left: 0 !important; }
+  .kpi .v { font-size: 14px; white-space: nowrap; } .kpi .n { -webkit-line-clamp: 1; }
+  .card.brief-wrap { margin-bottom: 4px; }
+  /* 종목 상세 탭도 위에 붙음 */
+  .sym-tabs { position: sticky; top: 48px; z-index: 25; background: var(--bg); padding-top: 8px; margin: 4px -12px -13px; padding-left: 12px; padding-right: 12px; }
+  .sym-tabs button { flex: 1; justify-content: center; padding: 9px 4px; }
+  .sym-tabs .ic { display: none; }
+  button, .seg button { min-height: 32px; }
+}
 </style>
 </head>
 <body>
@@ -566,6 +586,9 @@ table.ca-tbl tr.off .ca-fill { opacity: .35; }
       <div class="brief-grid" id="brief"></div>
     </details>
     <div class="home-cols">
+    <div class="ptabs m-tabs" id="m-tabs" role="tablist">
+      <button data-p="det-wrap">감지</button><button data-p="pre-wrap">후보</button><button data-p="feed-wrap">신호</button><button data-p="fil-wrap">공시</button><button data-p="vs-wrap">매매</button>
+    </div>
       <div class="home-main">
     <div class="ptabs" id="main-tabs" role="tablist">
       <button data-p="det-wrap"><i class="ic ic-target" aria-hidden="true"></i>조기 감지 <span class="pt-n" id="pt-det"></span></button>
@@ -1365,7 +1388,7 @@ const SC_TABS = [["ana", "분석", "layers"], ["chart", "차트", "candle"], ["n
 let symDraw = null;
 function scard(page, num, title, cls, sub) {
   const c = mk("section", "card sc " + (cls || ""));
-  c.dataset.g = SC_GROUP[title] || "top";
+  c.dataset.g = title === "희석 · 부양 동기" && NARROW.matches ? "ana" : SC_GROUP[title] || "top";
   const h = mk("div", "sc-head"); h.append(mk("span", "sc-title", title));
   if (sub) h.appendChild(mk("span", "sc-sub", sub));
   c.appendChild(h); page.appendChild(c); return c;
@@ -1696,20 +1719,25 @@ function drawFilingsFeed(rows) {
 }
 
 /* ---------- 패널 탭: 한 칸에 패널 하나씩 (선택은 이 기기에 기억) ---------- */
-function panelTabs(id, def) {
-  const bar = $(id), btns = [...bar.querySelectorAll("button")];
-  let cur = def;
-  try { cur = localStorage.getItem("pt:" + id) || def; } catch (e) {}
-  if (!btns.some(b => b.dataset.p === cur)) cur = def;
-  const show = p => {
-    btns.forEach(b => { const on = b.dataset.p === p; b.setAttribute("aria-selected", on); document.querySelector("." + b.dataset.p).classList.toggle("p-hide", !on); });
-    try { localStorage.setItem("pt:" + id, p); } catch (e) {}
-  };
-  btns.forEach(b => b.onclick = () => show(b.dataset.p));
-  show(cur);
+// 넓은 화면 = 왼쪽·오른쪽 탭 두 묶음, 휴대폰 = 다섯 패널을 한 줄 탭으로
+const NARROW = matchMedia("(max-width: 700px)");
+const PT = { "main-tabs": "det-wrap", "side-tabs": "feed-wrap", "m-tabs": "det-wrap" };
+try { for (const k in PT) PT[k] = localStorage.getItem("pt:" + k) || PT[k]; } catch (e) {}
+function applyTabs() {
+  const groups = NARROW.matches ? ["m-tabs"] : ["main-tabs", "side-tabs"];
+  const on = new Set(groups.map(g => PT[g]));
+  ["det-wrap", "pre-wrap", "feed-wrap", "fil-wrap", "vs-wrap"].forEach(p => document.querySelector("." + p).classList.toggle("p-hide", !on.has(p)));
+  for (const g in PT) $(g).querySelectorAll("button").forEach(b => b.setAttribute("aria-selected", b.dataset.p === PT[g]));
 }
-panelTabs("main-tabs", "det-wrap");
-panelTabs("side-tabs", "feed-wrap");
+for (const g in PT) $(g).querySelectorAll("button").forEach(b => b.onclick = () => {
+  PT[g] = b.dataset.p;
+  if (g === "m-tabs") { if (["det-wrap", "pre-wrap"].includes(b.dataset.p)) PT["main-tabs"] = b.dataset.p; else PT["side-tabs"] = b.dataset.p; }
+  try { for (const k in PT) localStorage.setItem("pt:" + k, PT[k]); } catch (e) {}
+  applyTabs();
+  if (g === "m-tabs") window.scrollTo({ top: Math.min(window.scrollY, $("m-tabs").offsetTop - 56), behavior: "smooth" });
+});
+NARROW.addEventListener("change", applyTabs);
+applyTabs();
 
 /* ---------- 오늘 브리핑 ---------- */
 try { if (localStorage.getItem("briefOpen") === "1") $("brief-wrap").open = true; } catch (e) {}
