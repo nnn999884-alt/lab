@@ -92,7 +92,7 @@ class CollectorConfig:
     news_poll_minutes: int = 2
     precursor: bool = True           # 급등 전조 점수 (일봉: 장 마감 후 전 종목, 장중: 점수 높은 종목 1분마다)
     precursor_min_score: int = 5     # 장중 감시·알림 대상 일봉 점수 (최대 10)
-    precursor_live_max: int = 60     # 장중 감시 종목 수 상한 (1분에 이만큼 1분봉 조회)
+    precursor_live_max: int = 80     # 장중 감시 종목 수 상한 (1분에 이만큼 1분봉 조회)
     precursor_rank_max: int = 40     # 목록 밖이라도 지금 랭킹(급등률·거래대금·거래량)에 든 종목을 이만큼 더 장중 감시
     fast_scan_seconds: int = 10      # 거래대금·거래량 실시간 랭킹을 이 간격으로 봐서 새로 든 종목을 바로 실시간 구독 (0 = 끔)
     realtime_alerts: bool = True     # 웹소켓 체결로 실시간 알림 (계정당 연결 2개 중 1개 사용, 끊기면 1분 확인으로 대체)

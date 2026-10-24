@@ -205,3 +205,17 @@ def test_runners_and_approach_before_breakout(tmp_path):
     assert not col._approach(st, T0 + td(minutes=2), "PRE", "PENX", 2.12, 2, 9e4, 1.0)   # 단계마다 하루 한 번
     from pennybot.precursor import runner_tag
     assert runner_tag(r) == "🔙 6일 전 +120% 급등주"
+
+
+def test_tier_turnover_and_wake():
+    from pennybot.precursor import daily, tier
+    big = 5e7                                                     # 발행 5천만 주: 예전 기준이면 무조건 0
+    assert tier({"volume": 0.31 * big, "vol_ratio": 1, "dd60": -10}, big, 3.0) == 2          # 회전율 30%+
+    assert tier({"volume": 0.05 * big, "vol_ratio": 4, "dd60": -10, "wake": True}, big, 3.0) == 1   # 거래 깨어남
+    assert tier({"volume": 0.4 * big, "vol_ratio": 4, "dd60": -10, "wake": True}, big, 3.0) == 3    # 둘 다
+    assert tier({"volume": 0.05 * big, "vol_ratio": 4, "dd60": -10}, big, 3.0) == 0
+    # 60일 동안 하루 10만 주 → 직전 5일 2만 주로 마름 → 전날 9만 주: 깨어남
+    bars = [(f"d{i:03d}", 1, 1.05, 0.95, 1.0, 1e5) for i in range(60)] + [(f"d{60 + i:03d}", 1, 1.05, 0.95, 1.0, 2e4) for i in range(5)]
+    bars.append(("d065", 1, 1.2, 0.95, 1.1, 9e4))
+    r = daily(bars)
+    assert r["metrics"]["wake"] and "wake" in r["signals"]

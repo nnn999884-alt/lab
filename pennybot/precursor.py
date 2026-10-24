@@ -23,7 +23,7 @@ from datetime import datetime, timedelta
 WEIGHT = {"crashed": 2, "spiked": 2, "vol_up_strong": 2, "vol_up": 1, "volatile": 1, "bleed": 1, "cheap": 1}
 DAILY_LABELS = {
     "vol_up_strong": "거래량 폭발", "vol_up": "거래량 상승", "crashed": "낙폭과대", "spiked": "급등 이력",
-    "volatile": "고변동", "bleed": "거래 마름", "cheap": "동전주",
+    "volatile": "고변동", "bleed": "거래 마름", "cheap": "동전주", "wake": "거래 깨어남",
 }
 PATTERN_LABELS = {"compress": "응축", "accum": "매집 의심", "base": "바닥 다지기"}
 MAX_TURNOVER = 1000.0        # 하루 회전율이 이보다 크면 발행주식 수가 틀린 것으로 본다 (%)
@@ -50,17 +50,23 @@ TIER_LABEL = {3: "급등 후보 ★★★", 2: "급등 후보 ★★", 1: "급�
 
 
 def tier(metrics: dict, shares: float | None, price: float | None = None) -> int:
+    """급등 후보 등급. 일봉 22개월(2026-04~10, 종목·일 20.8만) 다음 날 +100% 확률 — 기준 0.2%:
+    회전율 30%+ 3.8% · 거래 깨어남 1.7% · 둘 다 5.3%. 예전 ★ 조건만으로는 +100% 의 22% 만 잡혔고, 두 조건을 더하면 45% 안팎."""
     if not shares:
         return 0
     vr, dd = metrics.get("vol_ratio") or 0, metrics.get("dd60") or 0
     turn = (metrics.get("volume") or 0) / shares * 100
-    if price and price < 2 and dd <= -50 and vr >= 5 and 10 <= turn <= MAX_TURNOVER:
+    t30, wake = 30 <= turn <= MAX_TURNOVER, bool(metrics.get("wake"))
+    if (t30 and wake) or (price and price < 2 and dd <= -50 and vr >= 5 and 10 <= turn <= MAX_TURNOVER):
         return 3
-    if shares >= 1e7:
-        return 0
-    if vr >= 10 and dd <= -50:
-        return 2
-    return 1 if vr >= 10 or (vr >= 5 and dd <= -50) else 0
+    t = 0
+    if shares < 1e7:
+        t = 2 if vr >= 10 and dd <= -50 else 1 if vr >= 10 or (vr >= 5 and dd <= -50) else 0
+    if t30:
+        t = max(t, 2)
+    if wake:
+        t = max(t, 1)
+    return t
 
 
 def daily(bars: list[tuple]) -> dict | None:
@@ -85,6 +91,9 @@ def daily(bars: list[tuple]) -> dict | None:
     v10 = statistics.median(x[5] for x in bars[-10:])
     ret10 = (c / cl[-11] - 1) * 100 if cl[-11] else 0
     vol_ratio = v / v20 if v20 else 0
+    # 거래 깨어남: 직전 5일 평균 거래량이 60일 평균의 절반 밑으로 말랐다가 전날 그 5일 평균의 3배 (다음 날 +100% 1.7%, 기준의 8배)
+    v5m, v60m = statistics.mean(x[5] for x in bars[-6:-1]), statistics.mean(x[5] for x in bars[-61:-1])
+    wake = v60m > 0 and v5m < v60m * 0.5 and v >= 3 * max(v5m, 1)
     sig = {
         "crashed": dd60 <= -50,
         "volatile": (statistics.mean(rng) if rng else 0) >= 10 or gaps_dn >= 2 or max_dn <= -20,
@@ -93,6 +102,7 @@ def daily(bars: list[tuple]) -> dict | None:
         "bleed": ret10 <= -10 and v60 > 0 and v10 / v60 <= 0.5,
         "vol_up": vol_ratio >= 1.5,
         "vol_up_strong": vol_ratio >= 3,
+        "wake": wake,
     }
     # 차트 패턴 (점수에는 안 넣고 태그로): 응축 · 매집 의심 · 바닥 다지기
     rng_pct = [(x[2] - x[3]) / x[4] * 100 for x in bars[-60:] if x[4]]
@@ -115,7 +125,7 @@ def daily(bars: list[tuple]) -> dict | None:
                         "spikes60": spikes, "ret10": ret10, "vol_ratio": vol_ratio, "vol10_60": v10 / v60 if v60 else None,
                         "dollar20": statistics.mean(x[4] * x[5] for x in bars[-20:]),
                         "volume": v, "last_spike_d": last_spike[0], "last_spike_pct": last_spike[1],
-                        "box10": box10, "updown20": up_v / dn_v if dn_v else None}}
+                        "box10": box10, "updown20": up_v / dn_v if dn_v else None, "wake": wake}}
 
 
 def live(minute_bars: list[tuple], prev_close: float, now: datetime | None = None, shares: float | None = None) -> dict:
