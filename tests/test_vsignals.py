@@ -408,3 +408,15 @@ def test_pre_open_watch_once(tmp_path):
     assert col.pre_open_watch(t, "d") == ["PENX", "BRST"]                 # +30% 와 데이마켓 거래 터짐, FLAT 은 빠짐
     assert sent.msgs[-1][0].startswith("🌅 프리마켓 개장(04:00 ET) 주목")
     assert col.pre_open_watch(t, "d") == []                               # 하루 한 번
+
+
+def test_stale_positions_closed_on_restart(tmp_path):
+    col, st, sent = make(tmp_path)
+    only(col, "S1")
+    px = [0.9] * 3 + [1.0, 1.10, 0.95, 0.80]
+    col._vtrade(T0, "2026-10-22", "PENX", 9, 0.9, bars_of(px), None, "PRE")
+    col.universe["PENX"]["last"] = 0.82
+    col.check_vsignals(T0 + timedelta(hours=5), "CLOSED", True, 20)      # 5시간 → 그대로
+    assert st.query("SELECT status FROM vsignals")[0][0] == "OPEN"
+    col.check_vsignals(T0 + timedelta(hours=25), "CLOSED", True, 20)     # 25시간 → 정리
+    assert st.query("SELECT status, exit_reason FROM vsignals")[0] == ("CLOSED", "애프터장 마감 정리")

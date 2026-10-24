@@ -122,6 +122,8 @@ class Collector:
 
         if self._last_session is None:
             self._run("catch_up", self.catch_up_summaries)
+            if c.vsignal:                                # 꺼져 있는 사이 애프터장 마감이 지나간 가상 포지션 정리
+                self._run("vsignals_stale", self.check_vsignals, now, session, True, 20)
             self._run("filing_details", self.backfill_details)
         # 세션이 바뀌면: 직전 세션의 1분봉을 마저 받고, 애프터마켓이 끝났으면 요약
         cur = (trade_date, session)
@@ -1115,8 +1117,9 @@ class Collector:
         r = self.store.query("SELECT last FROM prices WHERE symbol=? ORDER BY ts DESC LIMIT 1", (sym,))
         return r[0][0] if r and r[0][0] else fallback
 
-    def check_vsignals(self, now: datetime, session: str, eod: bool = False) -> None:
-        """보유 중 가상 포지션: 1분 현재가로 익절·손절 → 가상 매도 알림. eod=True(애프터장 마감)면 남은 것 모두 정리."""
+    def check_vsignals(self, now: datetime, session: str, eod: bool = False, older_hours: float | None = None) -> None:
+        """보유 중 가상 포지션: 1분 현재가로 익절·손절 → 가상 매도 알림. eod=True(애프터장 마감)면 남은 것 모두 정리
+        (older_hours 를 주면 그보다 오래된 것만 — 수집기를 다시 켰을 때)."""
         from ..precursor import vsignal_text
         from ..trading.strategies import SESSION_KO
         from ..vstrat import STRATEGIES
@@ -1126,6 +1129,10 @@ class Collector:
                 if now - datetime.fromisoformat(opened) >= timedelta(minutes=mins) or session == AFTER or eod:
                     self.store.db.execute("UPDATE vsignals SET status='EXPIRED', closed=? WHERE id=?", (iso(now), vid))
         rows = [self._vrow(r) for r in self.store.query("SELECT * FROM vsignals WHERE status='OPEN'")]
+        if older_hours is not None:
+            rows = [v for v in rows if now - datetime.fromisoformat(v["opened"]) >= timedelta(hours=older_hours)]
+        if eod:
+            log.info("가상 포지션 정리 (%s): %d건", "애프터장 마감" if older_hours is None else f"{older_hours:g}시간 지난 것", len(rows))
         for v in rows:
             last = self._last_price(v["symbol"], v.get("last") if eod else None)
             if not last:
