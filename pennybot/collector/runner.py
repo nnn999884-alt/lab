@@ -123,7 +123,8 @@ class Collector:
         if self._last_session is None:
             self._run("catch_up", self.catch_up_summaries)
             if c.vsignal:                                # 꺼져 있는 사이 애프터장 마감이 지나간 가상 포지션 정리
-                self._run("vsignals_stale", self.check_vsignals, now, session, True, 20)
+                # 휴장 중에 켜졌으면 애프터장 마감이 이미 지난 것 → 전부, 장중이면 20시간 넘은 것만
+                self._run("vsignals_stale", self.check_vsignals, now, session, True, None if session == CLOSED else 20)
             self._run("filing_details", self.backfill_details)
         # 세션이 바뀌면: 직전 세션의 1분봉을 마저 받고, 애프터마켓이 끝났으면 요약
         cur = (trade_date, session)
