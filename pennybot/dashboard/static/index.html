@@ -357,7 +357,7 @@ table.det caption.empty { caption-side: top; padding: 18px; }
   header .pill#mode { display: none; }
 }
 @media (max-width: 1100px) {
-  .home-cols { display: flex; flex-direction: column; align-items: stretch; }
+  .home-cols { display: flex; flex-direction: column; align-items: stretch; gap: 0; }
   .home-main, .home-side { display: contents; }
   .home-side { position: static; max-height: none; overflow: visible; }
   .det-wrap { order: 1; } .feed-wrap { order: 2; } .pre-wrap { order: 3; } .fil-wrap { order: 4; } .vs-wrap { order: 5; }
@@ -480,6 +480,55 @@ table.ca-tbl tr.off .ca-fill { opacity: .35; }
   .ca-wrap { margin: 0 -12px; } table.ca-tbl th:nth-child(3), table.ca-tbl td:nth-child(3) { display: none; }
   .tabs button svg { width: 20px; height: 20px; }
 }
+/* ---------- 아이콘 (같은 굵기의 선 아이콘) ---------- */
+.ic { display: inline-block; width: 15px; height: 15px; flex: none; background: currentColor; -webkit-mask: var(--i) no-repeat center / contain; mask: var(--i) no-repeat center / contain;
+  vertical-align: -2px; margin-right: 6px; opacity: .85; }
+.ic-target { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='8'/%3E%3Ccircle cx='12' cy='12' r='3'/%3E%3C/svg%3E"); }
+.ic-list { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01'/%3E%3C/svg%3E"); }
+.ic-bolt { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M13 3 5 14h6l-1 7 8-11h-6z'/%3E%3C/svg%3E"); }
+.ic-doc { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7 3h7l5 5v13H7z'/%3E%3Cpath d='M14 3v5h5M10 13h6M10 17h6'/%3E%3C/svg%3E"); }
+.ic-flask { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 3h6M10 3v6L5 19a1.5 1.5 0 0 0 1.3 2h11.4A1.5 1.5 0 0 0 19 19l-5-10V3'/%3E%3Cpath d='M7.5 14h9'/%3E%3C/svg%3E"); }
+.ic-news { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 5h13v14H6a2 2 0 0 1-2-2z'/%3E%3Cpath d='M17 9h3v8a2 2 0 0 1-2 2M8 9h5M8 13h5'/%3E%3C/svg%3E"); }
+.ic-wallet { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 7h15a1 1 0 0 1 1 1v11H5a1 1 0 0 1-1-1z'/%3E%3Cpath d='M4 7l11-3v3M16 13h.01'/%3E%3C/svg%3E"); }
+.ic-chart { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 19V5M4 19h16M8 15l4-5 3 3 5-7'/%3E%3C/svg%3E"); }
+.ic-candle { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7 4v3M7 17v3M17 4v6M17 18v2'/%3E%3Crect x='5' y='7' width='4' height='10'/%3E%3Crect x='15' y='10' width='4' height='8'/%3E%3C/svg%3E"); }
+.ic-clock { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='12' r='8'/%3E%3Cpath d='M12 8v4l3 2'/%3E%3C/svg%3E"); }
+.ic-pulse { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3 12h4l2-6 4 12 2-6h6'/%3E%3C/svg%3E"); }
+.ic-sliders { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 7h10M18 7h2M4 17h4M12 17h8'/%3E%3Ccircle cx='16' cy='7' r='2'/%3E%3Ccircle cx='10' cy='17' r='2'/%3E%3C/svg%3E"); }
+.ic-bell { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 16V11a6 6 0 0 1 12 0v5l2 2H4z'/%3E%3Cpath d='M10 20h4'/%3E%3C/svg%3E"); }
+.ic-search { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='m20 20-3.5-3.5'/%3E%3C/svg%3E"); }
+.ic-layers { --i: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m12 3 9 5-9 5-9-5z'/%3E%3Cpath d='m3 13 9 5 9-5'/%3E%3C/svg%3E"); }
+/* ---------- 패널 탭: 패널 위에 붙는 탭 ---------- */
+.home-main, .home-side { gap: 0; }
+.ptabs { display: flex; gap: 2px; align-items: flex-end; position: relative; z-index: 1; margin-bottom: -1px; overflow-x: auto; scrollbar-width: none; }
+.ptabs button { display: inline-flex; align-items: center; gap: 0; border: 1px solid var(--line); border-bottom-color: var(--line); background: var(--panel-2);
+  color: var(--text-3); border-radius: 8px 8px 0 0; padding: 8px 14px; font-size: 13px; font-weight: 600; white-space: nowrap; }
+.ptabs button:hover { color: var(--text); background: var(--panel-2); }
+.ptabs button[aria-selected="true"] { background: var(--panel); color: var(--text); border-bottom-color: var(--panel); }
+.ptabs button[aria-selected="true"] .ic { color: var(--accent); opacity: 1; }
+.pt-n { margin-left: 6px; font-family: var(--mono); font-size: 11px; color: var(--text-3); font-weight: 700; }
+.pt-n:empty { display: none; }
+.ptabs + .card, .ptabs ~ section.card { border-top-left-radius: 0; }
+.p-hide { display: none !important; }
+/* 탭으로 묶인 패널: 제목은 탭에 있으니 머리줄은 도구 막대로 */
+.home-cols .pre-head h2 { display: none; }
+.home-cols .pre-head { justify-content: flex-end; }
+.home-cols .pre-head:has(h2 .sub) { justify-content: space-between; }
+.home-side .feed-wrap .feed { max-height: calc(100vh - 210px); } .home-side .fil-wrap .feed { max-height: calc(100vh - 210px); }
+.det-scroll { max-height: calc(100vh - 290px); min-height: 320px; }
+/* 종목 상세 탭 */
+.sym-tabs { margin: 6px 0 -15px; }
+.sym-page > .sc:not([data-g="top"]) { border-top-left-radius: 0; }
+.sc-num { display: none; }
+@media (max-width: 1100px) {
+  #main-tabs { order: 1; } .det-wrap, .pre-wrap { order: 2; } #side-tabs { order: 3; margin-top: 14px; } .feed-wrap, .fil-wrap, .vs-wrap { order: 4; }
+  .home-side .feed-wrap .feed, .home-side .fil-wrap .feed { max-height: 70vh; }
+}
+@media (max-width: 700px) {
+  .ptabs button { padding: 8px 11px; font-size: 12.5px; }
+  .sym-tabs { margin-bottom: -13px; }
+  .det-scroll { max-height: none; min-height: 0; }
+}
 </style>
 </head>
 <body>
@@ -513,11 +562,15 @@ table.ca-tbl tr.off .ca-fill { opacity: .35; }
       <div class="kpi"><div class="k">급등 후보</div><div class="v" id="k-picks">-</div><div class="n" id="k-picks-n"></div></div>
     </section>
     <details class="card brief-wrap" id="brief-wrap">
-      <summary><span class="bot-title">오늘 브리핑</span><span class="sub" id="brief-sub" style="margin:0 0 0 8px"></span></summary>
+      <summary><span class="bot-title"><i class="ic ic-news" aria-hidden="true"></i>오늘 브리핑</span><span class="sub" id="brief-sub" style="margin:0 0 0 8px"></span></summary>
       <div class="brief-grid" id="brief"></div>
     </details>
     <div class="home-cols">
       <div class="home-main">
+    <div class="ptabs" id="main-tabs" role="tablist">
+      <button data-p="det-wrap"><i class="ic ic-target" aria-hidden="true"></i>조기 감지 <span class="pt-n" id="pt-det"></span></button>
+      <button data-p="pre-wrap"><i class="ic ic-list" aria-hidden="true"></i>급등 후보 <span class="pt-n" id="pt-pre"></span></button>
+    </div>
     <section class="card det-wrap">
       <div class="pre-head">
         <h2>조기 감지 <span class="sub">알림 성과 추적</span></h2>
@@ -567,6 +620,11 @@ table.ca-tbl tr.off .ca-fill { opacity: .35; }
     </section>
       </div>
       <aside class="home-side">
+    <div class="ptabs" id="side-tabs" role="tablist">
+      <button data-p="feed-wrap"><i class="ic ic-bolt" aria-hidden="true"></i>실시간 신호</button>
+      <button data-p="fil-wrap"><i class="ic ic-doc" aria-hidden="true"></i>공시 · 뉴스</button>
+      <button data-p="vs-wrap"><i class="ic ic-flask" aria-hidden="true"></i>가상 매매</button>
+    </div>
     <section class="card feed-wrap">
       <div class="pre-head">
         <h2>실시간 신호</h2>
@@ -606,7 +664,7 @@ table.ca-tbl tr.off .ca-fill { opacity: .35; }
     <div class="sym-page" id="sym-page"></div>
 
     <details class="card shorts-wrap">
-      <summary><span class="bot-title">감시 종목 공매도·대차 표</span><span class="sub" style="margin:0 0 0 8px">대차 수수료 높은 순 · 누르면 조회</span></summary>
+      <summary><span class="bot-title"><i class="ic ic-list" aria-hidden="true"></i>감시 종목 공매도·대차 표</span><span class="sub" style="margin:0 0 0 8px">대차 수수료 높은 순 · 누르면 조회</span></summary>
       <details class="sub"><summary>항목 설명</summary>
         공매도 비율 = FINRA 일별 공매도 거래량 ÷ 거래량 (장외 보고분) · 대차 = IBKR 수수료(연%)·빌릴 수 있는 수량 ·
         SSR = 전일 −10% 로 오늘 공매도 호가 제한 · Reg SHO = 결제불이행이 쌓인 종목</details>
@@ -617,7 +675,7 @@ table.ca-tbl tr.off .ca-fill { opacity: .35; }
   <!-- ===== 매매: 주문·청산·후보 ===== -->
   <div class="tab" data-tab="trade" hidden>
     <section class="card racct" id="racct">
-      <div class="pre-head"><h2>토스 실제 계좌</h2><span class="sub" style="margin:0" id="ra-upd"></span></div>
+      <div class="pre-head"><h2><i class="ic ic-wallet" aria-hidden="true"></i>토스 실제 계좌</h2><span class="sub" style="margin:0" id="ra-upd"></span></div>
       <div class="ra-kpis">
         <div class="ra-k"><div class="k">총 평가금액</div><div class="v mono" id="ra-eq">-</div><div class="n mono" id="ra-eq-n"></div></div>
         <div class="ra-k"><div class="k">총 손익 · 수익률</div><div class="v mono" id="ra-pl">-</div><div class="n mono" id="ra-pl-n"></div></div>
@@ -627,7 +685,7 @@ table.ca-tbl tr.off .ca-fill { opacity: .35; }
       <div class="tablewrap"><table class="ra-tbl" id="ra-tbl"></table></div>
     </section>
     <section class="card vacct">
-      <div class="pre-head"><h2>가상 계좌</h2><span class="sub" style="margin:0" id="va-rule"></span></div>
+      <div class="pre-head"><h2><i class="ic ic-wallet" aria-hidden="true"></i>가상 계좌</h2><span class="sub" style="margin:0" id="va-rule"></span></div>
       <div class="va-row">
         <div class="va-big"><div class="k">평가액</div><div class="v mono" id="va-eq">-</div><div class="n mono" id="va-eq-n"></div></div>
         <div class="va-cell"><div class="k">오늘 실현</div><div class="v mono" id="va-today">-</div></div>
@@ -644,15 +702,15 @@ table.ca-tbl tr.off .ca-fill { opacity: .35; }
       <div class="kpi"><div class="k">지정가 대기</div><div class="v" id="vt-k-wait">-</div><div class="n">신호 뒤 지정가 유효 시간 안</div></div>
     </section>
     <section class="card">
-      <div class="pre-head"><h2>전략별 성적</h2><span class="sub" style="margin:0">실제 주문 없음 · 비용 미반영 · 50건 넘으면 손익분기와 비교</span></div>
+      <div class="pre-head"><h2><i class="ic ic-chart" aria-hidden="true"></i>전략별 성적</h2><span class="sub" style="margin:0">실제 주문 없음 · 비용 미반영 · 50건 넘으면 손익분기와 비교</span></div>
       <div class="scr-wrap"><table class="scr" id="vt-strats"></table></div>
     </section>
     <section class="card">
-      <div class="pre-head"><h2>보유 · 지정가 대기</h2><span class="sub" style="margin:0">체결가로 실시간 익절·손절, 애프터장 마감에 정리</span></div>
+      <div class="pre-head"><h2><i class="ic ic-clock" aria-hidden="true"></i>보유 · 지정가 대기</h2><span class="sub" style="margin:0">체결가로 실시간 익절·손절, 애프터장 마감에 정리</span></div>
       <div class="scr-wrap"><table class="scr" id="vt-open"></table></div>
     </section>
     <section class="card">
-      <div class="pre-head"><h2>매매 내역</h2>
+      <div class="pre-head"><h2><i class="ic ic-list" aria-hidden="true"></i>매매 내역</h2>
         <div class="vt-filters">
           <div class="seg" id="vt-strat-f"></div>
           <div class="seg" id="vt-range"><button data-r="1" aria-pressed="false">오늘</button><button data-r="7" aria-pressed="true">7일</button><button data-r="0" aria-pressed="false">전체</button></div>
@@ -730,19 +788,19 @@ table.ca-tbl tr.off .ca-fill { opacity: .35; }
   <!-- ===== 설정 ===== -->
   <div class="tab" data-tab="settings" hidden>
     <section class="card">
-      <div class="pre-head"><h2>시스템 상태</h2><span class="sub" style="margin:0" id="st-ts"></span></div>
+      <div class="pre-head"><h2><i class="ic ic-pulse" aria-hidden="true"></i>시스템 상태</h2><span class="sub" style="margin:0" id="st-ts"></span></div>
       <div class="sym-stats" id="st-grid"></div>
     </section>
     <section class="card">
-      <div class="pre-head"><h2>가상 매매 전략</h2><span class="sub" style="margin:0">끄면 그 전략은 새 주문을 안 냄 (보유 중인 건 계속 정리)</span></div>
+      <div class="pre-head"><h2><i class="ic ic-sliders" aria-hidden="true"></i>가상 매매 전략</h2><span class="sub" style="margin:0">끄면 그 전략은 새 주문을 안 냄 (보유 중인 건 계속 정리)</span></div>
       <div class="set-list" id="set-strats"></div>
     </section>
     <section class="card">
-      <div class="pre-head"><h2>텔레그램 알림</h2><span class="sub" style="margin:0">종류별로 켜고 끄기 · 대시보드 기록은 계속</span></div>
+      <div class="pre-head"><h2><i class="ic ic-bell" aria-hidden="true"></i>텔레그램 알림</h2><span class="sub" style="margin:0">종류별로 켜고 끄기 · 대시보드 기록은 계속</span></div>
       <div class="set-list" id="set-alerts"></div>
     </section>
     <section class="card">
-      <div class="pre-head"><h2>가상 계좌</h2><span class="sub" style="margin:0">매매 탭 손익 계산 기준 ($)</span></div>
+      <div class="pre-head"><h2><i class="ic ic-wallet" aria-hidden="true"></i>가상 계좌</h2><span class="sub" style="margin:0">매매 탭 손익 계산 기준 ($)</span></div>
       <form class="set-form" id="set-va">
         <label>시작 금액 <input type="number" id="set-cap" min="100" step="100"></label>
         <label>1회 매수 금액 <input type="number" id="set-per" min="10" step="10"></label>
@@ -750,7 +808,7 @@ table.ca-tbl tr.off .ca-fill { opacity: .35; }
       </form>
     </section>
     <section class="card">
-      <div class="pre-head"><h2>옛 매매 봇 (모의 계좌)</h2><span class="sub" style="margin:0">예전 전략 4개로 도는 별도 프로그램 — 지금 쓰는 가상 매매와 무관</span></div>
+      <div class="pre-head"><h2><i class="ic ic-layers" aria-hidden="true"></i>옛 매매 봇 (모의 계좌)</h2><span class="sub" style="margin:0">예전 전략 4개로 도는 별도 프로그램 — 지금 쓰는 가상 매매와 무관</span></div>
       <div class="controls">
       <button id="kill-btn" class="danger" aria-pressed="false">킬스위치 켜기</button>
       <button id="flatten-btn" class="danger">전량 청산</button>
@@ -1300,10 +1358,15 @@ function kvBox(title, pairs) {
 // 종목 상세: 급등 후보 진단 · 숫자 · 공시 태그 · 장중 1분봉 · 신호 기록 · 가상 매매
 // ===== 종목 상세: 1 회사 · 2 지금 상황 · 3 희석·부양 · 4 가격 레벨 · 5 차트 · 6 공시 · 7 뉴스 · 8 신호 기록 · 9 가상 매매 · 10 시세·공매도 =====
 const mk = (tag, cls, text) => { const x = document.createElement(tag); if (cls) x.className = cls; if (text != null) x.textContent = text; return x; };
+// 카드 묶음: 위 3장(회사·지금 상황·희석)은 늘 보이고, 나머지는 탭으로
+const SC_GROUP = { "회사": "top", "지금 상황": "top", "희석 · 부양 동기": "top", "가격 레벨": "ana", "차트 분석": "ana", "물린 물량": "ana",
+  "차트": "chart", "공시": "news", "뉴스": "news", "신호 기록": "log", "가상 매매": "log", "시세 · 공매도": "log" };
+const SC_TABS = [["ana", "분석", "layers"], ["chart", "차트", "candle"], ["news", "공시 · 뉴스", "doc"], ["log", "기록 · 시세", "clock"]];
+let symDraw = null;
 function scard(page, num, title, cls, sub) {
-  num = page.querySelectorAll(".sc").length + 1;                 // 카드를 끼워 넣어도 번호가 이어지게
   const c = mk("section", "card sc " + (cls || ""));
-  const h = mk("div", "sc-head"); h.append(mk("span", "sc-num", String(num)), mk("span", "sc-title", title));
+  c.dataset.g = SC_GROUP[title] || "top";
+  const h = mk("div", "sc-head"); h.append(mk("span", "sc-title", title));
   if (sub) h.appendChild(mk("span", "sc-sub", sub));
   c.appendChild(h); page.appendChild(c); return c;
 }
@@ -1462,7 +1525,7 @@ async function lookup(sym) {
   d1.append(mk("div", "sym-cap", "일봉 90일"), cd);
   d2.append(mk("div", "sym-cap", x.intraday ? `1분봉 · ${x.intraday.date}` : "1분봉 · 기록 없음"), ci);
   ch.append(d1, d2); c5.appendChild(ch);
-  requestAnimationFrame(() => { candleChart(cd, daily, { height: 230 }); if (x.intraday && x.intraday.bars.length > 2) candleChart(ci, x.intraday.bars, { height: 230, ma: [9, 20] }); });
+  symDraw = () => { candleChart(cd, daily, { height: 260 }); if (x.intraday && x.intraday.bars.length > 2) candleChart(ci, x.intraday.bars, { height: 260, ma: [9, 20] }); };   // 보일 때 그림 (숨은 채 그리면 폭 0)
   // ---- 6 공시 / 7 뉴스
   const ROUTINE = new Set(["4", "10-Q", "10-K", "DEF 14A", "PRE 14A", "SC 13G", "SC 13G/A", "8-K/A", "6-K/A"]);
   const fil = (b.events || []).filter(e => e.form !== "NEWS"), news = (b.events || []).filter(e => e.form === "NEWS");
@@ -1508,6 +1571,26 @@ async function lookup(sym) {
     ["공매도 비율", sh.ratio == null ? null : Math.round(sh.ratio * 100) + "%"], ["5일 평균", sh.ratio_5d == null ? null : Math.round(sh.ratio_5d * 100) + "%"],
     ["대차 수수료", bo ? bo.fee_rate.toFixed(0) + "%" : null, bo && bo.fee_rate >= 20 ? "neg" : ""], ["빌릴 수 있는 수량", bo ? fmtQty(bo.available) + "주" : null],
     ["24시간 최고 랭킹", b.rank ? `${b.rank.rank}위` : null], ["최근 급등", mt.last_spike_d ? `${mt.last_spike_d.slice(5)} ${fmtPct(mt.last_spike_pct, 0)}` : null]], "kv2-2");
+  symTabs(page);
+}
+function symTabs(page) {
+  const bar = mk("div", "ptabs sym-tabs sc-wide");
+  const tops = [...page.querySelectorAll('.sc[data-g="top"]')];
+  (tops.length ? tops[tops.length - 1] : page.firstChild).after(bar);
+  let cur = "ana";
+  try { cur = localStorage.getItem("symTab") || "ana"; } catch (e) {}
+  const show = g => {
+    page.querySelectorAll(".sc").forEach(c => c.classList.toggle("p-hide", c.dataset.g !== "top" && c.dataset.g !== g));
+    bar.querySelectorAll("button").forEach(b => b.setAttribute("aria-selected", b.dataset.g === g));
+    try { localStorage.setItem("symTab", g); } catch (e) {}
+    if (g === "chart" && symDraw) requestAnimationFrame(symDraw);
+  };
+  SC_TABS.forEach(([g, label, icn]) => {
+    const n = page.querySelectorAll(`.sc[data-g="${g}"]`).length;
+    if (!n) return;
+    const b = mk("button"); b.dataset.g = g; b.innerHTML = `<i class="ic ic-${icn}" aria-hidden="true"></i>`; b.append(label); b.onclick = () => show(g); bar.appendChild(b);
+  });
+  show(SC_TABS.some(t => t[0] === cur) ? cur : "ana");
 }
 $("lookup-form").onsubmit = e => { e.preventDefault(); lookup($("lookup-sym").value).catch(err => alert(err.message)); };
 
@@ -1612,8 +1695,24 @@ function drawFilingsFeed(rows) {
   });
 }
 
+/* ---------- 패널 탭: 한 칸에 패널 하나씩 (선택은 이 기기에 기억) ---------- */
+function panelTabs(id, def) {
+  const bar = $(id), btns = [...bar.querySelectorAll("button")];
+  let cur = def;
+  try { cur = localStorage.getItem("pt:" + id) || def; } catch (e) {}
+  if (!btns.some(b => b.dataset.p === cur)) cur = def;
+  const show = p => {
+    btns.forEach(b => { const on = b.dataset.p === p; b.setAttribute("aria-selected", on); document.querySelector("." + b.dataset.p).classList.toggle("p-hide", !on); });
+    try { localStorage.setItem("pt:" + id, p); } catch (e) {}
+  };
+  btns.forEach(b => b.onclick = () => show(b.dataset.p));
+  show(cur);
+}
+panelTabs("main-tabs", "det-wrap");
+panelTabs("side-tabs", "feed-wrap");
+
 /* ---------- 오늘 브리핑 ---------- */
-try { if (matchMedia("(min-width: 701px)").matches && localStorage.getItem("briefOpen") !== "0") $("brief-wrap").open = true; } catch (e) {}
+try { if (localStorage.getItem("briefOpen") === "1") $("brief-wrap").open = true; } catch (e) {}
 $("brief-wrap").addEventListener("toggle", () => { try { localStorage.setItem("briefOpen", $("brief-wrap").open ? "1" : "0"); } catch (e) {} });
 async function loadBrief() {
   const b = await api("/api/briefing");
@@ -1699,6 +1798,7 @@ async function loadDet() {
   const run = r => (r.chg_at || 0) >= 20;
   const rows = d.rows.filter(r => r.price != null && (detFilter === "all" || r.kind === "precursor") && !($("det-norun").checked && run(r)));
   const done = d.rows.filter(r => r.result), win = done.filter(r => r.result === "win").length;
+  $("pt-det").textContent = d.rows.length || "";
   const sumBox = $("det-sum"); sumBox.replaceChildren();
   const stat = (k, v, cls) => { const x = mk("div", "det-stat"); x.append(mk("span", "k", k), mk("span", "v mono " + (cls || ""), v)); sumBox.appendChild(x); };
   stat("최근 36시간", `${d.rows.length}건`);
@@ -1988,6 +2088,7 @@ async function loadPre() {
   const live = (r.rows || []).filter(x => x.live.includes("wake") && x.live.includes("creep")).length;
   const t3 = (r.rows || []).filter(x => x.tier === 3).length, t2 = (r.rows || []).filter(x => x.tier === 2).length;
   $("k-picks").textContent = r.d0 ? `★★★ ${t3} · ★★ ${t2}` : "-";
+  $("pt-pre").textContent = (r.rows || []).filter(x => x.tier).length || "";
   $("k-picks-n").textContent = r.d0 ? `${r.d0} 종가 기준 · 전체 ${r.n}종목` : "";
   $("pre-sub").textContent = r.d0 ? `${r.d0} 종가 기준 · ${r.n}종목 · 지금 움직임 ${live} · 장중 1분 갱신` : "아직 없음 — 수집기가 장 마감 뒤 전 종목을 계산합니다";
   drawPre();
