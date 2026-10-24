@@ -132,7 +132,10 @@ class Data:
         d60 = self.m("SELECT high, low FROM daily_bars WHERE symbol=? ORDER BY d DESC LIMIT 60", (sym,))
         if d60:
             out["range60"] = {"high": max(r["high"] for r in d60), "low": min(r["low"] for r in d60)}
-        from .. import overhead
+        from .. import chartlib, overhead
+        db = self.m("SELECT d, open, high, low, close, volume FROM daily_bars WHERE symbol=? ORDER BY d DESC LIMIT 90", (sym,))[::-1]
+        sv = self.m("SELECT short_volume, total_volume FROM short_volume WHERE symbol=? AND total_volume > 0 ORDER BY trade_date DESC LIMIT 1", (sym,))
+        out["chart"] = chartlib.analyze(db, shares, sv[0]["short_volume"] / sv[0]["total_volume"] if sv else None)
         px = (out.get("today") or {}).get("last") or (out.get("daily") or {}).get("close")
         out["overhead"] = overhead.for_symbol(self.m, sym, px)
         out["events"] = self.m("SELECT ts, kind, text FROM events WHERE symbol=? AND kind != 'filing' ORDER BY ts DESC LIMIT 30", (sym,))

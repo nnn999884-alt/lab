@@ -219,3 +219,15 @@ def test_tier_turnover_and_wake():
     bars.append(("d065", 1, 1.2, 0.95, 1.1, 9e4))
     r = daily(bars)
     assert r["metrics"]["wake"] and "wake" in r["signals"]
+
+
+def test_chart_analysis_factors():
+    from pennybot.chartlib import analyze
+    bars = [{"d": f"d{i:03d}", "open": 1, "high": 1.05, "low": 0.95, "close": 1.0, "volume": 1e5} for i in range(60)]
+    bars += [{"d": f"d{60 + i:03d}", "open": 1, "high": 1.05, "low": 0.95, "close": 1.0, "volume": 2e4} for i in range(5)]
+    bars.append({"d": "d065", "open": 0.95, "high": 1.0, "low": 0.9, "close": 0.92, "volume": 4e6})
+    a = analyze(bars, shares=1e7)
+    on = {f["key"] for f in a["factors"] if f["on"]}
+    assert {"turn30", "wake", "sub1"} <= on and "small" not in on            # 발행 1천만 주 = 경계 밖
+    assert set(a["strong"]) == {"전날 회전율 30%+", "거래 깨어남"} and a["best_x100"] > 15
+    assert analyze(bars[:10]) is None

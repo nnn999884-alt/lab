@@ -357,7 +357,7 @@ table.det caption.empty { caption-side: top; padding: 18px; }
   header .pill#mode { display: none; }
 }
 @media (max-width: 1100px) {
-  .home-cols { display: flex; flex-direction: column; }
+  .home-cols { display: flex; flex-direction: column; align-items: stretch; }
   .home-main, .home-side { display: contents; }
   .home-side { position: static; max-height: none; overflow: visible; }
   .det-wrap { order: 1; } .feed-wrap { order: 2; } .pre-wrap { order: 3; } .fil-wrap { order: 4; } .vs-wrap { order: 5; }
@@ -454,6 +454,32 @@ table.det caption.empty { caption-side: top; padding: 18px; }
   .pc-r { text-align: right; flex: none; } .pc-px { font-size: 14px; font-weight: 600; } .pc-chg { font-size: 12.5px; margin-top: 1px; }
   .tip { white-space: normal; max-width: 80vw; }
 }
+/* ---------- 마감 손질: 아이콘 · 상태 태그 · 차트 분석 ---------- */
+.tabs button svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.tabs button span { display: none; }
+.card { border-radius: 8px; } .kpis { border-radius: 8px; }
+.pill, .chip, .ctag, .chk, .ev-kind, .tg, .oh-tag, .det-res { border-radius: 4px; }
+.vs-st { flex: none; font-size: 10.5px; font-weight: 700; padding: 1px 6px; border-radius: 4px; background: var(--panel-2); color: var(--text-2); }
+.vs-st.st-open { background: var(--accent-soft); color: var(--accent); } .vs-st.st-win { background: var(--up-soft); color: var(--up); }
+.vs-st.st-loss { background: var(--down-soft); color: var(--down); } .vs-st.st-wait { background: var(--warn-soft); color: var(--warn); }
+.kv2-6 { grid-template-columns: repeat(6, minmax(0, 1fr)); margin-bottom: 10px; }
+.ca-sum { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; padding: 8px 12px; border-radius: 6px; background: var(--panel-2); margin-bottom: 8px; font-size: 12px; color: var(--text-2); }
+.ca-sum b { font-size: 13px; color: var(--text); } .ca-sum.hot { background: var(--up-soft); } .ca-sum.hot b { color: var(--up); } .ca-sum.mute b { color: var(--text-3); }
+.ca-wrap { margin: 0 -14px; }
+table.ca-tbl tr.off td { color: var(--text-3); } table.ca-tbl tr.on td:first-child { font-weight: 700; }
+table.ca-tbl td:last-child { width: 40%; }
+.ca-st { font-size: 10.5px; font-weight: 700; color: var(--text-3); } .ca-st.on { color: var(--up); }
+.ca-bar { display: inline-block; width: calc(100% - 52px); height: 6px; border-radius: 3px; background: var(--panel-2); vertical-align: middle; overflow: hidden; }
+.ca-fill { height: 100%; border-radius: 3px; } .ca-fill.hi { background: var(--up); } .ca-fill.mid { background: var(--warn); } .ca-fill.lo { background: var(--text-3); opacity: .5; }
+table.ca-tbl tr.off .ca-fill { opacity: .35; }
+.ca-x { display: inline-block; width: 46px; text-align: right; font-size: 11.5px; }
+.ca-note { margin: 8px 0 0; }
+@media (max-width: 1240px) { .kv2-6 { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 700px) {
+  .kv2-6 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ca-wrap { margin: 0 -12px; } table.ca-tbl th:nth-child(3), table.ca-tbl td:nth-child(3) { display: none; }
+  .tabs button svg { width: 20px; height: 20px; }
+}
 </style>
 </head>
 <body>
@@ -461,10 +487,10 @@ table.det caption.empty { caption-side: top; padding: 18px; }
   <header>
     <h1>Pennybot</h1>
     <nav class="tabs" id="tabs" aria-label="화면">
-      <button data-tab="home" aria-pressed="true"><span aria-hidden="true">🏠</span>홈</button>
-      <button data-tab="symbol" aria-pressed="false"><span aria-hidden="true">🔎</span>종목</button>
-      <button data-tab="trade" aria-pressed="false"><span aria-hidden="true">📋</span>매매</button>
-      <button data-tab="settings" aria-pressed="false"><span aria-hidden="true">⚙️</span>설정</button>
+      <button data-tab="home" aria-pressed="true"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 10.5 12 3l9 7.5V21h-6v-6H9v6H3z"/></svg>홈</button>
+      <button data-tab="symbol" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>종목</button>
+      <button data-tab="trade" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19V5M4 19h16M8 15l4-5 3 3 5-7"/></svg>매매</button>
+      <button data-tab="settings" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/></svg>설정</button>
     </nav>
     <span class="spacer"></span>
     <span class="pill" id="mode">-</span>
@@ -472,7 +498,7 @@ table.det caption.empty { caption-side: top; padding: 18px; }
     <span class="pill" id="session">세션 확인 중</span>
     <span class="pill" id="trader-hb">매매 엔진 -</span>
     <span class="pill" id="collector-hb">수집기 -</span>
-    <span class="readonly-note"><span class="ro-long">외부 주소 · 보기 전용 (조작은 텔레그램 /정지 /청산 확인)</span><span class="ro-short" title="외부 주소 · 보기 전용 (조작은 텔레그램 /정지 /청산 확인)">👁 보기 전용</span></span>
+    <span class="readonly-note"><span class="ro-long">외부 주소 · 보기 전용 (조작은 텔레그램 /정지 /청산 확인)</span><span class="ro-short" title="외부 주소 · 보기 전용 (조작은 텔레그램 /정지 /청산 확인)">보기 전용</span></span>
   </header>
 
   <div class="warnbox" id="mismatch"></div>
@@ -487,17 +513,17 @@ table.det caption.empty { caption-side: top; padding: 18px; }
       <div class="kpi"><div class="k">급등 후보</div><div class="v" id="k-picks">-</div><div class="n" id="k-picks-n"></div></div>
     </section>
     <details class="card brief-wrap" id="brief-wrap">
-      <summary><span class="bot-title">🗞 오늘 브리핑</span><span class="sub" id="brief-sub" style="margin:0 0 0 8px"></span></summary>
+      <summary><span class="bot-title">오늘 브리핑</span><span class="sub" id="brief-sub" style="margin:0 0 0 8px"></span></summary>
       <div class="brief-grid" id="brief"></div>
     </details>
     <div class="home-cols">
       <div class="home-main">
     <section class="card det-wrap">
       <div class="pre-head">
-        <h2>🎯 조기 감지 <span class="sub" style="margin:0 0 0 6px;font-weight:400">알림 성과 추적</span></h2>
+        <h2>조기 감지 <span class="sub">알림 성과 추적</span></h2>
         <div class="feed-ctl">
           <div class="seg" id="det-filter" role="group" aria-label="알림 종류">
-            <button data-f="pre" aria-pressed="false">🚨 전조만</button>
+            <button data-f="pre" aria-pressed="false">전조만</button>
             <button data-f="all" aria-pressed="true">전체</button>
           </div>
           <label class="sub" style="margin:0"><input type="checkbox" id="det-norun"> 추격 신호 제외</label>
@@ -507,8 +533,8 @@ table.det caption.empty { caption-side: top; padding: 18px; }
       <div class="tablewrap det-scroll"><table class="det" id="det"></table></div>
       <details class="det-help"><summary>용어 · 기준</summary>
         <dl class="det-dl">
-          <dt>✅ 적중</dt><dd>감지가 대비 +20% 에 −10% 보다 먼저 도달</dd>
-          <dt>❌ 손절</dt><dd>−10% 에 먼저 도달 (같은 1분봉에서 둘 다면 손절로 집계)</dd>
+          <dt>적중</dt><dd>감지가 대비 +20% 에 −10% 보다 먼저 도달</dd>
+          <dt>손절</dt><dd>−10% 에 먼저 도달 (같은 1분봉에서 둘 다면 손절로 집계)</dd>
           <dt>미결</dt><dd>장 마감까지 둘 다 미도달</dd>
           <dt>적중률</dt><dd>끝난 거래일의 같은 종류 신호 중 적중 비율 (표본 20건 미만은 참고)</dd>
           <dt>당일 +30%</dt><dd>그날 전일 종가 대비 +30% 이상 도달</dd>
@@ -516,19 +542,19 @@ table.det caption.empty { caption-side: top; padding: 18px; }
           <dt>추격</dt><dd>감지 시점에 이미 전일 대비 +20% 이상</dd>
           <dt>매물대</dt><dd>현재가 ~ +30% 구간에 쌓인 최근 60일 거래량 비중 · 저항 = 가장 가까운 두꺼운 매물 가격</dd>
         </dl>
-        <p>🚨 급등 전조 = 거래대금·회전율 급증 + 일봉 등급(★). 📶 거래 터짐 = 거래 급증만 확인된 짧은 신호.</p>
-        <p>🔁 재가속 = 오늘 급등했던(또는 최근 3일 안에 +50% 찍은) 종목이 고점에서 15% 눌렸다가 저점에서 10% 다시 오르고 거래가 붙은 순간. 오르고 빠진 종목은 감시에서 빼지 않고 계속 봅니다.</p>
-        <p>👀 접근 · 🎯 임박 = 최근 20거래일 안에 +50% 급등했던 종목이 그 뒤 최고가의 15% 아래(거래 3배 붙음)·5% 아래까지 올라온 순간 — 넘기 전에 보냄 (그날 돌파 51%·79%). +50% 급등주는 30거래일 안에 또 +30% 급등일이 올 확률 63% (아무 종목 19%).</p>
+        <p>전조 = 거래대금·회전율 급증 + 일봉 등급(★). 터짐 = 거래 급증만 확인된 짧은 신호.</p>
+        <p>재가속 = 오늘 급등했던(또는 최근 3일 안에 +50% 찍은) 종목이 고점에서 15% 눌렸다가 저점에서 10% 다시 오르고 거래가 붙은 순간. 오르고 빠진 종목은 감시에서 빼지 않고 계속 봅니다.</p>
+        <p>고점 접근 · 임박 = 최근 20거래일 안에 +50% 급등했던 종목이 그 뒤 최고가의 15% 아래(거래 3배 붙음)·5% 아래까지 올라온 순간 — 넘기 전에 보냄 (그날 돌파 51%·79%). +50% 급등주는 30거래일 안에 또 +30% 급등일이 올 확률 63% (아무 종목 19%).</p>
         <p>이전 규칙 = 10/23 까지 쓰던 전조 조건 (참고용).</p>
       </details>
     </section>
     <section class="card pre-wrap">
       <div class="pre-head">
-        <h2>🎯 급등 후보 · 감시 종목</h2>
+        <h2>급등 후보 <span class="sub">감시 종목 스크리너</span></h2>
         <div class="seg" id="pre-filter" role="group" aria-label="보기">
           <button data-f="all" aria-pressed="true">전체</button>
-          <button data-f="live" aria-pressed="false">🔥 지금 움직임</button>
-          <button data-f="top" aria-pressed="false">🎯 급등 후보</button>
+          <button data-f="live" aria-pressed="false">지금 움직임</button>
+          <button data-f="top" aria-pressed="false">등급 종목</button>
         </div>
       </div>
       <p class="sub" id="pre-sub"></p>
@@ -537,13 +563,13 @@ table.det caption.empty { caption-side: top; padding: 18px; }
       <details class="sub" style="margin-top:8px"><summary>점수·증상 설명</summary>
         과거 +500% 급등 직전에 비교군보다 훨씬 흔했던 증상. 낙폭과대(60일 고점 −50%↓) 2점 · 급등 이력(60일 안 하루 +30%) 2점 ·
         거래량 폭발(전날 평소의 3배+) +2점 · 거래량 상승(1.5배+)·고변동(변동폭 10%+·갭 하락·폭락)·거래 마름(10일 −10% + 거래량 절반↓)·동전주($2 미만) 각 1점 (최대 10).
-        60일 고점 근처는 0점. 🔥 장중(1분마다, 5점 이상): 거래 급증 = 최근 1시간 분당 거래량 3배+, 매수세 유입 = 1시간 +3%·15분 +1.5%, +10% 돌파. 거래 급증+매수세 유입이면 텔레그램 알림.<br>보라 = SEC 공시 태그(ATM 진행·워런트 행사가·최근 공모/공모 대기·액면병합 날짜·상폐 기한·전환사채·현금), 청록 = 일봉 패턴(응축: 최근 10일 변동폭이 평소의 60% 이하·박스 30% 이내 / 매집 의심: 20일 동안 오른 날 거래량이 내린 날의 1.5배+인데 가격은 안 오름 / 바닥 다지기: 크게 빠진 뒤 최근 5일 저점이 앞 5일 저점보다 안 깨짐). 회전율 = 거래량 ÷ 발행주식.</details>
+        60일 고점 근처는 0점. 장중(1분마다, 5점 이상): 거래 급증 = 최근 1시간 분당 거래량 3배+, 매수세 유입 = 1시간 +3%·15분 +1.5%, +10% 돌파. 거래 급증+매수세 유입이면 텔레그램 알림.<br>보라 = SEC 공시 태그(ATM 진행·워런트 행사가·최근 공모/공모 대기·액면병합 날짜·상폐 기한·전환사채·현금), 청록 = 일봉 패턴(응축: 최근 10일 변동폭이 평소의 60% 이하·박스 30% 이내 / 매집 의심: 20일 동안 오른 날 거래량이 내린 날의 1.5배+인데 가격은 안 오름 / 바닥 다지기: 크게 빠진 뒤 최근 5일 저점이 앞 5일 저점보다 안 깨짐). 회전율 = 거래량 ÷ 발행주식.</details>
     </section>
       </div>
       <aside class="home-side">
     <section class="card feed-wrap">
       <div class="pre-head">
-        <h2>🔔 실시간 신호</h2>
+        <h2>실시간 신호</h2>
         <div class="feed-ctl">
           <div class="seg" id="feed-filter" role="group" aria-label="이벤트">
             <button data-f="hot" aria-pressed="true">중요</button>
@@ -555,13 +581,13 @@ table.det caption.empty { caption-side: top; padding: 18px; }
       <ul class="feed" id="feed"></ul>
     </section>
     <section class="card fil-wrap">
-      <div class="pre-head"><h2>📄 공시 · 뉴스</h2>
+      <div class="pre-head"><h2>공시 · 뉴스</h2>
         <div class="seg" id="fil-filter"><button data-f="key" aria-pressed="true">호재·악재</button><button data-f="all" aria-pressed="false">전체</button></div>
       </div>
       <ul class="feed" id="fil-feed"></ul>
     </section>
     <section class="card vs-wrap">
-      <div class="pre-head"><h2>🧪 가상 매매</h2><button class="link-btn" id="vs-goto">전체 내역 →</button></div>
+      <div class="pre-head"><h2>가상 매매</h2><button class="link-btn" id="vs-goto">전체 내역 →</button></div>
       <div class="vs-mini" id="vs-mini"></div>
       <div class="vs-list" id="vs"></div>
     </section>
@@ -591,7 +617,7 @@ table.det caption.empty { caption-side: top; padding: 18px; }
   <!-- ===== 매매: 주문·청산·후보 ===== -->
   <div class="tab" data-tab="trade" hidden>
     <section class="card racct" id="racct">
-      <div class="pre-head"><h2>💼 토스 실제 계좌</h2><span class="sub" style="margin:0" id="ra-upd"></span></div>
+      <div class="pre-head"><h2>토스 실제 계좌</h2><span class="sub" style="margin:0" id="ra-upd"></span></div>
       <div class="ra-kpis">
         <div class="ra-k"><div class="k">총 평가금액</div><div class="v mono" id="ra-eq">-</div><div class="n mono" id="ra-eq-n"></div></div>
         <div class="ra-k"><div class="k">총 손익 · 수익률</div><div class="v mono" id="ra-pl">-</div><div class="n mono" id="ra-pl-n"></div></div>
@@ -1122,7 +1148,7 @@ async function loadTables() {
   const onlyOk = $("only-ok").checked;
   const latest = sigs.length ? sigs[0].ts : null;
   table($("signals"), [
-    { h: "종목", f: r => `${r.symbol} · ${r.ok ? "✅ 통과" : "탈락"}`, tone: r => r.ok ? "pos" : null }, { h: "전략", f: r => STRAT[r.strategy] || r.strategy },
+    { h: "종목", f: r => `${r.symbol} · ${r.ok ? "통과" : "탈락"}`, tone: r => r.ok ? "pos" : null }, { h: "전략", f: r => STRAT[r.strategy] || r.strategy },
     { h: "시각", minor: 1, f: r => kst(r.ts) }, { h: "가격", num: 1, f: r => fmtPx(r.price) }, { h: "사유", wide: 1, f: r => r.reason },
   ], sigs.filter(r => (!onlyOk || r.ok) && (!latest || r.ts >= new Date(new Date(latest) - 3600e3).toISOString().slice(0, 19))), "후보 없음 (데이마켓 시간에 스캔합니다)");
 }
@@ -1311,7 +1337,7 @@ async function lookup(sym) {
   const tags = mk("div", "co-tags");
   const tag = (txt, cls) => tags.appendChild(mk("span", "ctag " + (cls || ""), txt));
   if (d.tier) tag("급등 후보 " + "★".repeat(d.tier), "t-gold");
-  if (price && price < 1) tag("⚠ $1 미만 · 상장유지 위험", "t-red");
+  if (price && price < 1) tag("$1 미만 · 상장유지 위험", "t-red");
   if ((fl.dilution_score ?? ti.dilution_score) >= 60) tag(`희석 위험 ${Math.round(fl.dilution_score ?? ti.dilution_score)}점`, "t-red");
   if (x.shares && x.shares < 1e7) tag("소형 유통 " + fmtQty(x.shares), "t-amber");
   (d.patterns || []).forEach(l => tag(l, "t-cyan"));
@@ -1331,8 +1357,8 @@ async function lookup(sym) {
   const ok = checks.filter(c => c[1] === true).length, known = checks.filter(c => c[1] != null).length;
   const live = lm.price != null && lv.ts && Date.now() - new Date(lv.ts) < 15 * 60000;   // 15분 안에 갱신된 장중 값
   const basis = live ? `${known}개 중 ${ok}개 통과` : `${x.intraday ? x.intraday.date + " 마감" : "최근 거래일"} 기준 · ${known}개 중 ${ok}개`;
-  const verdict = !has || !known ? ["장중 데이터 없음", "v-mute", "휴장이거나 감시 전 종목"] : ok >= 4 ? ["🔥 상승 힘 강함", "v-up", basis]
-    : ok >= 2 ? ["⚖️ 힘겨루기", "v-mid", basis] : ["🧊 힘 빠짐", "v-dn", basis];
+  const verdict = !has || !known ? ["장중 데이터 없음", "v-mute", "휴장이거나 감시 전 종목"] : ok >= 4 ? ["상승 힘 강함", "v-up", basis]
+    : ok >= 2 ? ["힘겨루기", "v-mid", basis] : ["힘 빠짐", "v-dn", basis];
   const vb = mk("div", "verdict " + verdict[1]); vb.append(mk("div", "vd-t", verdict[0]), mk("div", "vd-s", verdict[2])); c2.appendChild(vb);
   const ck = mk("div", "checks");
   checks.forEach(([k, v]) => ck.appendChild(mk("span", "chk " + (v === true ? "ok" : v === false ? "no" : "na"), (v === true ? "✓ " : v === false ? "✕ " : "· ") + k)));
@@ -1340,7 +1366,7 @@ async function lookup(sym) {
   kvGrid(c2, [["일중 위치", t.day_pos != null ? Math.round(t.day_pos) + "%" : null], ["시가 대비", t.vs_open != null ? fmtPct(t.vs_open) : null, tone(t.vs_open)],
     ["고점 대비", t.from_high != null ? fmtPct(t.from_high) : null, tone(t.from_high)], ["1시간 거래량", xx(lm.vol_x)], ["3분 거래대금", usdK(lm.dollar_3m)],
     ["오늘 거래대금", usdK(lm.dollar_today ?? t.dollar)], ["오늘 회전율", pct1(lv.turnover_today)], ["3분 회전율", pct1(lv.turnover_3m)], ["전날 거래량", xx(mt.vol_ratio)]], "kv2-3");
-  if ((lv.labels || []).length) c2.appendChild(mk("div", "live-l", "🔥 " + lv.labels.map(l => l.replace(/^[^\p{L}]+/u, "")).join(" · ")));
+  if ((lv.labels || []).length) c2.appendChild(mk("div", "live-l", "장중 신호 · " + lv.labels.map(l => l.replace(/^[^\p{L}]+/u, "")).join(" · ")));
   // ---- 3 희석·부양 동기
   const c3 = scard(page, 3, "희석 · 부양 동기", "sc-1");
   const ds = fl.dilution_score ?? ti.dilution_score;
@@ -1368,14 +1394,45 @@ async function lookup(sym) {
     r.append(mk("span", "k", k), mk("span", "v mono", fmtPx(v)), mk("span", "d mono " + (tone(dist) || ""), dist == null ? "" : fmtPct(dist))); lad.appendChild(r); });
   c4.appendChild(lad);
   if (r60.low && price) c4.appendChild(mk("div", "sub", `60일 저점 대비 ${(price / r60.low).toFixed(2)}배 · 60일 고점 대비 ${fmtPct((price / r60.high - 1) * 100, 0)}`));
+  // ---- 차트 분석: 켜진 신호 + 그 신호의 과거 적중 배수 (pennybot/chartlib.py)
+  const ca = x.chart;
+  const cA = scard(page, 0, "차트 분석", "sc-2", ca ? `${ca.d} 종가 기준 · 일봉 신호별 다음 날 급등 확률` : "");
+  if (!ca) cA.appendChild(mk("div", "empty", "일봉 기록이 부족함"));
+  else {
+    kvGrid(cA, [["추세", ca.trend, /정배열|위/.test(ca.trend) ? "pos" : /역배열|아래/.test(ca.trend) ? "neg" : ""],
+      ["RSI 14", ca.rsi != null ? ca.rsi.toFixed(0) : null, ca.rsi != null && ca.rsi < 30 ? "neg" : ca.rsi > 70 ? "pos" : ""],
+      ["20일 고점까지", fmtPct(ca.to_high20), ""], ["20일 저점까지", fmtPct(ca.to_low20), ""],
+      ["거래량 (20일 중앙값 대비)", ca.vol_x20 != null ? xx(ca.vol_x20) : null, ca.vol_x20 >= 3 ? "pos" : ""],
+      ["전날 회전율", ca.turnover != null ? pct1(ca.turnover) : null, ca.turnover >= 30 ? "pos" : ""]], "kv2-6");
+    const lit = ca.factors.filter(f => f.on).sort((a, b) => b.x100 - a.x100), off = ca.factors.filter(f => !f.on).sort((a, b) => b.x100 - a.x100);
+    const sumBox = mk("div", "ca-sum " + (ca.strong.length ? "hot" : lit.length ? "" : "mute"));
+    sumBox.append(mk("b", "", ca.strong.length ? `강한 신호 ${ca.strong.length}개 · ${ca.strong.join(", ")}` : lit.length ? "약한 신호만 켜짐" : "켜진 신호 없음"),
+      mk("span", "", ca.best_x100 != null ? `켜진 신호 중 최고: 다음 날 +100% 확률이 평소의 ${ca.best_x100.toFixed(1)}배` : "평소와 다를 것 없음"));
+    cA.appendChild(sumBox);
+    const t = mk("table", "ca-tbl"), hd = t.createTHead().insertRow();
+    [["신호", ""], ["상태", ""], ["다음 날 +30%", "num"], ["다음 날 +100%", "num"], ["평소 대비", ""]].forEach(([l, c]) => hd.appendChild(el2("th", c, l)));
+    const tb = t.createTBody();
+    [...lit, ...off].forEach(f => {
+      const r = tb.insertRow(); r.className = f.on ? "on" : "off"; r.title = f.note || "";
+      const c0 = r.insertCell(); c0.textContent = f.label;
+      const c1 = r.insertCell(); c1.appendChild(mk("span", "ca-st " + (f.on ? "on" : ""), f.on ? "켜짐" : "-"));
+      const c2 = r.insertCell(); c2.className = "num mono"; c2.textContent = f.p30.toFixed(1) + "%";
+      const c3 = r.insertCell(); c3.className = "num mono"; c3.textContent = f.p100.toFixed(2) + "%";
+      const c4 = r.insertCell(); const bar = mk("div", "ca-bar"), fill = mk("div", "ca-fill " + (f.x100 >= 5 ? "hi" : f.x100 >= 1.3 ? "mid" : "lo"));
+      fill.style.width = Math.min(100, Math.log2(1 + f.x100) / Math.log2(21) * 100).toFixed(0) + "%";
+      bar.appendChild(fill); c4.append(bar, mk("span", "ca-x mono", f.x100.toFixed(1) + "배"));
+    });
+    const wrap = mk("div", "tablewrap ca-wrap"); wrap.appendChild(t); cA.appendChild(wrap);
+    cA.appendChild(mk("p", "sub ca-note", "2026-04~10 일봉 20.8만 종목·일, 앞뒤 기간 모두 확인. 평소 = 다음 날 +30% 1.19% · +100% 0.22%. 흔한 '수축 → 돌파' 패턴(볼린저 수축·NR7·고점 바로 아래)은 페니주에선 평소보다 낮았음."));
+  }
   // ---- 물린 물량 (최근 60일 매물대)
   const oh = x.overhead;
-  const cO = scard(page, 0, "물린 물량", "sc-2", oh ? `최근 ${oh.days}일 거래량 · 가격대별` : "");
+  const cO = scard(page, 0, "물린 물량", "sc-wide", oh ? `최근 ${oh.days}일 거래량 · 가격대별` : "");
   if (!oh) cO.appendChild(mk("div", "empty", "일봉 기록이 부족함"));
   else {
     const heavy = oh.near_pct >= 25, light = oh.near_pct < 10;
     const vb2 = mk("div", "verdict " + (heavy ? "v-dn" : light ? "v-up" : "v-mid"));
-    vb2.append(mk("div", "vd-t", heavy ? "🧱 상단 매물대 두꺼움" : light ? "🪶 상단 매물대 얇음" : "⚖️ 상단 매물대 보통"),
+    vb2.append(mk("div", "vd-t", heavy ? "상단 매물대 두꺼움" : light ? "상단 매물대 얇음" : "상단 매물대 보통"),
       mk("div", "vd-s", `현재가 ~ +30% 구간 거래량 비중 ${oh.near_pct.toFixed(0)}% · 두꺼운 종목의 +10% → +30% 연장률 7% (그 외 11%)`));
     cO.appendChild(vb2);
     const wrap = mk("div", "oh-wrap");
@@ -1563,7 +1620,7 @@ async function loadBrief() {
   if (unchanged("brief", b)) return;
   const box = $("brief"); box.replaceChildren();
   const p = b.perf;
-  $("brief-sub").textContent = `${b.date} 거래일` + (p && p.n ? ` · 어제 알림 ${p.n}건 ✅${p.win} ❌${p.loss}` : "") + ((b.halts || []).length ? ` · 뉴스 대기 정지 ${b.halts.length}` : "");
+  $("brief-sub").textContent = `${b.date} 거래일` + (p && p.n ? ` · 어제 알림 ${p.n}건 (적중 ${p.win} · 손절 ${p.loss})` : "") + ((b.halts || []).length ? ` · 뉴스 대기 정지 ${b.halts.length}` : "");
   const sec = (title, items, row, empty) => {
     const c = mk("div", "br-sec"); c.appendChild(mk("div", "br-t", title));
     const ul = mk("ul", "br-l");
@@ -1572,10 +1629,10 @@ async function loadBrief() {
     c.appendChild(ul); box.appendChild(c);
   };
   const line = (li, sym, mid, right, rc) => { li.append(mk("b", "mono", sym), mk("span", "br-m", mid), mk("span", "br-r mono " + (rc || ""), right)); };
-  sec(`📈 어제${b.d0 ? " (" + b.d0.slice(5) + ")" : ""} 급등`, (b.movers || []).slice(0, 6), (li, m) => line(li, m.symbol, `종가 ${fmtPct(m.chg, 0)} · ${usdK(m.dollar)}`, "고가 " + fmtPct(m.high_chg, 0), "pos"), "+30% 넘은 종목 없음");
-  sec("⭐ 오늘 급등 후보", (b.picks || []).slice(0, 6), (li, x) => line(li, x.symbol, x.name || "", "★".repeat(x.tier), "gold"), "★★ 이상 없음");
-  sec("🌙 밤사이 거래 터짐·급등", (b.night || []).slice(0, 6), (li, n) => line(li, n.symbol, n.text.replace(/^[^\p{L}\p{N}$]+/u, "").replace(new RegExp("^" + n.symbol + "\\s*"), ""), etSession(n.ts).replace(" ET", "")), "조용함");
-  sec("🛑 정지 · 📄 공시", [...(b.halts || []).map(h => ({ ...h, _h: 1 })), ...(b.filings || [])].slice(0, 6),
+  sec(`어제${b.d0 ? " (" + b.d0.slice(5) + ")" : ""} 급등`, (b.movers || []).slice(0, 6), (li, m) => line(li, m.symbol, `종가 ${fmtPct(m.chg, 0)} · ${usdK(m.dollar)}`, "고가 " + fmtPct(m.high_chg, 0), "pos"), "+30% 넘은 종목 없음");
+  sec("오늘 급등 후보", (b.picks || []).slice(0, 6), (li, x) => line(li, x.symbol, x.name || "", "★".repeat(x.tier), "gold"), "★★ 이상 없음");
+  sec("밤사이 거래 터짐 · 급등", (b.night || []).slice(0, 6), (li, n) => line(li, n.symbol, n.text.replace(/^[^\p{L}\p{N}$]+/u, "").replace(new RegExp("^" + n.symbol + "\\s*"), ""), etSession(n.ts).replace(" ET", "")), "조용함");
+  sec("거래정지 · 공시", [...(b.halts || []).map(h => ({ ...h, _h: 1 })), ...(b.filings || [])].slice(0, 6),
     (li, f) => f._h ? line(li, f.symbol, f.name || "", "뉴스 대기", "neg") : line(li, f.symbol, f.text.replace(/^[^\p{L}\p{N}$]+/u, "").replace(new RegExp("^(" + f.symbol + "\\s*)+"), "").replace(/[▲▼]\S*/g, ""), f.up ? "▲ 호재" : "▼ 악재", f.up ? "pos" : "neg"), "없음");
 }
 
@@ -1634,7 +1691,7 @@ function etSession(ts) {
 }
 // 미국 거래일 (전날 20:00 ET 부터) — 지난 거래일 알림은 결과가 확정
 const tradeDay = () => new Date(Date.now() + 4 * 3600e3).toLocaleDateString("en-CA", { timeZone: "America/New_York" });
-const DET_KIND = { precursor: ["🚨 전조", "k-pre"], burst: ["📶 터짐", "k-burst"], reaccel: ["🔁 재가속", "k-pre"], approach: ["🎯 고점 접근", "k-pre"], old: ["이전 규칙", ""] };
+const DET_KIND = { precursor: ["전조", "k-pre"], burst: ["터짐", "k-burst"], reaccel: ["재가속", "k-pre"], approach: ["고점 접근", "k-pre"], old: ["이전 규칙", ""] };
 async function loadDet() {
   const d = await api("/api/detections?hours=36");
   if (unchanged("det", [d, detFilter, $("det-norun").checked])) return;
@@ -1650,7 +1707,7 @@ async function loadDet() {
   if (base.n) stat("평소 +30%", `${(base.hit30 / base.n * 100).toFixed(1)}%`);
   const t = $("det"); t.replaceChildren();
   if (!rows.length) { t.appendChild(el2("caption", "empty",
-    d.rows.length ? "조건에 맞는 감지 없음" : "최근 36시간 감지 없음 — 🚨 급등 전조·📶 거래 터짐 알림이 뜨면 여기서 결과까지 추적합니다")); return; }
+    d.rows.length ? "조건에 맞는 감지 없음" : "최근 36시간 감지 없음 — 전조·터짐 알림이 뜨면 여기서 결과까지 추적합니다")); return; }
   if (PHONE.matches) { detCards(t, rows, st, run); return; }
   // 열: [제목, 클래스] — 숫자는 오른쪽 정렬, 마지막 '매물대' 만 남는 폭을 쓴다
   const COLS = [["시각", "c-t"], ["종목", "c-s"], ["신호", "c-k"], ["감지가", "num w-lg"], ["현재가", "num"], ["감지 후", "num"], ["최고", "num"],
@@ -1727,7 +1784,7 @@ const kstDay = s => new Date(s).toLocaleDateString("ko-KR", { timeZone: "Asia/Se
 function kpiFeed(rows) {
   const today = rows.filter(e => kstDay(e.ts) === kstDay(new Date()));
   const n = k => today.filter(e => e.kind === k).length;
-  $("k-alerts").textContent = `🚨 ${n("precursor")} · 📶 ${n("burst")}`;
+  $("k-alerts").textContent = `전조 ${n("precursor")} · 터짐 ${n("burst")}`;
   $("k-alerts-n").textContent = `뉴스 정지 ${today.filter(e => e.kind === "halt" && e.text.includes("뉴스")).length} · 급등 ${n("spike_up")} · 랭킹 ${today.filter(e => e.kind.startsWith("rank:")).length}`;
 }
 
@@ -1758,7 +1815,7 @@ function drawVs() {
     const v = ret(r), open = vsOpen.has(r.id), wait = r.status === "ORDER";
     const row = document.createElement("div"); row.className = "vs-row";
     const l1 = document.createElement("div"); l1.className = "vs-l1";
-    l1.append(span("vs-st", wait ? "🧾" : r.status === "OPEN" ? "⏳" : v >= 0 ? "✅" : "❌"), span("vs-sym", r.symbol),
+    l1.append(span("vs-st " + (wait ? "st-wait" : r.status === "OPEN" ? "st-open" : v >= 0 ? "st-win" : "st-loss"), wait ? "대기" : r.status === "OPEN" ? "보유" : v >= 0 ? "익절" : "손절"), span("vs-sym", r.symbol),
               span("chip", (STRAT_NAME[r.strat] || "이전").split(" ")[0]), span("vs-name", r.name || ""),
               span("vs-ret " + (wait ? "muted" : tone(v) || ""), wait ? "지정가 대기" : fmtPct(v)));
     const l2 = wait ? span("vs-l2", `지정가 ${fmtPx(r.entry)} · 지금 ${fmtPx(r.last)} · ${kst(r.opened)} 신호 · ${STRAT_NAME[r.strat] || ""}`)
@@ -1834,7 +1891,7 @@ async function loadVTrade() {
       const tp = (rs[0] && rs[0].tp) || ({ S1: 10, S2: 20, S3: 20, S4: 15, S5: 15, S6: 10 }[k] || 15), sl = (rs[0] && rs[0].sl) || 35;
       const be = (sl + 1) / (tp + sl), w = d.filter(r => vret(r) > 0).length / (d.length || 1);
       const rets = d.map(vret);
-      const st = k === "이전" ? ["옛 규칙 (참고)", "flat"] : d.length < 50 ? [`표본 부족 (${d.length}/50)`, "flat"] : w < be ? ["⚠ 손익분기 아래", "neg"] : ["정상", "pos"];
+      const st = k === "이전" ? ["옛 규칙 (참고)", "flat"] : d.length < 50 ? [`표본 부족 (${d.length}/50)`, "flat"] : w < be ? ["손익분기 아래", "neg"] : ["정상", "pos"];
       return [[STRAT_NAME[k] || k], [k === "이전" ? "전조 알림 = 매수 등 예전 방식" : STRAT_RULE[k] + ` · 익절 +${tp}% · 손절 −${sl}%`, "scr-tags"],
               [d.length, "num"], [d.length ? Math.round(w * 100) + "%" : "-", "num"], [Math.round(be * 100) + "%", "num"],
               [d.length ? fmtPct(sum(d) / d.length) : "-", "num " + (tone(sum(d)) || "")], [d.length ? fmtPct(sum(d)) : "-", "num " + (tone(sum(d)) || "")],
@@ -1874,12 +1931,12 @@ $("bot-wrap").addEventListener("toggle", () => { if ($("bot-wrap").open) { delet
 
 
 /* ---------- 설정 탭 ---------- */
-const ALERT_KO = { presurge: ["🚨 급등 전조", "프리 06~09시 + $2 미만/거래량 50배+/★★★ 인 첫 거래 터짐"],
-  burst: ["📶 거래 터짐 신호", "모든 세션, 1분 거래대금·회전율 터짐"], halt: ["🛑 뉴스 대기 거래정지", "정지 직후 + 재개 시각 공개 때"],
-  pre_open: ["🌅 프리 개장 주목", "동부 03:55, 데이마켓에서 움직인 종목"], vtrade: ["🧪 가상 매매", "지정가 주문·체결·매도"],
-  approach: ["👀🎯 이전 고점 접근·임박", "최근 20거래일 +50% 급등주가 그 뒤 최고가 15% 아래(거래 3배)·5% 아래로 올라올 때 — 넘기 전에"],
-  reaccel: ["🔁 재가속", "급등 뒤 15% 눌렸다 10% 다시 오르고 거래가 붙을 때 (한 파동 한 번, 하루 3번까지)"],
-  briefing: ["🗞 장 시작 전 브리핑", "동부 03:45, 어제 급등·오늘 후보·밤사이 정지·공시"], perf: ["📊 알림 성과 요약", "애프터장 마감 뒤, 오늘 알림이 실제로 얼마나 갔나"] };
+const ALERT_KO = { presurge: ["급등 전조", "프리 06~09시 + $2 미만/거래량 50배+/★★★ 인 첫 거래 터짐"],
+  burst: ["거래 터짐 신호", "모든 세션, 1분 거래대금·회전율 터짐"], halt: ["뉴스 대기 거래정지", "정지 직후 + 재개 시각 공개 때"],
+  pre_open: ["프리 개장 주목", "동부 03:55, 데이마켓에서 움직인 종목"], vtrade: ["가상 매매", "지정가 주문·체결·매도"],
+  approach: ["이전 고점 접근 · 임박", "최근 20거래일 +50% 급등주가 그 뒤 최고가 15% 아래(거래 3배)·5% 아래로 올라올 때 — 넘기 전에"],
+  reaccel: ["재가속", "급등 뒤 15% 눌렸다 10% 다시 오르고 거래가 붙을 때 (한 파동 한 번, 하루 3번까지)"],
+  briefing: ["장 시작 전 브리핑", "동부 03:45, 어제 급등·오늘 후보·밤사이 정지·공시"], perf: ["알림 성과 요약", "애프터장 마감 뒤, 오늘 알림이 실제로 얼마나 갔나"] };
 async function postSettings(patch) {
   const r = await fetch("/api/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch) });
   const j = await r.json(); if (!r.ok) throw new Error(j.error || r.status); return j;
@@ -1900,7 +1957,7 @@ async function loadSettings() {
     const sb = $("set-strats"); sb.replaceChildren();
     Object.keys(STRAT_RULE).forEach(k => toggleRow(sb, STRAT_NAME[k] || k, STRAT_RULE[k], s.strategies[k] !== false, on => postSettings({ strategies: { [k]: on } })));
     const ab = $("set-alerts"); ab.replaceChildren();
-    toggleRow(ab, "⚡ 실시간 거래 터짐 감지", "웹소켓 체결로 바로 잡기 (끄면 1분 확인만)", s.realtime !== false, on => postSettings({ realtime: on }));
+    toggleRow(ab, "실시간 거래 터짐 감지", "웹소켓 체결로 바로 잡기 (끄면 1분 확인만)", s.realtime !== false, on => postSettings({ realtime: on }));
     Object.entries(ALERT_KO).forEach(([k, [t, d]]) => toggleRow(ab, t, d, s.alerts[k] !== false, on => postSettings({ alerts: { [k]: on } })));
     $("set-cap").value = s.vaccount.capital; $("set-per").value = s.vaccount.per_trade;
   }
@@ -1932,7 +1989,7 @@ async function loadPre() {
   const t3 = (r.rows || []).filter(x => x.tier === 3).length, t2 = (r.rows || []).filter(x => x.tier === 2).length;
   $("k-picks").textContent = r.d0 ? `★★★ ${t3} · ★★ ${t2}` : "-";
   $("k-picks-n").textContent = r.d0 ? `${r.d0} 종가 기준 · 전체 ${r.n}종목` : "";
-  $("pre-sub").textContent = r.d0 ? `${r.d0} 종가 기준 · ${r.n}종목 · 🔥 지금 움직이는 종목 ${live}개 · 장중 1분마다 갱신` : "아직 없음 — 수집기가 장 마감 뒤 전 종목을 계산합니다";
+  $("pre-sub").textContent = r.d0 ? `${r.d0} 종가 기준 · ${r.n}종목 · 지금 움직임 ${live} · 장중 1분 갱신` : "아직 없음 — 수집기가 장 마감 뒤 전 종목을 계산합니다";
   drawPre();
 }
 const SESS_SHORT = { DAY: "데이", PRE: "프리", REGULAR: "정규", AFTER: "애프터", CLOSED: "휴장" };
