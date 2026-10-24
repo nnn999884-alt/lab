@@ -986,6 +986,10 @@ async function loadOverview() {
   $("mode").style.borderColor = ov.mode === "live" ? css("--critical") : "";
   const nxt = ov.next_change ? Math.max(0, Math.round((new Date(ov.next_change) - Date.now()) / 60000)) : null;
   $("session").textContent = (SESS[ov.session] || ov.session) + (ov.trade_date ? ` · ${ov.trade_date}` : "") + (nxt != null ? ` · 다음 전환 ${Math.floor(nxt / 60)}시간 ${nxt % 60}분` : "");
+  if ($("k-session")) {                                   // 오늘 한눈에: 세션
+    $("k-session").textContent = SESS[ov.session] || ov.session || "-";
+    $("k-session-n").textContent = nxt != null ? `다음 전환 ${Math.floor(nxt / 60)}시간 ${nxt % 60}분` : "";
+  }
   const ta = ov.trader.age_s;
   pillStatus($("trader-hb"), ta == null ? " 매매 엔진 꺼짐" : ta < 60 ? " 매매 엔진 정상" : ` 매매 엔진 응답 없음 (${Math.round(ta / 60)}분)`, ta == null ? "idle" : ta < 60 ? "good" : "critical");
   const ca = ago(ov.collector.last_price_ts);
@@ -1390,7 +1394,6 @@ function kpiFeed(rows) {
   const n = k => today.filter(e => e.kind === k).length;
   $("k-alerts").textContent = `🚨 ${n("precursor")} · 📶 ${n("burst")}`;
   $("k-alerts-n").textContent = `뉴스 정지 ${today.filter(e => e.kind === "halt" && e.text.includes("뉴스")).length} · 급등 ${n("spike_up")} · 랭킹 ${today.filter(e => e.kind.startsWith("rank:")).length}`;
-  const sp = $("session"); if (sp) { const t = sp.textContent.split("·"); $("k-session").textContent = (t[0] || "-").trim(); $("k-session-n").textContent = t.slice(1).join("·").trim(); }
 }
 
 /* ---------- 가상 매매 기록 ---------- */
