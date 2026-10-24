@@ -79,6 +79,9 @@ class Collector:
         self._rt_seeded: set = set()              # 1분봉으로 평소 거래량을 채운 종목
         self._rt_fired: dict = {}                 # 종목 → 마지막 실시간 신호 시각(초)
         self._rt_shares: dict = {}
+        self._vopen: dict = {}                    # 종목 → [가상 포지션] (실시간 체결로 익절·손절·목표 근처 밀림 확인)
+        self._vhi: dict = {}                      # 가상 포지션 id → 실시간 고점
+        self._vorders: dict = {}                  # 종목 → [걸려 있는 가상 지정가 주문]
         import queue
         self._rt_q = queue.Queue()
         self._short_done: set[tuple[str, str]] = set()   # (종류, 날짜) 이미 받은 일별 파일
@@ -807,9 +810,19 @@ class Collector:
         self._rt_syms = set(want)
 
     def _on_trade(self, sym: str, price: float, vol: float, t: float | None = None) -> None:
-        """웹소켓 스레드에서 체결마다. 무거운 일(1분봉 조회·알림)은 큐로 넘긴다."""
+        """웹소켓 스레드에서 체결마다. 무거운 일(1분봉 조회·알림·정리)은 큐로 넘긴다."""
         from collections import deque
         t = t if t is not None else time.time()
+        for o in self._vorders.get(sym, ()):            # 걸려 있는 가상 지정가: 체결가가 지정가 이하로 찍히면 바로 체결
+            if not o.get("_filling") and o["entry"] and price <= o["entry"]:
+                o["_filling"] = True
+                self._rt_q.put(("vfill", o["id"], price))
+        for v in self._vopen.get(sym, ()):              # 보유 중 가상 포지션: 체결가로 바로 판단
+            hi = max(self._vhi.get(v["id"], 0.0), v["high"] or 0.0, price)
+            self._vhi[v["id"]] = hi
+            if not v.get("_closing") and self._vexit(v, price, hi, self.clock()) not in (None, "애프터장 마감 정리"):
+                v["_closing"] = True
+                self._rt_q.put(("vclose", v["id"], price))
         w = self._rt_win.setdefault(sym, deque())
         w.append((t, price, vol))
         while w and t - w[0][0] > 60:
@@ -835,17 +848,64 @@ class Collector:
         self._rt_q.put(("alert", sym, d60, v60, price))
 
     def _rt_worker(self) -> None:
+        import queue
         store = Store(self.cfg.db_path)                  # 스레드 전용 연결
         self._rt_shares = dict(store.query("SELECT symbol, shares FROM stock_info WHERE shares > 0"))
+        last_refresh = 0.0
         while True:
-            job = self._rt_q.get()
+            if time.time() - last_refresh >= 5:          # 보유 중 가상 포지션 목록 (실시간 정리용) + 그 종목 구독
+                self._vopen_refresh(store)
+                last_refresh = time.time()
+            try:
+                job = self._rt_q.get(timeout=5)
+            except queue.Empty:
+                continue
             try:
                 if job[0] == "seed":
                     self._rt_seed(job[1])
+                elif job[0] == "vclose":
+                    self._rt_vclose(store, job[1], job[2])
+                elif job[0] == "vfill":
+                    self._rt_vfill(store, job[1], job[2])
                 else:
                     self._rt_alert(store, *job[1:])
             except Exception as e:
                 log.warning("실시간 처리 실패 %s: %s", job[:2], str(e)[:160])
+
+    def _vopen_refresh(self, store) -> None:
+        by: dict = {}
+        orders: dict = {}
+        for r in store.query("SELECT * FROM vsignals WHERE status IN ('OPEN','ORDER')"):
+            v = self._vrow(r)
+            (by if v["status"] == "OPEN" else orders).setdefault(v["symbol"], []).append(v)
+        self._vopen, self._vorders = by, orders
+        new = (set(by) | set(orders)) - self._rt_syms
+        if new:
+            self._rt_set(list(new) + list(self._rt_syms))
+
+    def _rt_vfill(self, store, vid: int, price: float) -> None:
+        """실시간 체결가가 가상 지정가에 닿음 → 지정가로 체결 (실제 주문이면 줄 선 순서에 따라 안 될 수도 있다)."""
+        r = store.query("SELECT * FROM vsignals WHERE id=? AND status='ORDER'", (vid,))
+        if not r:
+            return
+        v = self._vrow(r[0])
+        now = self.clock()
+        _, session = self.cal.classify(now)
+        lim = v["entry"]
+        with store.db:
+            cur = store.db.execute("UPDATE vsignals SET status='OPEN', opened=?, entry=?, high=?, low=?, last=? WHERE id=? AND status='ORDER'",
+                                   (iso(now), lim, lim, min(lim, price), price, vid))
+        if cur.rowcount:
+            self._vnotify("buy", vid, session, store)
+            self._vopen_refresh(store)
+
+    def _rt_vclose(self, store, vid: int, price: float) -> None:
+        r = store.query("SELECT * FROM vsignals WHERE id=? AND status='OPEN'", (vid,))
+        if not r:
+            return
+        now = self.clock()
+        _, session = self.cal.classify(now)
+        self._vupdate(store, self._vrow(r[0]), price, now, session, hi=self._vhi.get(vid))
 
     def _rt_seed(self, sym: str) -> None:
         """구독 시작할 때 최근 40분 1분봉으로 평소 거래량을 채워 둔다 (재시작 직후 몰림 방지)."""
@@ -1013,6 +1073,12 @@ class Collector:
         store.put_precursor_live([{"d0": d0, "symbol": sym, "ts": iso(now), "signals": json.dumps(lv["signals"]),
                                    "metrics": json.dumps(lv["metrics"]), "alerted": iso(now)}])
         self._alert(store, now, session, sym, score, sig, met, lv, t_, tags or ["빠른 포착"])
+        if self.cfg.vsignal and session != AFTER:          # 가상 매매 전략도 지금 바로 (지정가 주문·바로 매수)
+            try:
+                self._vtrade(now, d0, sym, score, pc, today, shares, session, start, store)
+                self._vopen_refresh(store)
+            except Exception as e:
+                log.warning("실시간 가상 매매 실패 %s: %s", sym, str(e)[:120])
         return True
 
     # ---------- 가상 매수·매도 (알림만, 실제 주문 없음) ----------
@@ -1044,12 +1110,13 @@ class Collector:
         self._day_cache[sym] = (start, bars)
         return bars
 
-    def _vtrade(self, now, d0, sym, score, prev_close, today, shares, session, start=None) -> None:
+    def _vtrade(self, now, d0, sym, score, prev_close, today, shares, session, start=None, store=None) -> None:
         """전략마다 종목당 하루 한 번: 신호 → 가상 지정가(ORDER) → 닿으면 체결(OPEN), 바로 사는 전략은 곧장 OPEN.
         방금(최근 3분) 일어난 것만 새로 기록한다 (수집기가 늦게 켜졌을 때 지난 신호로 사지 않게)."""
         from ..vstrat import STRATEGIES, plan, signal_k
+        store = store or self.store
         strats = [(k, STRATEGIES[k]) for k in self.cfg.vsignal_strategies if k in STRATEGIES]
-        state = {r[0]: (r[1], r[2]) for r in self.store.query(
+        state = {r[0]: (r[1], r[2]) for r in store.query(
             "SELECT strat, id, status FROM vsignals WHERE symbol=? AND d0=? AND strat IS NOT NULL ORDER BY id", (sym, d0))}
         live = [(k, st) for k, st in strats if k not in state or state[k][1] == "ORDER"]
         if not live or (not state and signal_k(today, prev_close, shares) is None):
@@ -1070,31 +1137,31 @@ class Collector:
                           f" · 신호가 {b[4]:.4g} (전날 대비 {(b[4] / prev_close - 1) * 100:+.0f}%) · 전조 {score}점")
                 filled = p["fill_k"] is not None
                 f = today[p["fill_k"]] if filled else None
-                with self.store.db:
-                    c = self.store.db.execute(
+                with store.db:
+                    c = store.db.execute(
                         "INSERT INTO vsignals (symbol, d0, opened, session, entry, score, reason, status, high, low, last, tp, sl, strat) "
                         "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         (sym, d0, f[0] if filled else b[0], session, p["limit"], score, reason, "OPEN" if filled else "ORDER",
                          p["limit"], min(f[3], p["limit"]) if filled and st["entry"] in ("vwap", "signal", "high") else p["limit"], today[-1][4],
                          st["tp"], st["sl"], key))
-                self._vnotify("buy" if filled else "order", c.lastrowid, session)
+                self._vnotify("buy" if filled else "order", c.lastrowid, session, store)
                 continue
             vid = state[key][0]
             if p["fill_k"] is not None:
                 f = today[p["fill_k"]]
-                with self.store.db:
-                    self.store.db.execute("UPDATE vsignals SET status='OPEN', opened=?, entry=?, high=?, low=?, last=? WHERE id=?",
+                with store.db:
+                    store.db.execute("UPDATE vsignals SET status='OPEN', opened=?, entry=?, high=?, low=?, last=? WHERE id=?",
                                           (f[0], p["fill_px"], p["fill_px"], min(f[3], p["fill_px"]), f[4], vid))
-                self._vnotify("buy", vid, session)
+                self._vnotify("buy", vid, session, store)
             else:
-                with self.store.db:                      # 지정가는 기준(VWAP·고점)을 따라 움직인다
-                    self.store.db.execute("UPDATE vsignals SET entry=?, high=?, low=?, last=? WHERE id=?",
+                with store.db:                      # 지정가는 기준(VWAP·고점)을 따라 움직인다
+                    store.db.execute("UPDATE vsignals SET entry=?, high=?, low=?, last=? WHERE id=?",
                                           (p["limit"], p["limit"], p["limit"], today[-1][4], vid))
 
-    def _vnotify(self, kind: str, vid: int, session: str) -> None:
+    def _vnotify(self, kind: str, vid: int, session: str, store=None) -> None:
         from ..precursor import vsignal_text
         from ..trading.strategies import SESSION_KO
-        v = self._vrow(self.store.query("SELECT * FROM vsignals WHERE id=?", (vid,))[0])
+        v = self._vrow((store or self.store).query("SELECT * FROM vsignals WHERE id=?", (vid,))[0])
         log.info("가상 %s %s $%.4g (%s)", "지정가 주문" if kind == "order" else "매수 체결", v["symbol"], v["entry"], v["reason"])
         if not self.notifier:
             return
@@ -1138,30 +1205,49 @@ class Collector:
             last = self._last_price(v["symbol"], v.get("last") if eod else None)
             if not last:
                 continue
-            hi, lo = max(v["high"] or last, last), min(v["low"] or last, last)
-            hi_at = iso(now) if last > (v["high"] or 0) else v.get("high_at")
-            ret = (last / v["entry"] - 1) * 100
-            why = None
-            tp, sl = v.get("tp") or 15.0, v.get("sl") or 35.0
-            if ret >= tp:
-                why = f"익절 +{tp:g}%"
-            elif ret <= -sl:
-                why = f"손절 −{sl:g}%"
-            elif eod or now - datetime.fromisoformat(v["opened"]) >= timedelta(hours=24):
-                why = "애프터장 마감 정리"                   # 보유 안 함: 그날(애프터장까지) 안에 판다
-            with self.store.db:
-                if why:
-                    self.store.db.execute("UPDATE vsignals SET status='CLOSED', closed=?, exit_price=?, exit_reason=?, high=?, low=?, last=?, "
-                                          "high_at=? WHERE id=?", (iso(now), last, why, hi, lo, last, hi_at, v["id"]))
-                else:
-                    self.store.db.execute("UPDATE vsignals SET high=?, low=?, last=?, high_at=? WHERE id=?", (hi, lo, last, hi_at, v["id"]))
-            if why and self.notifier:
-                v.update(status="CLOSED", closed=iso(now), exit_price=last, exit_reason=why, high=hi, low=lo, last=last, high_at=hi_at)
+            self._vupdate(self.store, v, last, now, session, eod=eod)
+
+    def _vexit(self, v: dict, last: float, hi: float, now: datetime, eod: bool = False) -> str | None:
+        """정리 사유: 익절 · 손절 · 목표 근처에서 못 뚫고 밀림 · 애프터장 마감."""
+        ret = (last / v["entry"] - 1) * 100
+        tp, sl = v.get("tp") or 15.0, v.get("sl") or 35.0
+        g = (hi / v["entry"] - 1) * 100
+        if ret >= tp:
+            return f"익절 +{tp:g}%"
+        if ret <= -sl:
+            return f"손절 −{sl:g}%"
+        back = self.cfg.vsignal_near_back
+        if back and g >= tp - self.cfg.vsignal_near_tp and ret <= g - back:
+            return f"목표 근처 +{g:.1f}% 에서 밀려 정리"         # 예: 익절 +20% 인데 +19.5% 까지 갔다가 +17.5%
+        if eod or now - datetime.fromisoformat(v["opened"]) >= timedelta(hours=24):
+            return "애프터장 마감 정리"                       # 보유 안 함: 그날(애프터장까지) 안에 판다
+        return None
+
+    def _vupdate(self, store, v: dict, last: float, now: datetime, session: str, hi: float | None = None, eod: bool = False) -> str | None:
+        """현재가(또는 실시간 체결가)로 고점·저점 갱신 → 정리 사유면 닫고 알림. → 사유."""
+        from ..precursor import vsignal_text
+        from ..trading.strategies import SESSION_KO
+        hi = max(v["high"] or last, last, hi or 0)
+        lo = min(v["low"] or last, last)
+        hi_at = iso(now) if hi > (v["high"] or 0) else v.get("high_at")
+        why = self._vexit(v, last, hi, now, eod)
+        with store.db:
+            if why:
+                cur = store.db.execute("UPDATE vsignals SET status='CLOSED', closed=?, exit_price=?, exit_reason=?, high=?, low=?, last=?, "
+                                       "high_at=? WHERE id=? AND status='OPEN'", (iso(now), last, why, hi, lo, last, hi_at, v["id"]))
+                if not cur.rowcount:
+                    return None                          # 다른 스레드가 먼저 닫음
+            else:
+                store.db.execute("UPDATE vsignals SET high=?, low=?, last=?, high_at=? WHERE id=?", (hi, lo, last, hi_at, v["id"]))
+        if why:
+            v.update(status="CLOSED", closed=iso(now), exit_price=last, exit_reason=why, high=hi, low=lo, last=last, high_at=hi_at)
+            if self.notifier:
                 link = self.link() if self.link else None
                 name = (self.universe.get(v["symbol"]) or {}).get("name")
                 self.notifier.send(vsignal_text("sell", v["symbol"], name, v, self.cfg, SESSION_KO.get(session, session)),
                                    buttons=[[{"text": "📊 대시보드", "url": f"{link}/?s={v['symbol']}"}]] if link else None)
-                log.info("가상 매도 %s %s %+.1f%%", v["symbol"], why, ret)
+            log.info("가상 매도 %s %s %+.1f%%", v["symbol"], why, (last / v["entry"] - 1) * 100)
+        return why
 
     # ---------- 공매도·대차 ----------
     def poll_short_daily(self, now: datetime) -> None:

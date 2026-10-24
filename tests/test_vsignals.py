@@ -420,3 +420,41 @@ def test_stale_positions_closed_on_restart(tmp_path):
     assert st.query("SELECT status FROM vsignals")[0][0] == "OPEN"
     col.check_vsignals(T0 + timedelta(hours=25), "CLOSED", True, 20)     # 25시간 → 정리
     assert st.query("SELECT status, exit_reason FROM vsignals")[0] == ("CLOSED", "애프터장 마감 정리")
+
+
+def test_realtime_fill_and_exits(tmp_path):
+    col, st, sent = make(tmp_path)
+    only(col, "S1")
+
+    class Cal:
+        def classify(self, now):
+            return (None, "PRE")
+    col.cal = Cal()
+    col.clock = lambda: T0 + timedelta(minutes=6)
+    px = [0.9] * 3 + [1.0, 1.10]
+    col._vtrade(T0, "2026-10-22", "PENX", 9, 0.9, bars_of(px), None, "PRE")   # 지정가 0.864 (VWAP −10%)
+    col._vopen_refresh(st)                                                # 주문 종목을 구독 → 평소 거래량 채우기 작업
+    assert col._rt_q.get_nowait() == ("seed", "PENX")
+    col._on_trade("PENX", 0.90, 100)                                      # 지정가 위 → 아직
+    assert col._rt_q.empty()
+    col._on_trade("PENX", 0.86, 100)                                      # 체결가가 지정가 아래 → 바로 체결
+    job = col._rt_q.get_nowait()
+    assert job[0] == "vfill"
+    col._rt_vfill(st, job[1], job[2])
+    assert st.query("SELECT status, round(entry, 3) FROM vsignals")[0] == ("OPEN", 0.864)
+    assert sent.msgs[-1][0].startswith("🧪 [전략1 VWAP 눌림] 가상 매수 체결")
+    col._on_trade("PENX", 0.95, 100)                                      # +10% 익절은 0.9504 → 아직
+    assert col._rt_q.empty()
+    col._on_trade("PENX", 0.951, 100)                                     # 익절가 도달 → 바로 정리
+    job = col._rt_q.get_nowait()
+    col._rt_vclose(st, job[1], job[2])
+    assert st.query("SELECT status, exit_reason FROM vsignals")[0] == ("CLOSED", "익절 +10%")
+
+
+def test_near_target_pullback_exit(tmp_path):
+    col, st, sent = make(tmp_path)
+    v = {"id": 1, "entry": 1.0, "tp": 20.0, "sl": 35.0, "high": 1.0, "opened": T0.isoformat()}
+    now = T0 + timedelta(minutes=10)
+    assert col._vexit(v, 1.185, 1.195, now) is None                      # +19.5% 고점, 지금 +18.5% (1%p 밀림)
+    assert col._vexit(v, 1.175, 1.195, now) == "목표 근처 +19.5% 에서 밀려 정리"   # 2%p 밀림
+    assert col._vexit(v, 1.12, 1.15, now) is None                        # +15% 고점은 목표 근처(+18%) 아님
