@@ -147,14 +147,19 @@ class Data:
         rp = Path(self.cfg.state_dir) / "research.db"
         return (lambda sql, args=(): self._q(str(rp), sql, args)) if rp.exists() else None
 
+    def _names(self) -> dict:
+        """symbol → 종목명 (종목 정보 → 지난 유니버스 → 최신 유니버스 순으로 덮어써서, 유니버스에서 빠진 종목도 이름이 나오게)."""
+        names = {r["symbol"]: r["name"] for r in self.m("SELECT symbol, name FROM stock_info WHERE name IS NOT NULL AND name != ''")}
+        names.update({r["symbol"]: r["name"] for r in self.m(
+            "SELECT symbol, name FROM universe WHERE name IS NOT NULL ORDER BY snapshot_date")})
+        return names
+
     def detections(self, hours: int = 36) -> dict:
         """조기 감지 표: 알림마다 감지가 → 지금·최고, 결과, 과거 같은 알림의 실제 적중률, 위 매물."""
         from .. import alertperf, overhead
         since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat()
         out = alertperf.rows(self.m, self._rq(), since, limit=200)
-        names = {r["symbol"]: r["name"] for r in self.m("SELECT symbol, name FROM stock_info WHERE name IS NOT NULL AND name != ''")}
-        names.update({r["symbol"]: r["name"] for r in self.m(        # 유니버스에서 빠진 종목도 이름이 나오게: 종목 정보 → 지난 유니버스 → 최신 유니버스 순으로 덮어씀
-            "SELECT symbol, name FROM universe WHERE name IS NOT NULL ORDER BY snapshot_date")})
+        names = self._names()
         for r in out:
             tg = self.m("SELECT tags FROM stock_tags WHERE symbol=? ORDER BY d0 DESC LIMIT 1", (r["symbol"],))
             r["name"] = names.get(r["symbol"])
@@ -289,7 +294,11 @@ class Data:
 
     def events(self, limit: int = 40) -> list[dict]:
         """'방금 일어난 일' (수집기 이벤트, 최신순)."""
-        return self.m("SELECT ts, symbol, kind, text, value FROM events ORDER BY ts DESC LIMIT ?", (limit,))
+        rows = self.m("SELECT ts, symbol, kind, text, value FROM events ORDER BY ts DESC LIMIT ?", (limit,))
+        names = self._names()
+        for r in rows:
+            r["name"] = names.get(r["symbol"])
+        return rows
 
     def daily(self, sym: str, n: int = 90) -> list[list]:
         """차트용 일봉 [d, o, h, l, c, v] (수집기 daily_bars, 없으면 과거 검증 DB)."""
@@ -423,7 +432,11 @@ class Data:
         rows += self.m("""SELECT symbol, 'NEWS' AS form, '' AS items, events, direction, NULL AS amount,
                           published AS accepted, session, trade_date, NULL AS insider_buy_usd, title FROM news
                           WHERE events IS NOT NULL AND events != '' ORDER BY published DESC LIMIT ?""", (limit,))
-        return sorted(rows, key=lambda r: r["accepted"] or "", reverse=True)[:limit]
+        rows = sorted(rows, key=lambda r: r["accepted"] or "", reverse=True)[:limit]
+        names = self._names()
+        for r in rows:
+            r["name"] = names.get(r["symbol"])
+        return rows
 
     # ---------- 핵심 가설 점검 ----------
     def research(self, days: int = 20) -> list[dict]:
@@ -574,6 +587,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
+            self.send_header("Cache-Control", "no-cache")   # 휴대폰 브라우저가 옛 버전을 계속 보여주지 않게
             self.end_headers()
             return self.wfile.write(body)
         self._json({"error": "not found"}, 404)

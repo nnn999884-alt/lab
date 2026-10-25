@@ -59,13 +59,15 @@ class Notifier:
         return bool(self.url or (self.tg_token and self.tg_chat))
 
     def send(self, text: str, key: str | None = None, every: float = 600, buttons: list | None = None) -> None:
-        if key:
-            now = self.clock()
-            if now - self._last.get(key, -1e18) < every:
-                return
-            self._last[key] = now
+        """key 를 찍는 건 실제로 보냈을 때만 — 대기열이 가득 차 버려졌는데도 '보냄'으로 치면
+        다음 every 초 동안 재시도조차 못 하고 조용히 묻힌다 (매도 실패·잔고 불일치 등 중요 알림)."""
+        now = self.clock() if key else None
+        if key and now - self._last.get(key, -1e18) < every:
+            return
         log.info("알림: %s", text)
         if not self.enabled:
+            if key:
+                self._last[key] = now
             return
         item = (text, buttons) if buttons else text
         if self._q is None:
@@ -74,7 +76,10 @@ class Notifier:
             try:
                 self._q.put_nowait(item)
             except queue.Full:
-                log.warning("알림 대기열이 가득 참 → 버림: %s", text)
+                log.warning("알림 대기열이 가득 참 → 버림 (다음 호출에 다시 시도): %s", text)
+                return
+        if key:
+            self._last[key] = now
 
     def _worker(self) -> None:
         while True:

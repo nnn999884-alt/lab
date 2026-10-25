@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import statistics
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -216,10 +217,13 @@ class Collector:
         return Path(self.cfg.db_path).parent / "research_auto.json"
 
     def _maybe_research_refresh(self, now: datetime) -> None:
-        """장이 닫혀 있을 때(주말 포함) 틈틈이 python -m pennybot research 를 다시 돌려 과거 급등주 패턴(분석 탭)을 최신화."""
+        """장이 닫혀 있을 때(주말 포함) 틈틈이 python -m pennybot research 를 다시 돌려 과거 급등주 패턴(분석 탭)을 최신화.
+        research.db 를 archive_1m 과 동시에 쓰지 않도록, 그 스레드가 돌고 있으면 이번 주기는 건너뛴다 (다음 주기에 다시 시도)."""
         if not self.cfg.research_auto or not self.root_cfg:
             return
         if self._research_thread and self._research_thread.is_alive():
+            return
+        if self._arch_thread and self._arch_thread.is_alive():
             return
         if not self._due("research_refresh", now, timedelta(days=self.cfg.research_refresh_days)):
             return
@@ -231,9 +235,11 @@ class Collector:
         try:
             from .. import research
             log.info("휴장 중 과거 패턴 데이터 자동 갱신 시작")
-            research.run(self.root_cfg)
+            # 수집기·매매봇 몫(rate_share_other)을 넘지 않게, 장이 다시 열리면 중단 (받은 만큼은 캐시에 남아 다음 번에 이어받음)
+            still_closed = lambda: self.cal.classify(self.clock())[1] != CLOSED
+            rep = research.run(self.root_cfg, rate_share=self.root_cfg.toss.rate_share_other, should_stop=still_closed)
             self._research_marker().write_text(json.dumps({"last": iso(datetime.now(timezone.utc))}), encoding="utf-8")
-            log.info("휴장 중 과거 패턴 데이터 자동 갱신 완료")
+            log.info("휴장 중 과거 패턴 데이터 자동 갱신 %s", "완료" if rep is not None else "중단 (장 재개, 다음 주기에 이어받음)")
         except Exception:
             log.exception("과거 패턴 데이터 자동 갱신 실패 (다음 주기에 다시 시도)")
 
@@ -723,7 +729,11 @@ class Collector:
         bars = [b for b in bars if b[0] <= d0s]                    # 기준일 뒤(진행 중인 봉)는 뺀다
         store.put_daily_bars([{"symbol": sym, "d": b[0], "open": b[1], "high": b[2], "low": b[3], "close": b[4],
                                "volume": b[5]} for b in bars[-70:]])
-        r = daily(bars)
+        try:
+            r = daily(bars)
+        except (ValueError, ZeroDivisionError, statistics.StatisticsError) as e:
+            log.debug("전조 일봉 계산 실패 %s: %s", sym, e)     # 데이터 불량(0 종가 등) 한 종목이 배치 전체를 죽이지 않게
+            return False
         if not r or r["d0"] != d0s:
             return None
         if src:

@@ -300,11 +300,15 @@ def factor_table(runners: list[dict]) -> list[dict]:
     return [{"factor": f, "group": g, **_stats([r for r in runners if fn(r)])} for f, g, fn in groups]
 
 
-def run(cfg, days: int = 180, edgar: bool = True, max_texts: int = 15, min_pct: float = 30.0) -> dict:
+def run(cfg, days: int = 180, edgar: bool = True, max_texts: int = 15, min_pct: float = 30.0,
+        rate_share: float | None = None, should_stop=None) -> dict | None:
+    """rate_share: 기본 0.3(수동 1회 실행 — 429 는 재시도로 버틴다). 자동 실행(예: 휴장 중 주기 갱신)은
+    설정된 '기타' 몫을 넘지 않도록 호출 쪽에서 낮춰서 넘긴다.
+    should_stop: 주기적으로 불러 True 면 중단 (예: 장이 다시 열림). 이미 받은 만큼은 캐시에 남아 다음 번에 이어받는다."""
     from .__main__ import _fundamentals, make_client
     from .shortdata import ShortData
     client = make_client(cfg, "other")
-    client.rate_share = 0.3          # 한 번 돌리는 작업: 수집기·봇과 나눠 쓰고, 429 는 재시도로 버틴다
+    client.rate_share = rate_share if rate_share is not None else 0.3
     rdb = ResearchDB(Path(cfg.state_dir) / "research.db")
     start = date.today() - timedelta(days=days)
 
@@ -317,14 +321,23 @@ def run(cfg, days: int = 180, edgar: bool = True, max_texts: int = 15, min_pct: 
     log.info("과거 검증: %d일, 대상 %d종목 (상장 %d 중 현재가 $15 이하)", days, len(symbols), len(listed))
     backfill_daily(client, rdb, symbols, days)
     log.info("일봉 완료")
+    if should_stop and should_stop():
+        log.info("과거 검증 중단 (장 재개) — 받은 일봉은 캐시에 남아 다음 번에 이어받음")
+        return None
     n = backfill_finra(ShortData(cfg.sec_user_agent or "pennybot/1.0"), rdb, start - timedelta(days=10), date.today(),
                        set(symbols))
     log.info("FINRA 공매도 %d일치 추가", n)
+    if should_stop and should_stop():
+        log.info("과거 검증 중단 (장 재개) — FINRA 까지 캐시에 남아 다음 번에 이어받음")
+        return None
     runners = find_runners(rdb, start, min_pct)
     log.info("급등일 %d건 (+%.0f%% 이상)", len(runners), min_pct)
     add_short(rdb, runners)
     add_day_market(client, rdb, runners)
     log.info("데이마켓 재현 완료")
+    if should_stop and should_stop():
+        log.info("과거 검증 중단 (장 재개) — 데이마켓까지 캐시에 남아 다음 번에 이어받음")
+        return None
     if edgar:
         dil, _ = _fundamentals(cfg, client)
         if dil:

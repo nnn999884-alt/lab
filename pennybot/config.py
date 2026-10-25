@@ -219,10 +219,10 @@ class Config:
 
 
 def _trading(d: dict) -> TradingConfig:
-    """전략별 설정은 기본값 위에 덮어쓴다 (일부 키만 바꿔도 되게)."""
+    """전략별 설정은 기본값 위에 덮어쓴다 (일부 키만 바꿔도 되게). 사라진 키는 무시 (_known 과 동일)."""
     d = dict(d)
     over = d.pop("strategies", {}) or {}
-    t = TradingConfig(**d)
+    t = _known(TradingConfig, d)
     for name, params in over.items():
         t.strategies[name] = {**t.strategies.get(name, {}), **(params or {})}
     return t
@@ -254,10 +254,10 @@ def load_config(path: str | Path = "config.yaml") -> Config:
         poll_seconds=int(raw.get("poll_seconds", 20)),
         paper_cash=float(raw.get("paper_cash", 2000.0)),
         state_dir=raw.get("state_dir", "state"),
-        strategy=StrategyConfig(**raw.get("strategy", {})),
-        risk=RiskConfig(**raw.get("risk", {})),
-        screener=ScreenerConfig(**raw.get("screener", {})),
-        collector=CollectorConfig(**raw.get("collector", {})),
+        strategy=_known(StrategyConfig, raw.get("strategy", {})),
+        risk=_known(RiskConfig, raw.get("risk", {})),
+        screener=_known(ScreenerConfig, raw.get("screener", {})),
+        collector=_known(CollectorConfig, raw.get("collector", {})),
         trading=_trading(raw.get("trading", {})),
         toss=_known(TossConfig, raw.get("toss", {})),
     )

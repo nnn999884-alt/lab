@@ -235,7 +235,8 @@ table.det caption.empty { caption-side: top; padding: 18px; }
   border-bottom: 1px solid var(--line-2); cursor: pointer; }
 .feed .ev:last-child { border-bottom: 0; } .feed .ev:hover { background: var(--panel-2); }
 .feed .empty { grid-template-columns: 1fr; }
-.lg-t { color: var(--text-3); font-size: 11px; } .lg-s { font-weight: 700; font-family: var(--mono); }
+.lg-t { color: var(--text-3); font-size: 11px; }
+.lg-s { display: flex; align-items: baseline; gap: 5px; min-width: 0; overflow: hidden; font-weight: 700; font-family: var(--mono); }
 .lg-x { color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .ev-hot .lg-x { color: var(--text); font-weight: 600; }
 .home-side .feed-wrap .feed { max-height: 44vh; } .home-side .fil-wrap .feed { max-height: 30vh; }
@@ -390,9 +391,12 @@ table.det caption.empty { caption-side: top; padding: 18px; }
   .card { padding: 12px; border-radius: 10px; }
   .pre-head, .sc-head { margin: -12px -12px 10px; padding: 8px 12px; }
   .feed, .vs-list, .set-list, .scr-wrap, .det-scroll { margin-left: -12px; margin-right: -12px; }
-  .feed .ev { grid-template-columns: 40px 48px minmax(0, 1fr); row-gap: 2px; padding: 7px 12px; }
+  .feed .ev { grid-template-columns: 40px minmax(0, 1fr) auto; row-gap: 2px; padding: 7px 12px; }
   .feed .ev .ev-kind { grid-column: 3; justify-self: start; }
+  .feed .ev .lg-s .nm { max-width: 46vw; }
   .feed .ev .lg-x { grid-column: 1 / -1; white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; padding-left: 48px; }
+  .sym-feed .ev { grid-template-columns: 96px 48px minmax(0, 1fr); }   /* 날짜(10. 24. 04:44)가 더 길어서 40px 칸엔 세 줄로 쪼개짐 */
+  .sym-feed .ev .lg-x { padding-left: 96px; }
   .feed-ctl label { display: none; }
   .det-wrap .feed-ctl label { display: inline-flex; }
   .kpi { padding: 9px 12px; } .kpi .v { font-size: 15px; white-space: normal; line-height: 1.3; }
@@ -479,6 +483,7 @@ table.ca-tbl tr.off .ca-fill { opacity: .35; }
 @media (max-width: 700px) {
   .kv2-6 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .ca-wrap { margin: 0 -12px; } table.ca-tbl th:nth-child(3), table.ca-tbl td:nth-child(3) { display: none; }
+  table.ca-tbl.cards td { flex-basis: 100%; }   /* 라벨·값이 칸 절반에 끼이지 않게 한 줄씩 */
   .tabs button svg { width: 20px; height: 20px; }
 }
 /* ---------- 아이콘 (같은 굵기의 선 아이콘) ---------- */
@@ -956,6 +961,9 @@ const fmtUsd = (v, sign) => { if (v == null) return "-"; const r = Math.round(v 
 const fmtPct = (v, d = 1) => { if (v == null) return "-"; const r = +v.toFixed(d); return (r > 0 ? "+" : r < 0 ? "−" : "") + Math.abs(r).toFixed(d) + "%"; };
 const fmtPx = v => v == null ? "-" : (v < 1 ? v.toFixed(4) : v.toFixed(2));
 const kst = s => s ? new Date(s).toLocaleString("ko-KR", { timeZone: "Asia/Seoul", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false }) : "-";
+const kstDateShort = s => new Date(s).toLocaleDateString("ko-KR", { timeZone: "Asia/Seoul", month: "2-digit", day: "2-digit" }).replace(/\.\s?/g, "/").replace(/\/$/, "");
+const symCell = (sym, name) => { const s = document.createElement("span"); s.className = "lg-s";
+  s.append(document.createTextNode(sym || "")); if (name) s.append(mk("span", "nm", name)); return s; };
 const ago = s => { if (!s) return null; return Math.round((Date.now() - new Date(s)) / 1000); };
 const SVGNS = "http://www.w3.org/2000/svg";
 function el(tag, attrs = {}, parent) { const e = document.createElementNS(SVGNS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; }
@@ -1137,7 +1145,7 @@ function pillStatus(node, label, state) {
   // state: good / serious / critical / idle — 색만으로 전달하지 않도록 아이콘 + 문구
   node.replaceChildren();
   const icon = { good: "●", serious: "▲", critical: "■", idle: "○" }[state];
-  const color = { good: "--good", serious: "--serious", critical: "--critical", idle: "--text-muted" }[state];
+  const color = { good: "--good", serious: "--warn", critical: "--critical", idle: "--text-muted" }[state];
   const s = document.createElement("span"); s.textContent = icon; s.style.color = css(color); s.setAttribute("aria-hidden", "true");
   node.appendChild(s); node.appendChild(document.createTextNode(label));
 }
@@ -1692,10 +1700,10 @@ async function loadFeed() {
     const s = Math.max(0, Math.round((now - new Date(e.ts)) / 1000));
     const hm = new Date(e.ts).toLocaleTimeString("ko-KR", { timeZone: "Asia/Seoul", hour: "2-digit", minute: "2-digit", hour12: false });
     const ago = s < 60 ? `${s}초 전` : s < 3600 ? `${Math.round(s / 60)}분 전`
-      : kstDay(e.ts) === kstDay(new Date()) ? hm : new Date(e.ts).toLocaleDateString("ko-KR", { timeZone: "Asia/Seoul", month: "2-digit", day: "2-digit" }).replace(/\.\s?/g, "/").replace(/\/$/, "");
+      : kstDay(e.ts) === kstDay(new Date()) ? hm : kstDateShort(e.ts);
     const [kl, kc] = KIND(e.kind);
     const cell = (cls, t) => { const x = document.createElement("span"); x.className = cls; x.textContent = t; return x; };
-    li.append(cell("lg-t", ago), cell("lg-s", e.symbol || ""), cell("ev-kind " + kc, kl),
+    li.append(cell("lg-t", ago), symCell(e.symbol, e.name), cell("ev-kind " + kc, kl),
               cell("lg-x", e.text.replace(/^[^\p{L}\p{N}$]+/u, "").replace(new RegExp("^" + (e.symbol || "@@") + "\\s*"), "")));
     li.onclick = () => { lookup(e.symbol); showTab("symbol"); };
     box.appendChild(li);
@@ -1721,7 +1729,7 @@ function drawFilingsFeed(rows) {
     const li = document.createElement("li"); li.className = "ev fil-ev " + (e.text.includes("▲") ? "up" : e.text.includes("▼") ? "dn" : "");
     const cell = (cls, t) => { const x = document.createElement("span"); x.className = cls; x.textContent = t; return x; };
     const hm = new Date(e.ts).toLocaleTimeString("ko-KR", { timeZone: "Asia/Seoul", hour: "2-digit", minute: "2-digit", hour12: false });
-    li.append(cell("lg-t", kstDay(e.ts) === kstDay(new Date()) ? hm : kst(e.ts).slice(0, 7)), cell("lg-s", e.symbol || ""),
+    li.append(cell("lg-t", kstDay(e.ts) === kstDay(new Date()) ? hm : kstDateShort(e.ts)), symCell(e.symbol, e.name),
               cell("ev-kind " + (e.text.includes("▲") ? "k-up" : e.text.includes("▼") ? "k-dn" : ""), e.text.includes("▲") ? "호재" : e.text.includes("▼") ? "악재" : "공시"),
               cell("lg-x", e.text.replace(/^[^\p{L}\p{N}$]+/u, "").replace(new RegExp("^" + (e.symbol || "@@") + "\\s*"), "")));
     li.onclick = () => { lookup(e.symbol); showTab("symbol"); };

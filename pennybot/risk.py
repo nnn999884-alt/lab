@@ -3,10 +3,11 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 from .config import RiskConfig
+from .sessions import ET
 
 log = logging.getLogger(__name__)
 
@@ -17,7 +18,9 @@ class RiskManager:
         self.path = Path(state_dir) / "risk_state.json"
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.kill_file = Path(state_dir) / "KILL"
-        self.day = date.today().isoformat()
+        # 미국 동부 기준 거래일로 시드 (컴퓨터가 한국 시간이면 애프터마켓 시간대에 로컬 날짜가 먼저 넘어가버려서,
+        # 이 시간대에 재시작하면 date.today() 로는 아직 안 끝난 당일 손익·거래횟수를 못 불러와 한도가 조용히 리셋됐었음)
+        self.day = datetime.now(ET).date().isoformat()
         self.realized_pnl = 0.0
         self.trades = 0
         self._load()

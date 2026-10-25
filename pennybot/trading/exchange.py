@@ -222,8 +222,10 @@ class PaperExchange(Exchange):
             if not b.has_quote:
                 continue
             left = o["qty"] - o["filled"]
+            # 호가 잔량이 1주 미만(데이터 이상)이어도 int()가 0 → 'or left'로 무제한 체결이 되지 않게 최소 1주
+            cap = (lambda s: max(1, round(s)) if s else left)
             if o["side"] == "BUY" and (o["price"] is None or b.ask <= o["price"]):
-                px, n = b.ask, min(left, int(b.ask_size) or left)
+                px, n = b.ask, min(left, cap(b.ask_size))
                 if px * n * (1 + self.fee) > self.state["cash"]:
                     n = int(self.state["cash"] // (px * (1 + self.fee)))
                 if n <= 0:
@@ -232,7 +234,7 @@ class PaperExchange(Exchange):
                 q, avg = self.state["positions"].get(o["symbol"], [0, 0.0])
                 self.state["positions"][o["symbol"]] = [q + n, (q * avg + n * px) / (q + n)]
             elif o["side"] == "SELL" and (o["price"] is None or b.bid >= o["price"]):
-                px, n = b.bid, min(left, int(b.bid_size) or left)
+                px, n = b.bid, min(left, cap(b.bid_size))
                 q, avg = self.state["positions"].get(o["symbol"], [0, 0.0])
                 n = min(n, q)
                 if n <= 0:
