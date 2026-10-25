@@ -1481,16 +1481,25 @@ async function lookup(sym) {
   const note = noteParts.join(" · ");
   const verdict = !has || !known ? ["장중 데이터 없음", "v-mute", "휴장이거나 감시 전 종목"] : ok >= 4 ? ["상승 힘 강함", "v-up", basis]
     : ok >= 2 ? ["힘겨루기", "v-mid", basis] : ["힘 빠짐", "v-dn", basis];
-  const vb = mk("div", "verdict " + verdict[1]); vb.append(mk("div", "vd-t", verdict[0]), mk("div", "vd-s", verdict[2]));
+  // 라벨 하나로는 안 와닿으니 짧은 해석 문장도: 거래량·회전율은 살아있는데 고점만 못 지키면 "돌파 지켜볼 자리"로
+  const [priceOk, volOk, dollarOk, highOk] = checks.map(c => c[1]);
+  const phrase = !has || !known ? "" : ok >= 4 ? "뚜렷하게 밀고 올라가는 중 — 그대로 타는 중"
+    : ok >= 2 ? (highOk === false && (volOk || dollarOk) ? "눌림 중 — 돌파 지켜볼 자리" : "신호가 엇갈리는 중 — 방향 탐색 구간")
+    : (!volOk && !dollarOk ? "거래도 식는 중 — 추가 하락 조심" : "밀리는 중 — 아직 반등 신호 안 보임");
+  const vb = mk("div", "verdict " + verdict[1]); vb.append(mk("div", "vd-t", verdict[0]));
+  if (phrase) vb.appendChild(mk("div", "vd-phrase", phrase));
+  vb.appendChild(mk("div", "vd-s", verdict[2]));
   if (note) vb.appendChild(mk("div", "vd-s vd-note", note));
   c2.appendChild(vb);
   const ck = mk("div", "checks");
   checks.forEach(([k, v]) => ck.appendChild(mk("span", "chk " + (v === true ? "ok" : v === false ? "no" : "na"), (v === true ? "✓ " : v === false ? "✕ " : "· ") + k)));
   c2.appendChild(ck);
-  // 참고 손절가·목표가: 실제 매매 계획이 아니라 지금 가격에 전략 설정값을 그대로 대입한 수치
+  // 참고 손절가·목표가: 실제 매매 계획이 아니라 참고용. 매물대(지지·저항)가 있으면 그걸, 없으면 전략 설정 %를 대신 씀
   const sr = x.strategy_ref;
-  if (sr) c2.appendChild(mk("div", "sub ref-sl", `참고 손절 ${fmtPx(sr.stop)} (−${sr.stop_pct}%) · 참고 목표 ${fmtPx(sr.target)} (+${sr.target_pct}%)`
-    + ` · ${STRAT[sr.name] || sr.name} 전략 설정 기준, 실제 매매 계획 아님`));
+  if (sr) {
+    const srcText = sr.basis === "levels" ? "최근 거래량이 쌓인 매물대(1차 지지·저항) 기준" : `${STRAT[sr.name] || sr.name} 전략 설정 % 기준 (매물대를 못 구해 대신 씀)`;
+    c2.appendChild(mk("div", "sub ref-sl", `참고 손절 ${fmtPx(sr.stop)} (${fmtPct(sr.stop_pct)}) · 참고 목표 ${fmtPx(sr.target)} (${fmtPct(sr.target_pct)}) · ${srcText}, 실제 매매 계획 아님`));
+  }
   kvGrid(c2, [["일중 위치", t.day_pos != null ? Math.round(t.day_pos) + "%" : null], ["시가 대비", t.vs_open != null ? fmtPct(t.vs_open) : null, tone(t.vs_open)],
     ["고점 대비", t.from_high != null ? fmtPct(t.from_high) : null, tone(t.from_high)], ["1시간 거래량", xx(lm.vol_x)], ["3분 거래대금", usdK(lm.dollar_3m)],
     ["오늘 거래대금", usdK(lm.dollar_today ?? t.dollar)], ["오늘 회전율", pct1(lv.turnover_today)], ["3분 회전율", pct1(lv.turnover_3m)], ["전날 거래량", xx(mt.vol_ratio)]], "kv2-3");
@@ -1588,11 +1597,23 @@ async function lookup(sym) {
   // ---- 5 차트
   const c5 = scard(page, 5, "차트", "sc-wide");
   const ch = mk("div", "sym-charts");
-  const d1 = mk("div"), d2 = mk("div"); const cd = mk("div", "chart"), ci = mk("div", "chart");
+  const d1 = mk("div"), d2 = mk("div"); const cd = mk("div", "chart"), ci = mk("div", "chart"), cobv = mk("div", "chart");
   d1.append(mk("div", "sym-cap", "일봉 90일"), cd);
+  d1.append(mk("div", "sym-cap", "OBV (누적 매수−매도 거래량)"), cobv);
   d2.append(mk("div", "sym-cap", x.intraday ? `1분봉 · ${x.intraday.date}` : "1분봉 · 기록 없음"), ci);
   ch.append(d1, d2); c5.appendChild(ch);
-  symDraw = () => { candleChart(cd, daily, { height: 260 }); if (x.intraday && x.intraday.bars.length > 2) candleChart(ci, x.intraday.bars, { height: 260, ma: [9, 20] }); };   // 보일 때 그림 (숨은 채 그리면 폭 0)
+  // OBV: 종가가 전날보다 오르면 그날 거래량을 더하고 내리면 뺀 누적선. 가격은 눌려 있는데 OBV가 오르면 매집(조용히 사모으는 중) 의심.
+  let obvRun = 0;
+  const obvPts = daily.map(([dt, , , , c, v], i) => {
+    if (i > 0) { const pc = daily[i - 1][4]; obvRun += c > pc ? v : c < pc ? -v : 0; }
+    return { t: +new Date(dt), v: obvRun };
+  });
+  const fmtObv = v => (v < 0 ? "−" : "") + fmtQty(Math.abs(v));
+  symDraw = () => {
+    candleChart(cd, daily, { height: 260 });
+    if (daily.length >= 2) lineChart(cobv, obvPts, { height: 90, valueFmt: fmtObv });
+    if (x.intraday && x.intraday.bars.length > 2) candleChart(ci, x.intraday.bars, { height: 260, ma: [9, 20] });
+  };   // 보일 때 그림 (숨은 채 그리면 폭 0)
   // ---- 6 공시 / 7 뉴스
   const ROUTINE = new Set(["4", "10-Q", "10-K", "DEF 14A", "PRE 14A", "SC 13G", "SC 13G/A", "8-K/A", "6-K/A"]);
   const fil = (b.events || []).filter(e => e.form !== "NEWS"), news = (b.events || []).filter(e => e.form === "NEWS");
