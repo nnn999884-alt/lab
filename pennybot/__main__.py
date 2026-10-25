@@ -107,7 +107,7 @@ def cmd_collect(cfg: Config, once: bool) -> None:
                     dil.edgar if dil else None, dilution=dil, fundamentals=fund,
                     news=NewsClient(cfg.collector.news_feeds or None, ua),
                     short=ShortData(ua) if cfg.collector.short_data else None,
-                    notifier=_notifier(cfg), link=lambda: tunnel_url(cfg))
+                    notifier=_notifier(cfg), link=lambda: tunnel_url(cfg), root_cfg=cfg)
     if once:
         col.tick()
     else:

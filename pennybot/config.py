@@ -117,6 +117,8 @@ class CollectorConfig:
     short_daily_poll_minutes: int = 60   # FINRA·SSR·Reg SHO 일별 파일 (나오면 한 번만 저장)
     news_feeds: list = field(default_factory=list)   # 비우면 news.DEFAULT_FEEDS
     universe_refresh_hours: int = 24
+    research_auto: bool = True       # 휴장 중(주말 포함) 틈틈이 python -m pennybot research 를 자동으로 다시 돌려 과거 급등주 패턴(분석 탭)을 최신화
+    research_refresh_days: int = 7   # 이 날짜 간격으로 (휴장 중에만 시작, 장중엔 안 건드림)
 
 
 @dataclass

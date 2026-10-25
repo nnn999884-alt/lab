@@ -1,6 +1,6 @@
 """장 시작 전 브리핑: 프리마켓 열기 직전 (03:45 ET) 텔레그램 한 통 + 대시보드 홈 카드.
 
-어제 급등 TOP · 오늘 지금까지 급등 · 오늘 급등 후보(★) · 고점 재돌파 근접(최근 20거래일 +50% 급등주) · 어제 알림 성과.
+어제 급등 TOP · 오늘 급등 후보(★) · 고점 재돌파 근접(최근 20거래일 +50% 급등주) · 어제 알림 성과.
 거래정지·공시는 실시간 알림·대시보드 탭에서 보므로 여기엔 안 넣는다. 전부 수집기 DB 에 있는 것만 쓴다 (토스 API 안 부름).
 """
 from __future__ import annotations
@@ -36,23 +36,21 @@ def build(mq, market_db: str, rq=None, now: datetime | None = None) -> dict:
                      key=lambda x: -x["high_chg"])
         out["movers"] = [x for x in top if x["high_chg"] >= 30][:8]
 
-    # 오늘 급등 후보
+    # 오늘 급등 후보: SEC 공시 태그(부양 동기) > 차트 패턴 > 일봉 증상 순 (전조 탭과 같은 태그, 날짜만 떼고)
     try:
+        import re
+        strip_date = lambda s: re.sub(r" \d\d/\d\d(/\d\d)?$", "", s)
         rk = ranked(market_db, 300)
         out["picks"] = [{"symbol": r["symbol"], "name": nm(r["symbol"]), "tier": r["tier"], "close": r["close"],
-                         "vol_ratio": r["metrics"].get("vol_ratio"), "labels": r["labels"][:3]}
+                         "vol_ratio": r["metrics"].get("vol_ratio"),
+                         "labels": ([strip_date(t) for t in r.get("filing_tags") or []]
+                                    + (r.get("patterns") or []) + r["labels"])[:4]}
                         for r in rk.get("rows", []) if r["tier"] >= 2][:12]
     except Exception:
         out["picks"] = []
 
     since = (t.replace(hour=16, minute=0, second=0, microsecond=0) - timedelta(days=1 if t.hour < 16 else 0)).astimezone(timezone.utc).isoformat()
-    # 오늘 지금까지 급등 (토스 급등률 랭킹: 전일 종가 대비 오늘 최고 · 지금)
-    hi = mq("""SELECT symbol, MAX(last / base) AS mx, base FROM rankings WHERE trade_date=? AND type='TOP_GAINERS' AND base > 0
-               GROUP BY symbol HAVING mx >= 1.2 ORDER BY mx DESC LIMIT 12""", (out["date"],))
     nowp = {r["symbol"]: r["last"] for r in mq("SELECT symbol, last, MAX(ts) FROM rankings WHERE trade_date=? GROUP BY symbol", (out["date"],))}
-    out["today"] = [{"symbol": r["symbol"], "name": nm(r["symbol"]), "high_chg": (r["mx"] - 1) * 100,
-                     "chg": (nowp[r["symbol"]] / r["base"] - 1) * 100 if nowp.get(r["symbol"]) else None}
-                    for r in hi if r["symbol"] in names][:8]
 
     # 고점 재돌파 근접: 최근 20거래일 안 고가 +50% 급등주 중 급등 뒤 최고가까지 30% 안 (가까운 순)
     # 일봉 751건: 30거래일 안 또 +30% 급등 63% (아무 종목 19%). 1분봉: 고점 15% 아래 + 거래 3배면 그날 돌파 51%, 5% 아래면 79%.
@@ -111,10 +109,8 @@ def text(b: dict) -> str:
     if b.get("picks"):
         L.append("\n⭐ 오늘 급등 후보")
         L += [f"• {p['symbol']} {'★' * p['tier']} ${p['close']:.4g}" + (f" · 전날 거래량 {p['vol_ratio']:.0f}배" if p.get("vol_ratio") else "")
+              + (f" · {' · '.join(p['labels'][:2])}" if p.get("labels") else "")
               for p in b["picks"][:8]]
-    if b.get("today"):
-        L.append("\n🚀 오늘 지금까지 급등")
-        L += [f"• {x['symbol']} 최고 {x['high_chg']:+.0f}%" + (f" · 지금 {x['chg']:+.0f}%" if x.get("chg") is not None else "") for x in b["today"][:6]]
     if b.get("near"):
         L.append("\n🎯 고점 재돌파 근접 (최근 급등주)")
         L += [f"• {x['symbol']} 고점 ${x['level']:.4g}까지 {x['dist']:+.0f}% · {x['days']}일 전 +{x['run_chg']:.0f}%" for x in b["near"][:6]]

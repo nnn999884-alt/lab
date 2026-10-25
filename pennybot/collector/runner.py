@@ -8,6 +8,7 @@
   - 랭킹: 시장/토스 거래대금, 급등/급락 스냅샷
   - SEC 최신 공시(Form 4, 8-K, 424B*): 접수 시각 → 어느 세션에 공개됐는지 기록
   - 애프터마켓이 끝나면 그 영업일 세션 요약(session_summary) 생성
+  - 휴장 중(주말 포함)엔 python -m pennybot research 를 틈틈이 자동으로 다시 돌려 과거 급등주 패턴(분석 탭)을 최신화 (research_refresh_days)
 
 한 작업이 실패해도 나머지는 계속 돈다. 재시작해도 같은 키는 덮어쓰므로 안전하다.
 """
@@ -53,8 +54,10 @@ class Collector:
     def __init__(self, client, store: Store, calendar: SessionCalendar, cfg: CollectorConfig,
                  edgar_client: ed.EdgarClient | None = None,
                  clock=lambda: datetime.now(timezone.utc), dilution=None, fundamentals=None, news=None,
-                 short=None, notifier=None, link=None):
+                 short=None, notifier=None, link=None, root_cfg=None):
         self.c, self.store, self.cal, self.cfg = client, store, calendar, cfg
+        self.root_cfg = root_cfg          # 전체 Config (research.run() 이 collector/trading 양쪽 설정을 다 필요로 함)
+        self._research_thread = None
         self.edgar = edgar_client
         self.dilution = dilution          # DilutionService: 공시 본문으로 희석 이벤트 판정
         self.fund = fundamentals          # Fundamentals: 급등주 희석 프로필·펌프 신호
@@ -99,6 +102,11 @@ class Collector:
         self.watch: list[str] = []
         self.recent_filers: dict[str, datetime] = {}
         self._next: dict[str, datetime] = {}
+        try:    # 재시작해도 휴장 중 과거 패턴 자동 갱신이 바로 다시 돌지 않도록, 지난 완료 시각을 파일에서 이어받는다
+            last = datetime.fromisoformat(json.loads(self._research_marker().read_text(encoding="utf-8"))["last"])
+            self._next["research_refresh"] = last + timedelta(days=cfg.research_refresh_days)
+        except (OSError, ValueError, KeyError):
+            pass
         self._last_session: tuple | None = None
         self._seen_accessions: set[str] = set()
 
@@ -202,6 +210,33 @@ class Collector:
         tmp.write_text(json.dumps({"ts": iso(now), "holdings": h, "buying_power": bp}, ensure_ascii=False), encoding="utf-8")
         os.replace(tmp, p)
 
+    # ---------- 휴장 중 과거 패턴 자동 갱신 ----------
+    def _research_marker(self):
+        from pathlib import Path
+        return Path(self.cfg.db_path).parent / "research_auto.json"
+
+    def _maybe_research_refresh(self, now: datetime) -> None:
+        """장이 닫혀 있을 때(주말 포함) 틈틈이 python -m pennybot research 를 다시 돌려 과거 급등주 패턴(분석 탭)을 최신화."""
+        if not self.cfg.research_auto or not self.root_cfg:
+            return
+        if self._research_thread and self._research_thread.is_alive():
+            return
+        if not self._due("research_refresh", now, timedelta(days=self.cfg.research_refresh_days)):
+            return
+        import threading
+        self._research_thread = threading.Thread(target=self._run_research_refresh, daemon=True, name="research-refresh")
+        self._research_thread.start()
+
+    def _run_research_refresh(self) -> None:
+        try:
+            from .. import research
+            log.info("휴장 중 과거 패턴 데이터 자동 갱신 시작")
+            research.run(self.root_cfg)
+            self._research_marker().write_text(json.dumps({"last": iso(datetime.now(timezone.utc))}), encoding="utf-8")
+            log.info("휴장 중 과거 패턴 데이터 자동 갱신 완료")
+        except Exception:
+            log.exception("과거 패턴 데이터 자동 갱신 실패 (다음 주기에 다시 시도)")
+
     # ---------- 스케줄 ----------
     def _due(self, name: str, now: datetime, every: timedelta) -> bool:
         if now >= self._next.get(name, datetime.min.replace(tzinfo=timezone.utc)):
@@ -276,6 +311,7 @@ class Collector:
             if session in (DAY, PRE, REGULAR) and self._due("precursor_live", now, timedelta(seconds=60)):
                 self._run("precursor_live", self.poll_precursor_live, now, trade_date, session)
         if session == CLOSED:
+            self._maybe_research_refresh(now)
             return
         every = timedelta(seconds=c.ranking_poll_live_seconds) if session != AFTER else timedelta(minutes=c.ranking_poll_minutes)
         if self._due("rankings", now, every):
