@@ -286,6 +286,7 @@ table.det caption.empty { caption-side: top; padding: 18px; }
 .co-desc { margin-top: 10px; font-size: 12px; color: var(--text-2); } .co-desc p { margin: 6px 0 0; line-height: 1.55; }
 .verdict { border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; background: var(--panel-2); }
 .vd-t { font-size: 17px; font-weight: 800; } .vd-s { font-size: 11.5px; color: var(--text-3); margin-top: 1px; }
+.vd-note { color: var(--text-2); margin-top: 4px; }
 .v-up { background: var(--up-soft); } .v-up .vd-t { color: var(--up); } .v-dn { background: var(--down-soft); } .v-dn .vd-t { color: var(--down); }
 .v-mid { background: var(--warn-soft); } .v-mid .vd-t { color: var(--warn); } .v-mute .vd-t { color: var(--text-3); }
 .checks { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px; }
@@ -1465,17 +1466,24 @@ async function lookup(sym) {
   // ---- 2 지금 상황
   const c2 = scard(page, 2, "지금 상황", "sc-1", lv.ts ? "갱신 " + kst(lv.ts) : "");
   const has = lm.price != null || t.last != null;
-  // 장중 실시간 값(lm)이 없으면(휴장 등) 그날 수집된 값으로: 가격 유지 → 시가 대비, 거래 유지 → 전날 거래량 배수, 돈 유입 → 전날 회전율
+  // 장중 실시간 값(lm)이 없으면(휴장 등) 그날 수집된 값으로: 가격 유지 → 시가 대비, 거래 유지 → 전날 거래량 배수, 거래대금 유입 → 전날 회전율
   const checks = [["가격 유지", lm.ret15 != null ? lm.ret15 >= 0 : t.vs_open != null ? t.vs_open >= 0 : null],
     ["거래 유지", lm.vol_x != null ? lm.vol_x >= 3 : mt.vol_ratio != null ? mt.vol_ratio >= 3 : null],
-    ["돈 유입", lm.dollar_3m != null ? lm.dollar_3m >= 5e4 : d.turnover_d0 != null ? d.turnover_d0 >= 10 : null],
+    ["거래대금 유입", lm.dollar_3m != null ? lm.dollar_3m >= 5e4 : d.turnover_d0 != null ? d.turnover_d0 >= 10 : null],
     ["고점 유지", t.from_high != null ? t.from_high > -5 : null], ["VWAP 위", t.vwap ? t.last > t.vwap : null]];
   const ok = checks.filter(c => c[1] === true).length, known = checks.filter(c => c[1] != null).length;
   const live = lm.price != null && lv.ts && Date.now() - new Date(lv.ts) < 15 * 60000;   // 15분 안에 갱신된 장중 값
   const basis = live ? `${known}개 중 ${ok}개 통과` : `${x.intraday ? x.intraday.date + " 마감" : "최근 거래일"} 기준 · ${known}개 중 ${ok}개`;
+  // 라벨만으론 와닿지 않으니, 실제 숫자로 한 줄 요약 (고점 대비 · VWAP 위/아래 · 거래량 배수 · 회전율)
+  const volX = lm.vol_x ?? mt.vol_ratio, turn = d.turnover_d0;
+  const noteParts = [t.from_high != null && `고점 대비 ${fmtPct(t.from_high, 0)}`, t.vwap && t.last != null && `VWAP ${t.last > t.vwap ? "위" : "아래"}`,
+    volX != null && `거래량 ${xx(volX)}`, turn != null && `회전율 ${pct1(turn)}`].filter(Boolean);
+  const note = noteParts.join(" · ");
   const verdict = !has || !known ? ["장중 데이터 없음", "v-mute", "휴장이거나 감시 전 종목"] : ok >= 4 ? ["상승 힘 강함", "v-up", basis]
     : ok >= 2 ? ["힘겨루기", "v-mid", basis] : ["힘 빠짐", "v-dn", basis];
-  const vb = mk("div", "verdict " + verdict[1]); vb.append(mk("div", "vd-t", verdict[0]), mk("div", "vd-s", verdict[2])); c2.appendChild(vb);
+  const vb = mk("div", "verdict " + verdict[1]); vb.append(mk("div", "vd-t", verdict[0]), mk("div", "vd-s", verdict[2]));
+  if (note) vb.appendChild(mk("div", "vd-s vd-note", note));
+  c2.appendChild(vb);
   const ck = mk("div", "checks");
   checks.forEach(([k, v]) => ck.appendChild(mk("span", "chk " + (v === true ? "ok" : v === false ? "no" : "na"), (v === true ? "✓ " : v === false ? "✕ " : "· ") + k)));
   c2.appendChild(ck);
