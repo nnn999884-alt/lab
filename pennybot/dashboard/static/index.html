@@ -964,6 +964,12 @@ const kst = s => s ? new Date(s).toLocaleString("ko-KR", { timeZone: "Asia/Seoul
 const kstDateShort = s => new Date(s).toLocaleDateString("ko-KR", { timeZone: "Asia/Seoul", month: "2-digit", day: "2-digit" }).replace(/\.\s?/g, "/").replace(/\/$/, "");
 const symCell = (sym, name) => { const s = document.createElement("span"); s.className = "lg-s";
   s.append(document.createTextNode(sym || "")); if (name) s.append(mk("span", "nm", name)); return s; };
+const reEsc = s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+// 본문 맨 앞의 이모지·티커·(반복된) 티커·회사명을 뗀다 — 종목명은 이미 티커 옆에 따로 보여주므로
+const stripLead = (text, sym, name) => { let t = (text || "").replace(/^[^\p{L}\p{N}$]+/u, "");
+  if (sym) t = t.replace(new RegExp("^" + reEsc(sym) + "\\s*"), "");
+  if (name) t = t.replace(new RegExp("^" + reEsc(name) + "\\s*"), "");
+  return t; };
 const ago = s => { if (!s) return null; return Math.round((Date.now() - new Date(s)) / 1000); };
 const SVGNS = "http://www.w3.org/2000/svg";
 function el(tag, attrs = {}, parent) { const e = document.createElementNS(SVGNS, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); if (parent) parent.appendChild(e); return e; }
@@ -1704,7 +1710,7 @@ async function loadFeed() {
     const [kl, kc] = KIND(e.kind);
     const cell = (cls, t) => { const x = document.createElement("span"); x.className = cls; x.textContent = t; return x; };
     li.append(cell("lg-t", ago), symCell(e.symbol, e.name), cell("ev-kind " + kc, kl),
-              cell("lg-x", e.text.replace(/^[^\p{L}\p{N}$]+/u, "").replace(new RegExp("^" + (e.symbol || "@@") + "\\s*"), "")));
+              cell("lg-x", stripLead(e.text, e.symbol, e.name)));
     li.onclick = () => { lookup(e.symbol); showTab("symbol"); };
     box.appendChild(li);
   });
@@ -1731,7 +1737,7 @@ function drawFilingsFeed(rows) {
     const hm = new Date(e.ts).toLocaleTimeString("ko-KR", { timeZone: "Asia/Seoul", hour: "2-digit", minute: "2-digit", hour12: false });
     li.append(cell("lg-t", kstDay(e.ts) === kstDay(new Date()) ? hm : kstDateShort(e.ts)), symCell(e.symbol, e.name),
               cell("ev-kind " + (e.text.includes("▲") ? "k-up" : e.text.includes("▼") ? "k-dn" : ""), e.text.includes("▲") ? "호재" : e.text.includes("▼") ? "악재" : "공시"),
-              cell("lg-x", e.text.replace(/^[^\p{L}\p{N}$]+/u, "").replace(new RegExp("^" + (e.symbol || "@@") + "\\s*"), "")));
+              cell("lg-x", stripLead(e.text, e.symbol, e.name)));
     li.onclick = () => { lookup(e.symbol); showTab("symbol"); };
     box.appendChild(li);
   });
