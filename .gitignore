@@ -9,3 +9,7 @@ state_demo/
 tools/
 
 .omc/
+
+# 테스트·점검 스크립트가 남기는 파일
+pe.json
+*.tmp
