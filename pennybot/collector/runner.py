@@ -1013,13 +1013,15 @@ class Collector:
             break
 
     def _reaccel_check(self, store, now, session, d0, sym, today, pc, shares, start) -> bool:
-        """급등 뒤 15% 눌렸다 10% 다시 오르고 최근 2분 거래가 붙으면 '🔁 재가속' (한 파동에 한 번, 20분 간격, 하루 3번까지)."""
+        """급등 뒤 15% 눌렸다 10% 다시 오르고 최근 2분 거래가 붙으면 '🔁 재가속' (한 파동에 한 번, 20분 간격, 하루 5번까지).
+        big300 비교(+20%대 그친 날 vs +300% 간 날): 그날 재가속이 거듭될수록 +300% 비율이 뚜렷이 올라가
+        (1번째 18%·2번째 30%·3번째 44%·4번째 64%·5번째 77%, 기준 3.3%) 뒤쪽일수록 더 의미 있는 신호라 3번에서 끊지 않는다."""
         from ..precursor import reaccel, reaccel_text
         from ..trading.strategies import SESSION_KO
         if len(today) < 5:
             return False
         evs = [r[0] for r in store.query("SELECT ts FROM events WHERE symbol=? AND kind='reaccel' AND ts>=? ORDER BY ts", (sym, start))]
-        if len(evs) >= 3 or (evs and now - datetime.fromisoformat(evs[-1]) < timedelta(minutes=20)):
+        if len(evs) >= 5 or (evs and now - datetime.fromisoformat(evs[-1]) < timedelta(minutes=20)):
             return False
         alerted = self._alerted(store, d0, sym)
         since = max([x for x in (start, alerted, evs[-1] if evs else None) if x])  # 직전 알림 뒤의 고점부터 다시 센다

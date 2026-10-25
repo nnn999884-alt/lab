@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import statistics
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 # 과거 +500% 사례에서 비교군보다 훨씬 흔했던 증상일수록 무겁게 (최대 10점)
 WEIGHT = {"crashed": 2, "spiked": 2, "vol_up_strong": 2, "vol_up": 1, "volatile": 1, "bleed": 1, "cheap": 1}
@@ -221,6 +221,8 @@ def signal_text(sym: str, name: str | None, lv: dict, session_ko: str, tags: lis
 # 보관 1분봉 (그날 +30% 찍은 종목·일 1.6만 건 중 1,619건): 53% 가 그날 앞 고점을 다시 뚫었고 그 뒤 평균 최고 +41%.
 # 단, 그 자리에서 사면 −10% 먼저 54% · +20% 먼저 28% — 흔들림이 커서 타이트한 손절로는 못 먹는다.
 REACCEL_DROP, REACCEL_BOUNCE = 15.0, 10.0
+# 그날 안에서 재가속이 몇 번째냐 → +300% 까지 갈 확률 (big300 비교: +20%대 그친 날 6410건 vs +300% 간 날 219건, 기준 3.3%)
+REACCEL_LIFT = {1: ("18%", "5.5배"), 2: ("30%", "9배"), 3: ("44%", "13배"), 4: ("64%", "20배"), 5: ("77%", "23배")}
 
 
 def reaccel(bars: list[tuple], since: str, price: float | None = None,
@@ -250,13 +252,15 @@ def reaccel_text(sym: str, name: str | None, r: dict, prev_close: float | None, 
                  dollar_2m: float | None = None, tags: list | None = None) -> str:
     from .trading.messages import money_s, pct, px
     chg = (r["price"] / prev_close - 1) * 100 if prev_close else None
+    badge = "🔁" if n == 1 else "🔁🔁" if n == 2 else "🔥🔥🔥"
+    lift = REACCEL_LIFT.get(min(n, 5))
     return "\n".join([
-        f"🔁 재가속 ({sym}" + (f" · {name}" if name else "") + f") — 오늘 {n}번째",
+        f"{badge} 재가속 ({sym}" + (f" · {name}" if name else "") + f") — 오늘 {n}번째",
         f"💵 {px(r['price'])}" + (f" ({pct(chg)})" if chg is not None else "") + f" · {session_ko}",
         f"고점 {px(r['high'])} → 저점 {px(r['low'])} ({r['drop']:+.0f}%) → 지금 저점 대비 {r['bounce']:+.0f}%",
         f"앞 고점까지 {r['to_high']:+.0f}%" + (f" · 최근 2분 {money_s(dollar_2m)}" if dollar_2m else ""),
         *([f"🏷 {' · '.join(tags)}"] if tags else []),
-        "과거: 이 모양 53% 가 앞 고점 다시 돌파 (평균 최고 +41%) · 흔들림 커서 손절 넓게",
+        f"오늘 {n}번째 재가속 종목이 그날 +300% 까지 간 비율 {lift[0]} (평소 대비 {lift[1]}) · 흔들림 커서 손절 넓게",
     ])
 
 
@@ -380,6 +384,12 @@ def ranked(db_path: str, limit: int = 50) -> dict:
             shares = dict(con.execute("SELECT symbol, shares FROM stock_info WHERE shares > 0").fetchall())
         except sqlite3.OperationalError:
             shares = {}
+        try:
+            since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+            reaccel_n = dict(con.execute(
+                "SELECT symbol, COUNT(*) FROM events WHERE kind='reaccel' AND ts>=? GROUP BY symbol", (since,)).fetchall())
+        except sqlite3.OperationalError:
+            reaccel_n = {}
     except sqlite3.OperationalError:
         return {"d0": None, "rows": []}
     finally:
@@ -394,6 +404,14 @@ def ranked(db_path: str, limit: int = 50) -> dict:
         r["live_labels"] = [LIVE_LABELS[k] for k in r["live"]]
         r["patterns"] = [PATTERN_LABELS[k] for k in PATTERN_LABELS if k in r["signals"]]
         r["tier"] = tier(r["metrics"], shares.get(r["symbol"]), r["close"])
+        # 재가속 횟수로 등급 보정 (big300 비교: 2번째부터 +300% 비율이 평소의 9배, 4번째부터 20배)
+        r["reaccel_n"] = reaccel_n.get(r["symbol"], 0)
+        if r["reaccel_n"] >= 4:
+            r["tier"] = max(r["tier"], 3)
+        elif r["reaccel_n"] >= 2:
+            r["tier"] = max(r["tier"], 2)
+        elif r["reaccel_n"] >= 1:
+            r["tier"] = max(r["tier"], 1)
     rows.sort(key=lambda r: (-len(set(r["live"]) & {"wake", "creep"}), -r["tier"], -r["score"], -(r["metrics"].get("vol_ratio") or 0)))
     total = len(rows)
     rows = rows[:limit]
