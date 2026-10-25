@@ -175,6 +175,13 @@ class RunnerOvernight(Strategy):
             if why:
                 out.append(self._reject(sym, why, b.mid))
                 continue
+            sr, sr5 = ctx.mv.short_ratio(sym, prev)
+            if sr is not None and sr >= self.p["max_short_ratio"]:
+                out.append(self._reject(sym, f"공매도 비율 {sr:.0%} (오버나이트엔 다음 날 시가가 나빴음)", b.mid))
+                continue
+            if sr is not None and sr5 and sr / sr5 >= self.p["max_short_surge"]:
+                out.append(self._reject(sym, f"공매도가 평소 대비 {sr / sr5:.1f}배 급증", b.mid))
+                continue
             out.append(self._plan(ctx, sym, self._entry_price(b),
                                   f"전날 +{r['change_pct']:.0f}%" + (f", 회전 {rot:.1f}회" if rot else "")
                                   + f", 데이마켓 {chg:+.1f}%, {note}",

@@ -39,6 +39,7 @@ class FakeMV:
         self.latest = {}
         self.path = []
         self.hot = []
+        self.shorts = {}
 
     def prev_trade_date(self, d): return PREV
     def runners(self, d, min_pct=30.0): return self.run
@@ -50,6 +51,7 @@ class FakeMV:
     def latest_prices(self, d, session): return self.latest
     def session_path(self, sym, d, session): return [(str(i), p) for i, p in enumerate(self.path)]
     def book(self, sym): return self.m.book(sym)
+    def short_ratio(self, sym, d): return self.shorts.get(sym, (None, None))
 
 
 class FakeProfile:
@@ -84,6 +86,24 @@ def env(tmp_path):
     tr = Trader(ex, j, SessionCalendar(), mv, tcfg, ctl, clock=lambda: clock[0], fund=fund)
     tr.fake_fund = fund
     return tr, market, mv, clock, j, ctl, ex
+
+
+def test_runner_overnight_skips_high_short_ratio(env):
+    """공매도 비율이 전략 설정(max_short_ratio) 이상이면 오버나이트 진입을 거른다."""
+    tr, market, mv, clock, j, ctl, ex = env
+    mv.shorts["PEN"] = (0.6, 0.5)      # 60% (설정 기본값 50% 이상)
+    market.set("PEN", 1.03, 1.035)
+    tr.tick()
+    assert j.q("SELECT * FROM trades") == []
+
+
+def test_runner_overnight_skips_short_surge(env):
+    """공매도 비율 자체는 낮아도 평소(5일 평균) 대비 급증했으면 거른다."""
+    tr, market, mv, clock, j, ctl, ex = env
+    mv.shorts["PEN"] = (0.3, 0.1)      # 평소 10% → 오늘 30% (3배 급증, 설정 기본값 1.5배 이상)
+    market.set("PEN", 1.03, 1.035)
+    tr.tick()
+    assert j.q("SELECT * FROM trades") == []
 
 
 def test_full_cycle_day_buy_premarket_sell(env):
