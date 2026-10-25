@@ -1487,6 +1487,10 @@ async function lookup(sym) {
   const ck = mk("div", "checks");
   checks.forEach(([k, v]) => ck.appendChild(mk("span", "chk " + (v === true ? "ok" : v === false ? "no" : "na"), (v === true ? "✓ " : v === false ? "✕ " : "· ") + k)));
   c2.appendChild(ck);
+  // 참고 손절가·목표가: 실제 매매 계획이 아니라 지금 가격에 전략 설정값을 그대로 대입한 수치
+  const sr = x.strategy_ref;
+  if (sr) c2.appendChild(mk("div", "sub ref-sl", `참고 손절 ${fmtPx(sr.stop)} (−${sr.stop_pct}%) · 참고 목표 ${fmtPx(sr.target)} (+${sr.target_pct}%)`
+    + ` · ${STRAT[sr.name] || sr.name} 전략 설정 기준, 실제 매매 계획 아님`));
   kvGrid(c2, [["일중 위치", t.day_pos != null ? Math.round(t.day_pos) + "%" : null], ["시가 대비", t.vs_open != null ? fmtPct(t.vs_open) : null, tone(t.vs_open)],
     ["고점 대비", t.from_high != null ? fmtPct(t.from_high) : null, tone(t.from_high)], ["1시간 거래량", xx(lm.vol_x)], ["3분 거래대금", usdK(lm.dollar_3m)],
     ["오늘 거래대금", usdK(lm.dollar_today ?? t.dollar)], ["오늘 회전율", pct1(lv.turnover_today)], ["3분 회전율", pct1(lv.turnover_3m)], ["전날 거래량", xx(mt.vol_ratio)]], "kv2-3");

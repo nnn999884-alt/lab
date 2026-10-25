@@ -138,6 +138,13 @@ class Data:
         out["chart"] = chartlib.analyze(db, shares, sv[0]["short_volume"] / sv[0]["total_volume"] if sv else None)
         px = (out.get("today") or {}).get("last") or (out.get("daily") or {}).get("close")
         out["overhead"] = overhead.for_symbol(self.m, sym, px)
+        # 참고용 손절가·목표가: 실제 들어간 포지션이 아니라, "급등 후보" 종목이 주로 걸리는 러너 오버나이트
+        # 전략 설정값(손절·익절 %)을 지금 가격에 그대로 적용했을 때의 수치 (실제 매매 계획이 아님)
+        rp = self.cfg.trading.strategies.get("runner_overnight") or {}
+        if px and rp.get("stop_loss_pct") is not None and rp.get("take_profit_pct") is not None:
+            out["strategy_ref"] = {"name": "runner_overnight", "price": px,
+                                   "stop": px * (1 - rp["stop_loss_pct"] / 100), "stop_pct": rp["stop_loss_pct"],
+                                   "target": px * (1 + rp["take_profit_pct"] / 100), "target_pct": rp["take_profit_pct"]}
         out["events"] = self.m("SELECT ts, kind, text FROM events WHERE symbol=? AND kind != 'filing' ORDER BY ts DESC LIMIT 30", (sym,))
         out["vsignals"] = self.m("SELECT strat, status, opened, closed, entry, exit_price, exit_reason, high, low, last, tp, sl "
                                  "FROM vsignals WHERE symbol=? ORDER BY id DESC LIMIT 20", (sym,))
