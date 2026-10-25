@@ -889,6 +889,12 @@ class Collector:
             today = [b for b in bars if b[0] >= start]
             lv = live(today, close, now, shares.get(sym))
             lv["metrics"]["session"] = session
+            # big300 비교(+20%대 그친 날 vs +300% 간 날): 정규장 열리기 전(프리·다크마켓)에 이미 +20% 찍은 종목이
+            # 그날 +300% 까지 간 비율 17.3% (정규장에서 처음 +20% 찍은 종목은 2.6%) — 평소 대비 5.2배, 하루 한 번만 기록
+            if session in (PRE, DAY) and (lv["metrics"].get("chg") or 0) >= 20 and not self.store.query(
+                    "SELECT 1 FROM events WHERE symbol=? AND kind='early20' AND ts>=?", (sym, start)):
+                self._event(now, sym, "early20", f"🌙 {sym} 정규장 전 +20% 돌파 ({SESSION_KO.get(session, session)})",
+                           lv["metrics"]["chg"])
             # 알림 = 1분 거래(회전율 0.5%+ 또는 $5만+, +5%↑)가 처음 터진 그 분 (최근 3분 안 — 재시작 직후 지난 신호로 몰려 오지 않게).
             # 정규장에 처음 터진 건 거의 안 이어져서(10/23 정규장 알림 65건 중 의미 있게 움직인 것 2건) 알림 없이 기록만.
             k = signal_k(today, close, shares.get(sym))

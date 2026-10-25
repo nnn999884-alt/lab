@@ -388,8 +388,10 @@ def ranked(db_path: str, limit: int = 50) -> dict:
             since = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
             reaccel_n = dict(con.execute(
                 "SELECT symbol, COUNT(*) FROM events WHERE kind='reaccel' AND ts>=? GROUP BY symbol", (since,)).fetchall())
+            early20 = {r[0] for r in con.execute(
+                "SELECT symbol FROM events WHERE kind='early20' AND ts>=?", (since,)).fetchall()}
         except sqlite3.OperationalError:
-            reaccel_n = {}
+            reaccel_n, early20 = {}, set()
     except sqlite3.OperationalError:
         return {"d0": None, "rows": []}
     finally:
@@ -411,6 +413,10 @@ def ranked(db_path: str, limit: int = 50) -> dict:
         elif r["reaccel_n"] >= 2:
             r["tier"] = max(r["tier"], 2)
         elif r["reaccel_n"] >= 1:
+            r["tier"] = max(r["tier"], 1)
+        # 정규장 전(프리·다크마켓) +20% 돌파도 등급 보정 (big300 비교: 평소 대비 5.2배, +300% 종목의 77%가 여기 해당)
+        r["early20"] = r["symbol"] in early20
+        if r["early20"]:
             r["tier"] = max(r["tier"], 1)
     rows.sort(key=lambda r: (-len(set(r["live"]) & {"wake", "creep"}), -r["tier"], -r["score"], -(r["metrics"].get("vol_ratio") or 0)))
     total = len(rows)
