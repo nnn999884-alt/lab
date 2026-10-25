@@ -484,7 +484,7 @@ table.ca-tbl tr.off .ca-fill { opacity: .35; }
   .kv2-6 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .ca-wrap { margin: 0; }   /* 표가 카드형으로 바뀌어서 더는 가장자리까지 안 번지게 (카드 패딩 유지) */
   table.ca-tbl th:nth-child(3), table.ca-tbl td:nth-child(3) { display: none; }
-  table.ca-tbl.cards td { flex-basis: 100%; }   /* 라벨·값이 칸 절반에 끼이지 않게 한 줄씩 */
+  table.ca-tbl.cards td { flex-basis: 100%; gap: 16px; }   /* 라벨·값이 칸 절반에 끼이지 않게 한 줄씩 + 라벨과 값 사이 가로 간격 (세로 줄간격은 그대로) */
   table.ca-tbl.cards td:last-child { width: auto; }                 /* 데스크톱용 40% 폭 규칙이 phone 폭 계산과 충돌하지 않게 */
   table.ca-tbl.cards td:last-child .ca-bar { flex: 1 1 auto; width: auto; min-width: 0; }  /* 막대가 남는 가로 공간을 끝까지 채우게 */
   table.ca-tbl.cards td:last-child .ca-x { flex: none; }
@@ -1465,8 +1465,11 @@ async function lookup(sym) {
   // ---- 2 지금 상황
   const c2 = scard(page, 2, "지금 상황", "sc-1", lv.ts ? "갱신 " + kst(lv.ts) : "");
   const has = lm.price != null || t.last != null;
-  const checks = [["가격 유지", lm.ret15 != null ? lm.ret15 >= 0 : null], ["거래 유지", lm.vol_x != null ? lm.vol_x >= 3 : null],
-    ["돈 유입", lm.dollar_3m != null ? lm.dollar_3m >= 5e4 : null], ["고점 유지", t.from_high != null ? t.from_high > -5 : null], ["VWAP 위", t.vwap ? t.last > t.vwap : null]];
+  // 장중 실시간 값(lm)이 없으면(휴장 등) 그날 수집된 값으로: 가격 유지 → 시가 대비, 거래 유지 → 전날 거래량 배수, 돈 유입 → 전날 회전율
+  const checks = [["가격 유지", lm.ret15 != null ? lm.ret15 >= 0 : t.vs_open != null ? t.vs_open >= 0 : null],
+    ["거래 유지", lm.vol_x != null ? lm.vol_x >= 3 : mt.vol_ratio != null ? mt.vol_ratio >= 3 : null],
+    ["돈 유입", lm.dollar_3m != null ? lm.dollar_3m >= 5e4 : d.turnover_d0 != null ? d.turnover_d0 >= 10 : null],
+    ["고점 유지", t.from_high != null ? t.from_high > -5 : null], ["VWAP 위", t.vwap ? t.last > t.vwap : null]];
   const ok = checks.filter(c => c[1] === true).length, known = checks.filter(c => c[1] != null).length;
   const live = lm.price != null && lv.ts && Date.now() - new Date(lv.ts) < 15 * 60000;   // 15분 안에 갱신된 장중 값
   const basis = live ? `${known}개 중 ${ok}개 통과` : `${x.intraday ? x.intraday.date + " 마감" : "최근 거래일"} 기준 · ${known}개 중 ${ok}개`;
