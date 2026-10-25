@@ -1756,7 +1756,7 @@ async function loadBrief() {
   if (unchanged("brief", b)) return;
   const box = $("brief"); box.replaceChildren();
   const p = b.perf;
-  $("brief-sub").textContent = `${b.date} 거래일` + (p && p.n ? ` · 어제 알림 ${p.n}건 (적중 ${p.win} · 손절 ${p.loss})` : "") + ((b.halts || []).length ? ` · 뉴스 대기 정지 ${b.halts.length}` : "");
+  $("brief-sub").textContent = `${b.date} 거래일` + (p && p.n ? ` · 어제 알림 ${p.n}건 (적중 ${p.win} · 손절 ${p.loss})` : "") + ((b.near || []).length ? ` · 재돌파 근접 ${b.near.length}` : "");
   const sec = (title, items, row, empty) => {
     const c = mk("div", "br-sec"); c.appendChild(mk("div", "br-t", title));
     const ul = mk("ul", "br-l");
@@ -1766,10 +1766,9 @@ async function loadBrief() {
   };
   const line = (li, sym, mid, right, rc) => { li.append(mk("b", "mono", sym), mk("span", "br-m", mid), mk("span", "br-r mono " + (rc || ""), right)); };
   sec(`어제${b.d0 ? " (" + b.d0.slice(5) + ")" : ""} 급등`, (b.movers || []).slice(0, 6), (li, m) => line(li, m.symbol, `종가 ${fmtPct(m.chg, 0)} · ${usdK(m.dollar)}`, "고가 " + fmtPct(m.high_chg, 0), "pos"), "+30% 넘은 종목 없음");
+  sec(`오늘 지금까지 급등`, (b.today || []).slice(0, 6), (li, x) => line(li, x.symbol, (x.name || "") + (x.chg != null ? ` · 지금 ${fmtPct(x.chg, 0)}` : ""), "최고 " + fmtPct(x.high_chg, 0), "pos"), "아직 +20% 넘은 종목 없음");
   sec("오늘 급등 후보", (b.picks || []).slice(0, 6), (li, x) => line(li, x.symbol, x.name || "", "★".repeat(x.tier), "gold"), "★★ 이상 없음");
-  sec("밤사이 거래 터짐 · 급등", (b.night || []).slice(0, 6), (li, n) => line(li, n.symbol, n.text.replace(/^[^\p{L}\p{N}$]+/u, "").replace(new RegExp("^" + n.symbol + "\\s*"), ""), etSession(n.ts).replace(" ET", "")), "조용함");
-  sec("거래정지 · 공시", [...(b.halts || []).map(h => ({ ...h, _h: 1 })), ...(b.filings || [])].slice(0, 6),
-    (li, f) => f._h ? line(li, f.symbol, f.name || "", "뉴스 대기", "neg") : line(li, f.symbol, f.text.replace(/^[^\p{L}\p{N}$]+/u, "").replace(new RegExp("^(" + f.symbol + "\\s*)+"), "").replace(/[▲▼]\S*/g, ""), f.up ? "▲ 호재" : "▼ 악재", f.up ? "pos" : "neg"), "없음");
+  sec("고점 재돌파 근접", (b.near || []).slice(0, 6), (li, x) => { line(li, x.symbol, `${x.days}일 전 +${Math.round(x.run_chg)}% · 고점 $${fmtPx(x.level)}`, fmtPct(x.dist, 0), x.dist <= 5 ? "pos" : ""); li.title = "최근 20거래일 +50% 급등주가 급등 뒤 최고가까지 남은 거리 (5% 안이면 그날 돌파 79%, 15% 안 + 거래 3배면 51%)"; }, "근접한 종목 없음");
 }
 
 /* ---------- 토스 실제 계좌 ---------- */
