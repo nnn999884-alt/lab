@@ -200,7 +200,7 @@ def test_live_money_signal_and_ask_depth():
     lv["metrics"]["ask10"] = 10800.0
     text = alert_text("PENX", None, {"score": 7, "signals": [], "metrics": {"dd60": -80, "spikes60": 1, "vol_ratio": 5}},
                       lv, "프리마켓")
-    assert "호가 매도 +10% 안" in text and "얇음 ✅" in text
+    assert "호가 +10%안" in text and "얇음 ✅" in text
 
 
 def test_day_bars_backfills_once_then_merges(tmp_path):

@@ -337,18 +337,20 @@ def alert_text(sym: str, name: str | None, day: dict, lv: dict, session_ko: str,
     turn = m.get("vol_today", 0) / shares * 100 if shares else None
     return "\n".join([
         _head("🚨 급등 전조", sym, name, f" [{g}등급]" if g else ""),
-        f"💵 {px(m['price'])} ({pct(m['chg'])}) · {session_ko} · {j['state']}",
-        f"🌊 거래 {j['flow']} (1시간 {m.get('vol_x', 0):.1f}배 · 오늘 {money_s(m.get('dollar_today'))})"
-        f" · 3분 {money_s(m.get('dollar_3m'))} · {m.get('vol_3m', 0):,.0f}주",
-        *([f"회전율 오늘 {turn:{'.2f' if turn < 1 else '.1f'}}% · 3분 {m.get('vol_3m', 0) / shares * 100:.2f}%"
-           f" (발행 {shares / 1e6:.1f}M주)"] if turn is not None and turn <= MAX_TURNOVER else []),
-        *([f"호가 매도 +10% 안 {money_s(m['ask10'])}"
+        f"💵 {px(m['price'])} ({pct(m['chg'])}) · {session_ko}",
+        f"{j['state']} · 거래 {j['flow']}",
+        f"1시간 {m.get('vol_x', 0):.1f}배 · 오늘 {money_s(m.get('dollar_today'))}",
+        f"3분 {money_s(m.get('dollar_3m'))} · {m.get('vol_3m', 0):,.0f}주",
+        *([f"회전율 오늘 {turn:{'.2f' if turn < 1 else '.1f'}}%"
+           f" · 3분 {m.get('vol_3m', 0) / shares * 100:.2f}%"] if turn is not None and turn <= MAX_TURNOVER else []),
+        *([f"호가 +10%안 {money_s(m['ask10'])}"
            + (f" · {'얇음 ✅' if m['ask10'] < (m.get('dollar_3m') or 0) else '두꺼움'}")]
           if m.get("ask10") is not None else []),
-        f"📉 전조 {day['score']}점: " + " · ".join(on_d)
-        + f" · 60일 고점대비 {pct(dm.get('dd60'))} · 전날 거래량 {times(dm.get('vol_ratio'))}",
+        f"📉 전조 {day['score']}점: " + " · ".join(on_d),
+        f"60일 고점대비 {pct(dm.get('dd60'))} · 전날거래량 {times(dm.get('vol_ratio'))}",
         *([f"🏷 {' · '.join(tags)}"] if tags else []),
-        f"한줄: {j['verdict']} (변동성 위험 {j['risk']} · 하루 변동폭 {dm.get('range30') or 0:.0f}%)",
+        f"💬 {j['verdict']}",
+        f"변동성 {j['risk']} · 변동폭 {dm.get('range30') or 0:.0f}%",
     ])
 
 
