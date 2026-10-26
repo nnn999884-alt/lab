@@ -267,3 +267,28 @@ def test_rank_entrant_joins_live_watch(tmp_path):
     assert live == {"LOW", "PEN"}                       # BIG 은 유니버스 밖
     m = store.query("SELECT metrics FROM precursor_daily WHERE symbol='PEN'")
     assert json.loads(m[0][0])["src"] == "rank"
+
+
+def test_event_from_other_thread_uses_passed_store(tmp_path):
+    """거래 터짐·재가속·고점 접근은 _rt_worker 스레드에서 발생한다. sqlite3 연결은 만든 스레드에서만 쓸 수 있으므로
+    _event() 가 self.store(메인 스레드 연결) 대신 그 스레드의 store 를 쓰는지 확인 — 안 그러면 ProgrammingError 가
+    _rt_worker 의 바깥 try/except 에 조용히 먹혀서, 텔레그램엔 알림이 가는데 대시보드 기록엔 안 남는다."""
+    import threading
+
+    col, toss, store, clock = make(tmp_path, et(1, 0))
+    result = {}
+
+    def worker():
+        store2 = Store(tmp_path / "m.db")                 # _rt_worker 가 만드는 것과 같은 스레드 전용 연결
+        try:
+            col._event(clock[0], "XNDU", "burst", "test", 1.0, store=store2)
+            result["ok"] = True
+        except Exception as e:
+            result["ok"], result["err"] = False, e
+
+    th = threading.Thread(target=worker)
+    th.start()
+    th.join()
+    assert result.get("ok"), result.get("err")
+    rows = store.query("SELECT symbol, kind FROM events WHERE kind='burst'")
+    assert rows == [("XNDU", "burst")]

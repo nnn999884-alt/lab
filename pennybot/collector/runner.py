@@ -384,14 +384,17 @@ class Collector:
         last = self._ev_last.get((sym, kind))
         return not last or (now - last).total_seconds() >= 600
 
-    def _event(self, now: datetime, sym: str, kind: str, text: str, value: float | None = None) -> None:
-        """대시보드 '방금 일어난 일' 피드. 같은 종목·종류는 10분에 한 번만."""
+    def _event(self, now: datetime, sym: str, kind: str, text: str, value: float | None = None, store=None) -> None:
+        """대시보드 '방금 일어난 일' 피드. 같은 종목·종류는 10분에 한 번만.
+        store: 실시간 스레드(_rt_worker)에서 부르는 경로(거래 터짐·재가속·고점 접근)는 그 스레드 전용 연결을 넘겨야 한다 —
+        sqlite3 연결은 만든 스레드에서만 쓸 수 있어서, self.store(메인 스레드 연결)를 그대로 쓰면 ProgrammingError 가 나고
+        _rt_worker 의 바깥 try/except 에 조용히 먹혀 버린다 (대시보드엔 안 뜨는데 텔레그램은 정상 도착하는 이유)."""
         key = (sym, kind)
         last = self._ev_last.get(key)
         if last and (now - last).total_seconds() < 600:
             return
         self._ev_last[key] = now
-        self.store.put_events([{"ts": iso(now), "symbol": sym, "kind": kind, "text": text, "value": value}])
+        (store or self.store).put_events([{"ts": iso(now), "symbol": sym, "kind": kind, "text": text, "value": value}])
 
     def poll_prices(self, now: datetime, trade_date, session: str) -> None:
         prev = {s: v.get("last") for s, v in self.universe.items()}
@@ -986,7 +989,7 @@ class Collector:
             pc = row[0][0] if row else None
         self._ev_last.pop((sym, "approach"), None)       # 1단계 직후 2단계도 남게 (10분 제한 무시)
         self._event(now, sym, "approach", f"{title[:2]} {sym} {title[2:].strip()} (고점 ${r['level']:.4g}까지 {(r['level'] / price - 1) * 100:+.1f}%"
-                    f" · {r['days']}일 전 +{r['run_chg']:.0f}%)", (price / pc - 1) * 100 if pc else None)
+                    f" · {r['days']}일 전 +{r['run_chg']:.0f}%)", (price / pc - 1) * 100 if pc else None, store=store)
         log.info("고점 %s %s $%.4g → $%.4g (%d일 전 급등)", title, sym, price, r["level"], r["days"])
         self._fast_hot[1].add(sym)
         if self.notifier and self._on("approach"):
@@ -1040,7 +1043,7 @@ class Collector:
             return False                                 # 반등에 거래가 안 붙으면 아직
         n = len(evs) + 1
         self._event(now, sym, "reaccel", f"🔁 {sym} 재가속 {n}번째 (고점 ${r['high']:.4g} → {r['drop']:+.0f}% → 반등 {r['bounce']:+.0f}%"
-                    f" · 2분 ${d2 / 1e3:.0f}K)", (r["price"] / pc - 1) * 100 if pc else None)
+                    f" · 2분 ${d2 / 1e3:.0f}K)", (r["price"] / pc - 1) * 100 if pc else None, store=store)
         log.info("재가속 %s %d번째 (눌림 %.0f%% → 반등 %.0f%%)", sym, n, r["drop"], r["bounce"])
         self._fast_hot[1].add(sym)
         if self.notifier and self._on("reaccel"):
@@ -1104,7 +1107,7 @@ class Collector:
                                    buttons=alert_buttons(sym, link))
             log.info("거래 터짐 신호 %s (%s)", sym, session)
             self._event(now, sym, "burst", f"📶 {sym} 거래 터짐 ({m.get('chg', 0):+.1f}% · 3분 ${m.get('dollar_3m', 0) / 1e3:.0f}K)",
-                        m.get("chg"))
+                        m.get("chg"), store=store)
             return
         m["grade_why"] = why
         from ..trading.strategies import SESSION_KO
@@ -1134,7 +1137,7 @@ class Collector:
                                buttons=alert_buttons(sym, link))
         log.info("급등 전조 알림 %s (%s)", sym, " · ".join(m["grade_why"]))
         self._event(now, sym, "precursor", f"🚨 {sym} 급등 전조 ({' · '.join(m['grade_why'])} · "
-                    f"{m.get('chg', 0):+.1f}% · 3분 ${m.get('dollar_3m', 0) / 1e3:.0f}K)", m.get("chg"))
+                    f"{m.get('chg', 0):+.1f}% · 3분 ${m.get('dollar_3m', 0) / 1e3:.0f}K)", m.get("chg"), store=store)
 
     # ---------- 실시간: 웹소켓 체결 → 최근 60초 거래대금·회전율·평소 대비 거래량 → 바로 알림 (등락률은 안 봄) ----------
     def _rt_set(self, symbols) -> None:
