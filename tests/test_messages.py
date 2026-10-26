@@ -16,6 +16,15 @@ def test_first_line_names_event_and_symbol():
     assert msg.backstop_fired(T).startswith("🛑 서버 손절 안전망 발동 · PENX")
 
 
+def test_name_appended_when_known_omitted_when_not():
+    assert msg.buy_filled(T, 120, 1.2345, "DAY", name="페닉스").split("\n")[0] == "🟢 매수 체결 · PENX(페닉스)"
+    assert msg.buy_filled(T, 120, 1.2345, "DAY").split("\n")[0] == "🟢 매수 체결 · PENX"
+    assert msg.scaled_out(T, 60, 1.38, name="페닉스").split("\n")[0] == "🟡 분할 익절 · PENX(페닉스)"
+    assert msg.closed(T, name="페닉스").split("\n")[0] == "🔵 청산 · PENX(페닉스) · 익절"
+    assert msg.backstop_fired(T, name="페닉스").startswith("🛑 서버 손절 안전망 발동 · PENX(페닉스)")
+    assert msg.sym_s("PENX", None) == "PENX" and msg.sym_s("PENX", "페닉스") == "PENX(페닉스)"
+
+
 def test_formats():
     buy = msg.buy_filled(T, 120, 1.2345, "DAY")
     assert "120주 × $1.2345 = $148.14" in buy and "러너 오버나이트 · 데이마켓" in buy and "손절 $1.11" in buy

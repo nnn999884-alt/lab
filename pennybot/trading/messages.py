@@ -1,11 +1,12 @@
 """알림 문구 틀. 모든 알림이 같은 모양이 되게 한다:
 
-  <아이콘> <제목> · <종목>
+  <아이콘> <제목> · <종목>(<종목명>)
   <핵심 숫자 한 줄>
   <보조 정보 한두 줄>
   → <할 일> (경고만)
 
 휴대폰 잠금화면 미리보기에 첫 줄만 보이므로 첫 줄에 무슨 일인지·어느 종목인지를 넣는다.
+종목명은 모를 수 있으니(name=None) 그때는 괄호를 통째로 뺀다.
 """
 from __future__ import annotations
 
@@ -40,6 +41,10 @@ def _strat(t: dict) -> str:
 
 def _sess(s: str | None) -> str:
     return SESSION_KO.get(s, s or "-")
+
+
+def sym_s(symbol: str, name: str | None = None) -> str:
+    return f"{symbol}({name})" if name else symbol
 
 
 def qty_s(v: float | None) -> str:
@@ -110,8 +115,8 @@ def info_block(stats: dict | None = None, brief: dict | None = None, reason: str
     return (["", "── 종목 정보 ──"] + L) if L else []
 
 
-def buy_filled(t: dict, qty: int, price: float, session: str, info: list[str] | None = None) -> str:
-    lines = [f"🟢 매수 체결 · {t['symbol']}",
+def buy_filled(t: dict, qty: int, price: float, session: str, info: list[str] | None = None, name: str | None = None) -> str:
+    lines = [f"🟢 매수 체결 · {sym_s(t['symbol'], name)}",
              f"{qty}주 × {px(price)} = {usd(qty * price)}"]
     if t.get("stop") or t.get("target"):
         tp = (t["target"] / price - 1) * 100 if t.get("target") and price else None
@@ -121,21 +126,21 @@ def buy_filled(t: dict, qty: int, price: float, session: str, info: list[str] | 
     return "\n".join(lines + (info or []))
 
 
-def scaled_out(t: dict, qty: int, price: float, info: list[str] | None = None) -> str:
+def scaled_out(t: dict, qty: int, price: float, info: list[str] | None = None, name: str | None = None) -> str:
     gain = (price / t["entry_price"] - 1) * 100 if t.get("entry_price") else None
     return "\n".join([
-        f"🟡 분할 익절 · {t['symbol']}",
+        f"🟡 분할 익절 · {sym_s(t['symbol'], name)}",
         f"{qty}주 × {px(price)} ({pct(gain)})",
         f"나머지 {t['remaining']}주: 손절을 본전 {px(t.get('entry_price'))}로, 고점 대비 −{t.get('trail_pct') or 0:g}% 트레일링",
     ] + (info or []))
 
 
-def closed(t: dict, info: list[str] | None = None) -> str:
+def closed(t: dict, info: list[str] | None = None, name: str | None = None) -> str:
     pnl = t.get("pnl") or 0.0
     icon = "🔵" if pnl >= 0 else "🔴"
     held = _held(t)
     peak = (t["high_water"] / t["entry_price"] - 1) * 100 if t.get("high_water") and t.get("entry_price") else None
-    lines = [f"{icon} 청산 · {t['symbol']} · {t.get('exit_reason') or '-'}",
+    lines = [f"{icon} 청산 · {sym_s(t['symbol'], name)} · {t.get('exit_reason') or '-'}",
              f"{usd(pnl, sign=True)} ({pct(t.get('pnl_pct'))}) 순손익" + (f" · 보유 {held}" if held else ""),
              f"{px(t.get('entry_price'))} → {px(t.get('exit_price'))} · {t.get('exited_qty') or t.get('qty') or 0}주"
              + (f" · 보유 중 최고 {pct(peak)}" if peak is not None else ""),
@@ -143,8 +148,8 @@ def closed(t: dict, info: list[str] | None = None) -> str:
     return "\n".join(lines + (info or []))
 
 
-def backstop_fired(t: dict) -> str:
-    return "\n".join([f"🛑 서버 손절 안전망 발동 · {t['symbol']}",
+def backstop_fired(t: dict, name: str | None = None) -> str:
+    return "\n".join([f"🛑 서버 손절 안전망 발동 · {sym_s(t['symbol'], name)}",
                       f"{t.get('remaining') or 0}주, 발동가 {px(t.get('backstop_trigger'))}",
                       "토스 서버가 손절 주문을 냈습니다. 봇이 이어서 체결을 추적합니다"])
 

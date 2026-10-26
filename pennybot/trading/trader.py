@@ -332,18 +332,25 @@ class Trader:
         return cands[-1]["order_id"] if cands else None
 
     def _on_fill(self, w: Working, delta: int, px: float, session: str, now: datetime) -> None:
+        nm = self._name(w.symbol)
         if w.purpose == "entry":
             self.journal.record_entry_fill(w.trade_id, delta, px, session, now, fee=self._fee(delta, px))
             tr = self.journal.trade(w.trade_id)
-            self.notifier.send(msg.buy_filled(tr, delta, px, session, self._info(w.symbol, tr.get("reason"))))
+            self.notifier.send(msg.buy_filled(tr, delta, px, session, self._info(w.symbol, tr.get("reason")), name=nm))
             return
         t = self.journal.record_exit_fill(w.trade_id, delta, px, session, now, fee=self._fee(delta, px))
         if w.scale and not t["scaled"]:
             self.journal.set_scaled(w.trade_id, True, stop=t["entry_price"])   # 나머지는 본전 손절 + 트레일링
-            self.notifier.send(msg.scaled_out(t, delta, px, self._info(t["symbol"])))
+            self.notifier.send(msg.scaled_out(t, delta, px, self._info(t["symbol"]), name=nm))
         if t["status"] == "CLOSED":
             self.exit_reprices.pop(w.trade_id, None)
-            self.notifier.send(msg.closed(self.journal.trade(w.trade_id), self._info(w.symbol)))
+            self.notifier.send(msg.closed(self.journal.trade(w.trade_id), self._info(w.symbol), name=nm))
+
+    def _name(self, symbol: str) -> str | None:
+        try:
+            return self.mv.name(symbol) if hasattr(self.mv, "name") else None
+        except Exception:
+            return None
 
     def _info(self, symbol: str, reason: str | None = None) -> list[str]:
         """알림 아래 종목 정보: 오늘 등락·거래량·거래대금(토스 일봉), 공매도·대차·SSR·공시(수집기 DB),
@@ -514,7 +521,7 @@ class Trader:
         self.journal.log_order(o, trade_id=t["id"], purpose="exit", session=session, now=now, note=reason)
         self.working[order_id] = Working(order_id, t["id"], "exit", t["symbol"], "SELL", now, note=reason,
                                          aggressive=True, qty=o["qty"], ids=[order_id])
-        self.notifier.send(msg.backstop_fired(t))
+        self.notifier.send(msg.backstop_fired(t, name=self._name(t["symbol"])))
         self.poll_orders(now, session)
 
     # ---------- 청산 ----------

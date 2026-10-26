@@ -125,6 +125,14 @@ class MarketView:
             return None, None
         return ratios[0], sum(ratios) / len(ratios)
 
+    def name(self, symbol: str) -> str | None:
+        """종목명 (종목 정보 → 지난 유니버스 순으로, 알림에 '종목 · 이름'으로 붙인다)."""
+        r = self.q("SELECT name FROM stock_info WHERE symbol=? AND name IS NOT NULL AND name != ''", (symbol,))
+        if r and r[0][0]:
+            return r[0][0]
+        r = self.q("SELECT name FROM universe WHERE symbol=? AND name IS NOT NULL ORDER BY snapshot_date DESC LIMIT 1", (symbol,))
+        return r[0][0] if r else None
+
     def universe(self) -> dict[str, float]:
         r = self.q("SELECT MAX(snapshot_date) FROM universe WHERE snapshot_date <= ?", (self._asof()[:10],))
         if not r or not r[0][0]:
