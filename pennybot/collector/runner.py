@@ -896,6 +896,11 @@ class Collector:
             # 그날 +300% 까지 간 비율 17.3% (정규장에서 처음 +20% 찍은 종목은 2.6%) — 평소 대비 5.2배, 하루 한 번만 기록
             if session in (PRE, DAY) and (lv["metrics"].get("chg") or 0) >= 20 and not self.store.query(
                     "SELECT 1 FROM events WHERE symbol=? AND kind='early20' AND ts>=?", (sym, start)):
+                if self.notifier and self._on("early20"):
+                    from ..precursor import early20_text
+                    self.notifier.send(early20_text(sym, (self.universe.get(sym) or {}).get("name"),
+                                                     lv["metrics"]["chg"], lv["metrics"].get("price"),
+                                                     SESSION_KO.get(session, session)))
                 self._event(now, sym, "early20", f"🌙 {sym} 정규장 전 +20% 돌파 ({SESSION_KO.get(session, session)})",
                            lv["metrics"]["chg"])
             # 알림 = 1분 거래(회전율 0.5%+ 또는 $5만+, +5%↑)가 처음 터진 그 분 (최근 3분 안 — 재시작 직후 지난 신호로 몰려 오지 않게).

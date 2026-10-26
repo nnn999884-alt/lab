@@ -210,6 +210,17 @@ def _head(prefix: str, sym: str, name: str | None, suffix: str = "") -> str:
     return f"{prefix} · {sym_s(sym, name)}{suffix}"
 
 
+def early20_text(sym: str, name: str | None, chg: float, price: float | None, session_ko: str) -> str:
+    """정규장 열리기 전(프리·데이마켓)에 이미 +20% 찍음 — 거래 터짐보다 약한 신호라 알림도 짧게.
+    big300 비교: 이 상태인 날이 그날 +300% 까지 간 비율 17.3% (정규장에서 처음 +20% 찍은 날은 2.6%) — 평소 대비 5.2배."""
+    from .trading.messages import pct, px
+    return "\n".join([
+        _head("🌙 정규장 전 +20% 돌파", sym, name),
+        f"💵 {px(price)} ({pct(chg)}) · {session_ko}",
+        "오늘 +300%까지 갈 확률이 평소보다 5.2배 높은 상태 (연구: 17.3% vs 정규장 중 2.6%)",
+    ])
+
+
 def signal_text(sym: str, name: str | None, lv: dict, session_ko: str, tags: list | None = None) -> str:
     """거래 터짐 신호 (세션 상관없이, 짧게). 급등 전조 조건까지 맞으면 alert_text 를 대신 보낸다."""
     from .trading.messages import money_s, pct, px

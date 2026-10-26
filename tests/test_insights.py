@@ -244,6 +244,14 @@ def test_ranked_does_not_rank_falling_stock_above_rising_one(tmp_path):
     assert syms.index("UP") < syms.index("DOWN")
 
 
+def test_early20_text_format():
+    from pennybot.precursor import early20_text
+    text = early20_text("PENX", "펜엑스", 23.4, 1.85, "프리마켓")
+    assert text.startswith("🌙 정규장 전 +20% 돌파 · PENX(펜엑스)")
+    assert "$1.85" in text and "+23.4%" in text and "프리마켓" in text
+    assert "5.2배" in text
+
+
 def test_chart_analysis_factors():
     from pennybot.chartlib import analyze
     bars = [{"d": f"d{i:03d}", "open": 1, "high": 1.05, "low": 0.95, "close": 1.0, "volume": 1e5} for i in range(60)]
