@@ -1761,8 +1761,8 @@ function candleChart(box, bars, { height = 240, ma = [5, 20], log = false, label
 
 /* ---------- 방금 일어난 일 ---------- */
 let feedFilter = "hot", feedSeen = null;
-const HOT = k => k === "precursor" || k === "burst" || k === "reaccel" || k === "approach" || k === "halt" || k === "spike_up";   // '중요' 보기 (+ 호재 공시)
-const KIND = k => k === "precursor" ? ["급등 전조", "k-pre"] : k === "burst" ? ["거래 터짐", "k-burst"] : k === "reaccel" ? ["재가속", "k-pre"] : k === "approach" ? ["고점 접근", "k-pre"] : k === "halt" ? ["정지", "k-halt"]
+const HOT = k => k === "precursor" || k === "burst" || k === "reaccel" || k === "approach" || k === "bottom_bounce" || k === "halt" || k === "spike_up";   // '중요' 보기 (+ 호재 공시)
+const KIND = k => k === "precursor" ? ["급등 전조", "k-pre"] : k === "burst" ? ["거래 터짐", "k-burst"] : k === "reaccel" ? ["재가속", "k-pre"] : k === "approach" ? ["고점 접근", "k-pre"] : k === "bottom_bounce" ? ["바닥 재반등", "k-pre"] : k === "halt" ? ["정지", "k-halt"]
   : k === "spike_up" ? ["급등", "k-up"] : k === "spike_dn" ? ["급락", "k-dn"] : k.startsWith("rank:") ? ["랭킹", "k-rank"]
   : k === "filing" ? ["공시", ""] : [k, ""];
 function beep() {

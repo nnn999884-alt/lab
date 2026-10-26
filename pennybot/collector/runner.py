@@ -951,6 +951,7 @@ class Collector:
                 self._reaccel_check(self.store, now, session, d0, sym, today, close, shares.get(sym), start)
             if sym in self._rb_levels and len(today) > 2 and not (self._rt and self._rt.healthy):
                 self._approach_bars(now, session, sym, today, close)
+                self._bottom_bounce_check(self.store, now, session, sym, today[-1][4], close)
             if self.cfg.vsignal and session != AFTER:      # 가상 매매는 알림과 따로: 1분 거래 터짐 → 아래 지정가
                 self._vtrade(now, d0, sym, score, close, today, shares.get(sym), session, start)
         # 구독 우선: 오늘 알림·+30% → 감시 상위 → 며칠 전 급등주 (최근 것부터)
@@ -1035,6 +1036,36 @@ class Collector:
             oh = self._overhead(store, sym, price)
             self.notifier.send(approach_text(sym, (self.universe.get(sym) or {}).get("name"), r, stage, price, pc,
                                              SESSION_KO.get(session, session), dollar, [oh] if oh else None),
+                               buttons=alert_buttons(sym, link))
+        return True
+
+    def _bottom_bounce_check(self, store, now, session, sym: str, price: float, pc: float | None) -> bool:
+        """며칠 전 급등주가 그 뒤 깊게 빠졌다가(일봉 기준) 바닥 찍고 다시 오르기 시작 — 2차 파동 초입.
+        고점 접근(approach)은 옛 고점 가까이 와야 뜨고, 재가속(reaccel)은 당일 눌림만 보니 그 사이는 못 잡았었다.
+        하루 한 번, 아직 고점 접근 단계(80% 아래)로 넘어가기 전에만."""
+        from ..precursor import BOTTOM_BOUNCE_PCT, alert_buttons, bottom_bounce_text
+        from ..trading.strategies import SESSION_KO
+        r = (getattr(self, "_runner_cache", None) or (None, {}))[1].get(sym)
+        if not r or not r["days"] or not r["low"] or price >= r["level"] * 0.80:
+            return False                                  # 이미 고점 접근 단계면 approach 가 맡는다
+        if (price / r["low"] - 1) * 100 < BOTTOM_BOUNCE_PCT:
+            return False
+        since = iso(now - timedelta(hours=18))
+        if store.query("SELECT 1 FROM events WHERE symbol=? AND kind='bottom_bounce' AND ts>=?", (sym, since)):
+            return False
+        self._event(now, sym, "bottom_bounce",
+                    f"🌊 {sym} 바닥 ${r['low']:.4g} 찍고 재반등 (지금 ${price:.4g} · 옛 고점 ${r['level']:.4g}까지 {(r['level'] / price - 1) * 100:+.0f}%"
+                    f" · {r['days']}일 전 +{r['run_chg']:.0f}%)", (price / pc - 1) * 100 if pc else None, store=store)
+        log.info("바닥 재반등 %s $%.4g → $%.4g (%d일 전 급등)", sym, r["low"], price, r["days"])
+        self._fast_hot[1].add(sym)
+        if self.notifier and self._on("bottom_bounce"):
+            link = None
+            try:
+                link = self.link() if self.link else None
+            except Exception:
+                pass
+            self.notifier.send(bottom_bounce_text(sym, (self.universe.get(sym) or {}).get("name"), price, r["low"],
+                                                   r["level"], r["days"], r["run_chg"], SESSION_KO.get(session, session)),
                                buttons=alert_buttons(sym, link))
         return True
 

@@ -207,6 +207,23 @@ def test_runners_and_approach_before_breakout(tmp_path):
     assert runner_tag(r) == "🔙 6일 전 +120% 급등주"
 
 
+def test_bottom_bounce_catches_second_wave_before_approach(tmp_path):
+    """고점 접근(옛 고점 근처)도 아니고 재가속(당일 눌림)도 아닌, 며칠에 걸쳐 바닥 찍고 막 오르기 시작하는 구간."""
+    from tests.test_vsignals import T0
+    col, st, sent = make(tmp_path)
+    days = ["2026-10-14", "2026-10-15", "2026-10-16", "2026-10-19", "2026-10-20", "2026-10-21", "2026-10-22"]
+    bars = [(1.0, 1.0, 1.0), (1.0, 2.2, 1.6), (1.6, 1.7, 1.2), (1.2, 1.3, 1.0), (1.0, 1.1, 0.9), (0.9, 0.95, 0.9), (0.9, 0.95, 0.9)]
+    st.put_daily_bars([{"symbol": "PENX", "d": d, "open": 1, "high": h, "low": lo, "close": c, "volume": 1}
+                       for d, (c0, h, c) in zip(days, bars) for lo in [min(c0, c)]])
+    r = col._runners("2026-10-22")["PENX"]
+    assert r["level"] == 2.2 and r["low"] == 0.9             # 고점 2.2, 그 뒤 바닥 0.9
+    assert not col._bottom_bounce_check(st, T0, "PRE", "PENX", 1.02, 1.0)   # 0.9 대비 +13% — 아직 15% 기준 밖
+    assert col._bottom_bounce_check(st, T0, "PRE", "PENX", 1.05, 1.0)       # 0.9 대비 +16.7% → 재반등
+    assert sent.msgs[-1][0].startswith("🌊 바닥 찍고 재반등 · PENX(펜엑스) — 6일 전 +120% 급등주")
+    assert not col._bottom_bounce_check(st, T0, "PRE", "PENX", 1.06, 1.0)   # 하루 한 번
+    assert not col._bottom_bounce_check(st, T0, "PRE", "PENX", 1.90, 1.0)   # 고점(2.2)의 80%(1.76) 넘으면 approach 몫
+
+
 def test_tier_turnover_and_wake():
     from pennybot.precursor import daily, tier
     big = 5e7                                                     # 발행 5천만 주: 예전 기준이면 무조건 0

@@ -234,6 +234,21 @@ def after_move_text(sym: str, name: str | None, chg: float, price: float | None)
     ])
 
 
+BOTTOM_BOUNCE_PCT = 15.0  # 며칠 전 급등 뒤 바닥(그 뒤 최저가) 대비 이만큼 오르면 — 아직 옛 고점 근처는 아닐 때
+
+
+def bottom_bounce_text(sym: str, name: str | None, price: float, low: float, level: float, days: int,
+                       run_chg: float, session_ko: str) -> str:
+    """며칠 전 급등주가 그 뒤 깊게 빠졌다가(일봉 기준) 바닥 찍고 다시 오르기 시작 — 2차 파동 초입.
+    고점 접근(approach)은 옛 고점 가까이 와야 뜨고, 재가속(reaccel)은 당일 눌림만 보니 그 사이 구간은 못 잡았었다."""
+    from .trading.messages import pct, px
+    return "\n".join([
+        _head("🌊 바닥 찍고 재반등", sym, name, f" — {days}일 전 +{run_chg:.0f}% 급등주"),
+        f"💵 {px(price)} ({(price / low - 1) * 100:+.0f}%, 바닥 대비) · {session_ko}",
+        f"바닥 {px(low)} → 옛 고점 {px(level)}까지 아직 {(level / price - 1) * 100:+.0f}% 남음",
+    ])
+
+
 def signal_text(sym: str, name: str | None, lv: dict, session_ko: str, tags: list | None = None) -> str:
     """거래 터짐 신호 (세션 상관없이, 짧게). 급등 전조 조건까지 맞으면 alert_text 를 대신 보낸다."""
     from .trading.messages import money_s, pct, px
