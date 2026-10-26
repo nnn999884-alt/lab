@@ -167,6 +167,18 @@ def test_spread_cap_varies_by_session():
     assert tcfg.spread_cap("CLOSED") == tcfg.max_spread_pct          # 세션별 설정에 없으면 기본값
 
 
+def test_scan_keeps_running_outside_day_but_does_not_buy(env):
+    """매수는 데이마켓에서만 하지만, 스캔 자체(후보 평가·사유 기록)는 다른 세션에서도 계속 돈다 —
+    '지금 봇이 보는 것'이 데이마켓 끝났다고 멈추면 안 된다."""
+    tr, market, mv, clock, j, ctl, ex = env
+    clock[0] = et(6, 0)                      # 프리마켓
+    market.set("PEN", 1.03, 1.035)
+    tr.tick()
+    assert j.q("SELECT * FROM trades") == []                       # 매수는 안 함
+    s = j.q("SELECT ok, reason FROM signals WHERE symbol='PEN' ORDER BY ts DESC LIMIT 1")[0]
+    assert s["ok"] == 0 and "매수 시간 아님" in s["reason"] and "프리마켓" in s["reason"]
+
+
 def test_unfilled_entry_cancelled_at_session_change(env):
     tr, market, mv, clock, j, ctl, ex = env
     tr.tcfg.entry_ttl_seconds = 10_000

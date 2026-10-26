@@ -169,7 +169,7 @@ class Trader:
                 self._stage("flatten", self.flatten, now, session)
             self._stage("exits", self.manage_exits, now, session)
         self._stage("backstop", self.sync_backstops, now, session)
-        if session == DAY and not ctl["kill"] and self._entry_window(now, trade_date):
+        if session != CLOSED and not ctl["kill"]:
             if self._due("scan", now, timedelta(seconds=getattr(self.tcfg, "scan_seconds", 0) or self.tcfg.scan_minutes * 60)):
                 self._stage("scan", self.scan_and_enter, now, trade_date, session)
         if self._due("equity", now, timedelta(minutes=5)):
@@ -677,6 +677,18 @@ class Trader:
         if any(v["bot"] > v["account"] for v in self.mismatch.values()):
             rows += [row(p, False, "잔고 불일치 → 신규 매수 중단") for p in plans if p.ok]
             plans = [p for p in plans if not p.ok]
+        # 실제 매수는 데이마켓에서만 (그날 밤 프리~정규장 개장 직후에 파는 구조라, 다른 세션에 사면
+        # 전략이 가정한 보유 기간이 안 맞는다). 다른 세션에서도 스캔 자체는 계속 돌려서 '지금 봇이 보는 것'이
+        # 실시간으로 갱신되게 하고, 조건 통과한 건 '매수 시간 아님'으로 표시만 한다.
+        buy_allowed = session == DAY and self._entry_window(now, trade_date)
+        if not buy_allowed:
+            from .strategies import SESSION_KO
+            rows = [row(p, False, f"{p.reason} — 매수 시간 아님 ({SESSION_KO.get(session, session)})") if p.ok else row(p, p.ok, p.reason)
+                    for p in plans]
+            self.journal.log_signals(rows)
+            self.status["last_scan"] = now.isoformat(timespec="seconds")
+            self.status["candidates"] = sum(1 for p in plans if p.ok)
+            return
         acct = self.account()
         unrealized = self._unrealized(open_trades) if any(p.ok for p in plans) else 0.0
         for p in sorted((p for p in plans if p.ok), key=lambda p: p.score, reverse=True):
