@@ -380,6 +380,19 @@ def test_risk_sizing_daily_loss_and_auto_disable(tmp_path):
     assert risk.can_enter("runner_overnight", "X", str(D), []).startswith("영업일 손실 한도 도달")
 
 
+def test_can_enter_rejects_blocked_symbol(tmp_path):
+    tcfg = TradingConfig()
+    j = Journal(tmp_path / "r.db")
+    ctl = Control(tmp_path)
+    risk = Risk(tcfg, j, ctl)
+    assert risk.can_enter("runner_overnight", "JYD", str(D), []) is None
+    ctl.update(block_symbol="jyd")                         # 소문자로 넣어도 대문자로 비교
+    assert risk.can_enter("runner_overnight", "JYD", str(D), []) == "종목 금지됨"
+    assert risk.can_enter("runner_overnight", "OTHER", str(D), []) is None   # 다른 종목은 영향 없음
+    ctl.update(unblock_symbol="JYD")
+    assert risk.can_enter("runner_overnight", "JYD", str(D), []) is None
+
+
 def test_can_enter_skips_symbol_after_repeated_unfilled_entries(tmp_path):
     """호가가 얇아 매번 미체결·취소되는 종목은 N번 넘으면 그날은 더 안 건다 (JYD 사례: 5분마다 8번 재시도)."""
     tcfg = TradingConfig()

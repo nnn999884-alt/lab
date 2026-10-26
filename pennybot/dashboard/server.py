@@ -74,7 +74,7 @@ class Data:
             "mode": info.get("mode") or self.cfg.mode,
             "trader": {"ts": trader["ts"] if trader else None, "age_s": age, "info": info},
             "collector": {"last_price_ts": last_price[0]["ts"] if last_price else None},
-            "kill": ctl["kill"], "flatten": ctl["flatten"],
+            "kill": ctl["kill"], "flatten": ctl["flatten"], "blocked_symbols": ctl["blocked_symbols"],
             "equity": eq[0] if eq else None,
             "open_trades": self.t("SELECT COUNT(*) AS n FROM trades WHERE status IN ('PENDING','OPEN','EXITING')")
             [0]["n"] if Path(self.trading_db).exists() else 0,
@@ -634,6 +634,10 @@ class Handler(BaseHTTPRequestHandler):
             d = ctl.update(flatten=True)
         elif "strategy" in body and body["strategy"] in self.data.cfg.trading.strategies:
             d = ctl.update(strategy=(body["strategy"], bool(body.get("enabled"))))
+        elif "block_symbol" in body:
+            d = ctl.update(block_symbol=str(body["block_symbol"])[:12])
+        elif "unblock_symbol" in body:
+            d = ctl.update(unblock_symbol=str(body["unblock_symbol"])[:12])
         else:
             return self._json({"error": "알 수 없는 제어 요청"}, 400)
         log.info("제어 변경: %s", body)

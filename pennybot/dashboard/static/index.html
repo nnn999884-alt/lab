@@ -871,6 +871,14 @@ table.ca-tbl tr.off .ca-fill { opacity: .35; }
       </form>
     </section>
     <section class="card">
+      <div class="pre-head"><h2><i class="ic ic-target" aria-hidden="true"></i>종목 금지</h2><span class="sub" style="margin:0">여기 넣은 종목은 신규 매수를 아예 안 함 (보유 중이면 청산은 그대로)</span></div>
+      <form class="set-form" id="set-block">
+        <label>종목 코드 <input type="text" id="set-block-sym" placeholder="예: JYD" style="text-transform:uppercase"></label>
+        <button type="submit">금지</button>
+      </form>
+      <div class="chips" id="blocked-list" style="margin-top:8px"></div>
+    </section>
+    <section class="card">
       <div class="pre-head"><h2><i class="ic ic-layers" aria-hidden="true"></i>옛 매매 봇 (모의 계좌)</h2><span class="sub" style="margin:0">예전 전략 4개로 도는 별도 프로그램 — 지금 쓰는 가상 매매와 무관</span></div>
       <div class="controls">
       <button id="kill-btn" class="danger" aria-pressed="false">킬스위치 켜기</button>
@@ -1208,6 +1216,13 @@ async function loadOverview() {
   kb.textContent = ov.kill ? "킬스위치 켜짐 (끄기)" : "킬스위치 켜기";
   kb.classList.toggle("active", ov.kill); kb.setAttribute("aria-pressed", ov.kill);
   $("flatten-btn").textContent = ov.flatten ? "청산 진행 중…" : "전량 청산";
+  const bl = $("blocked-list"); bl.replaceChildren();
+  (ov.blocked_symbols || []).forEach(sym => {
+    const c = mk("span", "chip", sym + " ✕"); c.style.cursor = "pointer"; c.title = "눌러서 금지 해제";
+    c.onclick = () => control({ unblock_symbol: sym });
+    bl.appendChild(c);
+  });
+  if (!(ov.blocked_symbols || []).length) bl.appendChild(mk("span", "sub", "금지된 종목 없음"));
   const e = ov.equity;
   $("t-equity").textContent = e ? fmtUsd(e.equity) : "-";
   $("t-cash").textContent = e ? `현금 ${fmtUsd(e.cash)} · ${kst(e.ts)} 기준` : "기록 없음";
@@ -2545,6 +2560,11 @@ async function control(body) {
 }
 $("kill-btn").onclick = () => control({ kill: !(ov && ov.kill) });
 $("flatten-btn").onclick = () => { if (confirm("보유 종목을 지금 전량 청산할까요? (지정가로 매도하고, 정규장에서 안 팔리면 시장가)")) control({ flatten: true }); };
+$("set-block").onsubmit = e => {
+  e.preventDefault();
+  const sym = $("set-block-sym").value.trim().toUpperCase();
+  if (sym) control({ block_symbol: sym }).then(() => { $("set-block-sym").value = ""; });
+};
 $("only-ok").onchange = () => { delete _seen.tables; loadTables(); };
 document.querySelectorAll("#range button").forEach(b => b.onclick = () => {
   days = +b.dataset.days;

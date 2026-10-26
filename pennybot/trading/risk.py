@@ -61,6 +61,8 @@ class Risk:
             return "킬스위치"
         if c["flatten"]:
             return "전량 청산 중"
+        if symbol.upper() in c["blocked_symbols"]:
+            return "종목 금지됨"
         ok, why = self.strategy_enabled(strategy)
         if not ok:
             return why
