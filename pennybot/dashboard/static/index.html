@@ -237,6 +237,8 @@ table.det caption.empty { caption-side: top; padding: 18px; }
 .feed .empty { grid-template-columns: 1fr; }
 .lg-t { color: var(--text-3); font-size: 11px; }
 .lg-s { display: flex; align-items: baseline; gap: 5px; min-width: 0; overflow: hidden; font-weight: 700; font-family: var(--mono); }
+.ev-k2 { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.lg-chg { flex: none; font-size: 11px; font-weight: 700; }
 .lg-x { color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .ev-hot .lg-x { color: var(--text); font-weight: 600; }
 .home-side .feed-wrap .feed { max-height: 44vh; } .home-side .fil-wrap .feed { max-height: 30vh; }
@@ -969,6 +971,10 @@ const kst = s => s ? new Date(s).toLocaleString("ko-KR", { timeZone: "Asia/Seoul
 const kstDateShort = s => new Date(s).toLocaleDateString("ko-KR", { timeZone: "Asia/Seoul", month: "2-digit", day: "2-digit" }).replace(/\.\s?/g, "/").replace(/\/$/, "");
 const symCell = (sym, name) => { const s = document.createElement("span"); s.className = "lg-s";
   s.append(document.createTextNode(sym || "")); if (name) s.append(mk("span", "nm", name)); return s; };
+// 종류 배지 + (있으면) 등락률 배지를 한 칸에 묶는다 — 'auto' 칸은 내용에 맞춰 넓어지므로 레이아웃 안 깨짐
+const kindCell = (kl, kc, chg) => { const s = document.createElement("span"); s.className = "ev-k2";
+  s.append(mk("span", "ev-kind " + kc, kl));
+  if (chg != null) s.append(mk("span", "lg-chg " + (tone(chg) || "flat"), fmtPct(chg))); return s; };
 const reEsc = s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 // 본문 맨 앞의 이모지·티커·(반복된) 티커·회사명을 뗀다 — 종목명은 이미 티커 옆에 따로 보여주므로
 const stripLead = (text, sym, name) => { let t = (text || "").replace(/^[^\p{L}\p{N}$]+/u, "");
@@ -1494,10 +1500,10 @@ async function lookup(sym) {
   const ck = mk("div", "checks");
   checks.forEach(([k, v]) => ck.appendChild(mk("span", "chk " + (v === true ? "ok" : v === false ? "no" : "na"), (v === true ? "✓ " : v === false ? "✕ " : "· ") + k)));
   c2.appendChild(ck);
-  // 참고 손절가·목표가: 실제 매매 계획이 아니라 참고용. 매물대(지지·저항)가 있으면 그걸, 없으면 전략 설정 %를 대신 씀
+  // 참고 손절가·목표가: 실제 매매 계획이 아니라 참고용. 전략 설정 % 기준 (매물대 가격대는 백테스트상 신뢰도가 낮아 참고에서 제외)
   const sr = x.strategy_ref;
   if (sr) {
-    const srcText = sr.basis === "levels" ? "최근 거래량이 쌓인 매물대(1차 지지·저항) 기준" : `${STRAT[sr.name] || sr.name} 전략 설정 % 기준 (매물대를 못 구해 대신 씀)`;
+    const srcText = `${STRAT[sr.name] || sr.name} 전략 설정 % 기준`;
     c2.appendChild(mk("div", "sub ref-sl", `참고 손절 ${fmtPx(sr.stop)} (${fmtPct(sr.stop_pct)}) · 참고 목표 ${fmtPx(sr.target)} (${fmtPct(sr.target_pct)}) · ${srcText}, 실제 매매 계획 아님`));
   }
   kvGrid(c2, [["일중 위치", t.day_pos != null ? Math.round(t.day_pos) + "%" : null], ["시가 대비", t.vs_open != null ? fmtPct(t.vs_open) : null, tone(t.vs_open)],
@@ -1642,7 +1648,7 @@ async function lookup(sym) {
   const c8 = scard(page, 8, "신호 기록", "sc-1", "급등·거래 터짐·정지·랭킹");
   if ((x.events || []).length) { const ul = mk("ul", "feed sym-feed");
     x.events.forEach(e => { const li = mk("li", "ev"); const [kl, kc] = KIND(e.kind);
-      li.append(mk("span", "lg-t", kst(e.ts)), mk("span", "ev-kind " + kc, kl), mk("span", "lg-x", e.text.replace(/^[^\p{L}\p{N}$]+/u, "").replace(new RegExp("^" + sym + "\\s*"), ""))); ul.appendChild(li); });
+      li.append(mk("span", "lg-t", kst(e.ts)), kindCell(kl, kc, e.value), mk("span", "lg-x", e.text.replace(/^[^\p{L}\p{N}$]+/u, "").replace(new RegExp("^" + sym + "\\s*"), ""))); ul.appendChild(li); });
     c8.appendChild(ul); } else c8.appendChild(mk("div", "empty", "신호 기록 없음"));
   // ---- 9 가상 매매
   const c9 = scard(page, 9, "가상 매매", "sc-1");
@@ -1749,7 +1755,7 @@ async function loadFeed() {
       : kstDay(e.ts) === kstDay(new Date()) ? hm : kstDateShort(e.ts);
     const [kl, kc] = KIND(e.kind);
     const cell = (cls, t) => { const x = document.createElement("span"); x.className = cls; x.textContent = t; return x; };
-    li.append(cell("lg-t", ago), symCell(e.symbol, e.name), cell("ev-kind " + kc, kl),
+    li.append(cell("lg-t", ago), symCell(e.symbol, e.name), kindCell(kl, kc, e.value),
               cell("lg-x", stripLead(e.text, e.symbol, e.name)));
     li.onclick = () => { lookup(e.symbol); showTab("symbol"); };
     box.appendChild(li);

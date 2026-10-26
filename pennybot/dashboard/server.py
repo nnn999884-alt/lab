@@ -140,18 +140,15 @@ class Data:
         oh = overhead.for_symbol(self.m, sym, px)
         out["overhead"] = oh
         # 참고용 손절가·목표가: 실제 들어간 포지션이 아니라 참고용.
-        # 매물대(실제 거래량 쌓인 가격대)의 1차 저항·지지가 있으면 그걸 쓰고 (차트 구조 기반이라 더 쓸모 있음),
-        # 거래 일수가 부족해 매물대를 못 구했을 때만 러너 오버나이트 전략의 손절·익절 % 로 대신한다.
+        # 매물대 wall.lo/support.lo를 그대로 쓰면 그럴듯해 보이지만, 백테스트 결과 그 가격대에서
+        # 실제로 막히는 비율이 저항 48%·지지 21%로 거의 의미가 없었다 (런너 940건, 180일).
+        # 그래서 검증된 러너 오버나이트 전략의 손절·익절 % 만 쓴다.
         rp = self.cfg.trading.strategies.get("runner_overnight") or {}
-        if px and oh and oh.get("wall") and oh.get("support"):
-            out["strategy_ref"] = {"name": "매물대 1차 지지·저항", "price": px, "basis": "levels",
-                                   "stop": oh["support"]["lo"], "stop_pct": (oh["support"]["lo"] / px - 1) * 100,
-                                   "target": oh["wall"]["lo"], "target_pct": oh["wall"]["dist"]}
-        elif px and rp.get("stop_loss_pct") is not None and rp.get("take_profit_pct") is not None:
+        if px and rp.get("stop_loss_pct") is not None and rp.get("take_profit_pct") is not None:
             out["strategy_ref"] = {"name": "runner_overnight", "price": px, "basis": "pct",
                                    "stop": px * (1 - rp["stop_loss_pct"] / 100), "stop_pct": -rp["stop_loss_pct"],
                                    "target": px * (1 + rp["take_profit_pct"] / 100), "target_pct": rp["take_profit_pct"]}
-        out["events"] = self.m("SELECT ts, kind, text FROM events WHERE symbol=? AND kind != 'filing' ORDER BY ts DESC LIMIT 30", (sym,))
+        out["events"] = self.m("SELECT ts, kind, text, value FROM events WHERE symbol=? AND kind != 'filing' ORDER BY ts DESC LIMIT 30", (sym,))
         out["vsignals"] = self.m("SELECT strat, status, opened, closed, entry, exit_price, exit_reason, high, low, last, tp, sl "
                                  "FROM vsignals WHERE symbol=? ORDER BY id DESC LIMIT 20", (sym,))
         return out
