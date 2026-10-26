@@ -351,6 +351,17 @@ def test_can_enter_skips_symbol_after_repeated_unfilled_entries(tmp_path):
     assert risk.can_enter("runner_overnight", "OTHER", str(D), []) is None
 
 
+def test_canceled_trade_keeps_attempt_session(tmp_path):
+    """매수가 안 붙어 CANCELED 로 끝나도 어느 세션에 시도했는지는 내역에 남아야 한다 (entry_session 은 체결 때만 찍힘)."""
+    j = Journal(tmp_path / "r.db")
+    tid = j.open_trade(strategy="runner_overnight", symbol="JYD", trade_date=str(D), planned_qty=30,
+                       stop=1.6, target=2.0, sell_from=et(4, 0), deadline=et(9, 30), reason="", now=et(1, 0),
+                       session="DAY")
+    j.entry_finished(tid)
+    t = j.trade(tid)
+    assert t["status"] == "CANCELED" and t["entry_session"] is None and t["attempt_session"] == "DAY"
+
+
 def test_paper_partial_fill_and_reject():
     m = FakeMarket()
     m.set("A", 1.0, 1.01, size=100)

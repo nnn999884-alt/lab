@@ -695,7 +695,7 @@ class Trader:
                 rows.append(row(p, False, f"리스크: {block or '수량 0 (호가 잔량 부족 등)'}"))
                 continue
             tid = self.journal.open_trade(strategy=p.strategy, symbol=p.symbol, trade_date=str(trade_date),
-                                          planned_qty=qty, stop=p.stop, target=p.target,
+                                          planned_qty=qty, stop=p.stop, target=p.target, session=session,
                                           sell_from=p.sell_from, deadline=p.deadline, reason=p.reason, now=now,
                                           scale_out=p.scale_out, trail_pct=p.trail_pct)
             self._submit(tid, p.symbol, "BUY", qty, p.price, "entry", session, now, p.reason)

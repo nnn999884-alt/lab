@@ -1258,7 +1258,7 @@ async function loadTables() {
   table($("trades"), [
     { h: "종목", f: r => r.symbol }, { h: "전략", f: r => STRAT[r.strategy] || r.strategy }, { h: "청산", f: r => r.status === "CANCELED" ? "매수 미체결" : r.exit_reason },
     { h: "손익", num: 1, f: r => fmtUsd(r.pnl, true), tone: r => tone(r.pnl) }, { h: "수익률", num: 1, f: r => fmtPct(r.pnl_pct), tone: r => tone(r.pnl_pct) },
-    { h: "매수→매도 세션", minor: 1, f: r => r.entry_session ? `${SESS[r.entry_session] || r.entry_session} → ${SESS[r.exit_session] || r.exit_session || "-"}` : "-" }, { h: "영업일", minor: 1, f: r => r.trade_date },
+    { h: "세션", minor: 1, f: r => r.entry_session ? `${SESS[r.entry_session] || r.entry_session} → ${SESS[r.exit_session] || r.exit_session || "-"}` : r.attempt_session ? `${SESS[r.attempt_session] || r.attempt_session} (미체결)` : "-" }, { h: "영업일", minor: 1, f: r => r.trade_date },
   ], trades);
   const onlyOk = $("only-ok").checked;
   const latest = sigs.length ? sigs[0].ts : null;

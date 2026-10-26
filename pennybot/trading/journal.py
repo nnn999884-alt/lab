@@ -17,7 +17,7 @@ SCHEMA = """
 CREATE TABLE IF NOT EXISTS trades (
     id INTEGER PRIMARY KEY AUTOINCREMENT, strategy TEXT, symbol TEXT, mode TEXT, trade_date TEXT,
     status TEXT, planned_qty INTEGER, qty INTEGER DEFAULT 0, remaining INTEGER DEFAULT 0,
-    entry_price REAL, entry_ts TEXT, entry_session TEXT,
+    entry_price REAL, entry_ts TEXT, entry_session TEXT, attempt_session TEXT,
     stop REAL, target REAL, sell_from TEXT, deadline TEXT,
     exit_price REAL, exit_ts TEXT, exit_session TEXT, exit_reason TEXT,
     exit_value REAL DEFAULT 0, exited_qty INTEGER DEFAULT 0,
@@ -56,7 +56,8 @@ class Journal:
         have = {r[1] for r in self.db.execute("PRAGMA table_info(trades)")}
         for col, typ in (("scale_out", "REAL DEFAULT 1.0"), ("trail_pct", "REAL DEFAULT 0"),
                          ("high_water", "REAL"), ("scaled", "INTEGER DEFAULT 0"), ("backstop_id", "TEXT"),
-                         ("backstop_qty", "INTEGER"), ("backstop_trigger", "REAL"), ("fees", "REAL DEFAULT 0")):
+                         ("backstop_qty", "INTEGER"), ("backstop_trigger", "REAL"), ("fees", "REAL DEFAULT 0"),
+                         ("attempt_session", "TEXT")):
             if col not in have:        # 예전 DB 이전
                 self.db.execute(f"ALTER TABLE trades ADD COLUMN {col} {typ}")
         self.mode = mode
@@ -71,12 +72,12 @@ class Journal:
     # ---------- trades ----------
     def open_trade(self, *, strategy, symbol, trade_date, planned_qty, stop, target,
                    sell_from: datetime, deadline: datetime, reason: str, now: datetime,
-                   scale_out: float = 1.0, trail_pct: float = 0.0) -> int:
+                   scale_out: float = 1.0, trail_pct: float = 0.0, session: str | None = None) -> int:
         cur = self._x("""INSERT INTO trades (strategy, symbol, mode, trade_date, status, planned_qty,
-                         stop, target, sell_from, deadline, reason, created, scale_out, trail_pct)
-                         VALUES (?,?,?,?, 'PENDING', ?,?,?,?,?,?,?,?,?)""",
+                         stop, target, sell_from, deadline, reason, created, scale_out, trail_pct, attempt_session)
+                         VALUES (?,?,?,?, 'PENDING', ?,?,?,?,?,?,?,?,?,?)""",
                       (strategy, symbol, self.mode, trade_date, planned_qty, stop, target,
-                       now_iso(sell_from), now_iso(deadline), reason, now_iso(now), scale_out, trail_pct))
+                       now_iso(sell_from), now_iso(deadline), reason, now_iso(now), scale_out, trail_pct, session))
         return cur.lastrowid
 
     def trade(self, trade_id: int) -> dict:
