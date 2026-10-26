@@ -221,6 +221,29 @@ def test_tier_turnover_and_wake():
     assert r["metrics"]["wake"] and "wake" in r["signals"]
 
 
+def test_ranked_does_not_rank_falling_stock_above_rising_one(tmp_path):
+    """'거래 급증'(wake)은 방향을 안 본다 — 지금 떨어지는 중이어도 뜬다. 떨어지는 종목이 일봉 점수만 높다고
+    (지금) 오르는 종목보다 급등 후보 맨 위로 오면 안 된다."""
+    from pennybot.precursor import ranked
+    col, st, sent = make(tmp_path)
+    d0 = "2026-10-23"
+    st.put_precursor_daily([
+        {"d0": d0, "symbol": "DOWN", "score": 9, "close": 1.0, "created": "x",
+         "signals": "[]", "metrics": "{}"},
+        {"d0": d0, "symbol": "UP", "score": 4, "close": 1.0, "created": "x",
+         "signals": "[]", "metrics": "{}"},
+    ])
+    st.put_precursor_live([
+        {"d0": d0, "symbol": "DOWN", "ts": "x", "alerted": "x",
+         "signals": json.dumps(["wake"]), "metrics": json.dumps({"chg": -12.0})},
+        {"d0": d0, "symbol": "UP", "ts": "x", "alerted": "x",
+         "signals": json.dumps(["wake"]), "metrics": json.dumps({"chg": 8.0})},
+    ])
+    r = ranked(str(tmp_path / "m.db"), 10)
+    syms = [x["symbol"] for x in r["rows"]]
+    assert syms.index("UP") < syms.index("DOWN")
+
+
 def test_chart_analysis_factors():
     from pennybot.chartlib import analyze
     bars = [{"d": f"d{i:03d}", "open": 1, "high": 1.05, "low": 0.95, "close": 1.0, "volume": 1e5} for i in range(60)]

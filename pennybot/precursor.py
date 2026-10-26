@@ -419,7 +419,10 @@ def ranked(db_path: str, limit: int = 50) -> dict:
         r["early20"] = r["symbol"] in early20
         if r["early20"]:
             r["tier"] = max(r["tier"], 1)
-    rows.sort(key=lambda r: (-len(set(r["live"]) & {"wake", "creep"}), -r["tier"], -r["score"], -(r["metrics"].get("vol_ratio") or 0)))
+    # '거래 급증'(wake)은 방향을 안 본다 — 폭락하면서도 거래량이 터지면 뜬다. 지금 내려가는 중인데
+    # '거래 급증·매수세 유입'으로 맨 위에 뜨는 걸 막으려고, 지금 오르고 있을 때만(live_m.chg > 0) 그 우선순위를 준다.
+    rows.sort(key=lambda r: (-(len(set(r["live"]) & {"wake", "creep"}) if (r["live_m"].get("chg") or 0) > 0 else 0),
+                             -r["tier"], -r["score"], -(r["metrics"].get("vol_ratio") or 0)))
     total = len(rows)
     rows = rows[:limit]
     con = sqlite3.connect(ro_uri(db_path), uri=True)
