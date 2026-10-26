@@ -93,6 +93,17 @@ def test_token_shared_across_clients_and_401_reuses_newer(tmp_path):
     assert sc.calls[-1][4]["Authorization"] == "Bearer tok1"
 
 
+def test_repeated_401_within_cooldown_does_not_reissue_again(tmp_path):
+    """10/23 사고 재현 방지: 방금 재발급했는데 또 401 이면, 토큰 문제가 아닐 수 있으니 재발급 없이 같은
+    토큰으로 한 번 더 시도한다 (프로세스끼리 서로 토큰을 무효화하며 20~40초 간격으로 383번 재발급된 사고)."""
+    ok = Resp(200, {"result": []})
+    routes = {("GET", "/api/v1/accounts"): [Resp(401, {"error": {}}), Resp(401, {"error": {}}), ok]}
+    c, s, _ = client(tmp_path, routes)
+    c.accounts()
+    assert s.tokens_issued == 1            # 두 번째 401 에서는 재발급을 건너뜀
+    assert s.calls[-1][4]["Authorization"] == "Bearer tok1"
+
+
 def test_create_retried_with_same_body_but_cancel_not(tmp_path):
     ok = Resp(200, {"result": {"orderId": "o1"}})
     c, s, _ = client(tmp_path, {("POST", "/api/v1/orders"): [Resp(503, {"error": {"code": "x"}}), ok],

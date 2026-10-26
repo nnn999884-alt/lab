@@ -135,6 +135,7 @@ class TossClient:
         self.s = session or requests.Session()
         self.tokens = TokenStore(Path(token_path))
         self._token: str | None = None
+        self._last_issue: float | None = None
         self._lock = threading.Lock()
         self._buckets: dict[str, _Bucket] = {}
         self._sleep, self._clock = sleep, clock
@@ -160,6 +161,13 @@ class TossClient:
                 if not force or cached[0] != self._token:
                     self._token = cached[0]
                     return self._token
+            # 10/23 사고: 401 을 받을 때마다 무조건 재발급하다 보니, 토큰 자체는 멀쩡한데 다른 이유로 401 이
+            # 반복되는 경우(예: 특정 요청만 계속 거부)에도 수집기·봇이 서로 상대 토큰을 계속 무효화시키며
+            # 20~40초 간격으로 383번 재발급되는 연쇄가 났다 (state/logs 10/23). 방금 막 재발급했는데 또
+            # force 가 오면, 토큰 문제가 아닐 가능성이 높으므로 재발급 없이 그 토큰을 한 번 더 쓴다.
+            if force and self._last_issue is not None and self._clock() - self._last_issue < 10:
+                log.warning("401 반복 (10초 안에 재발급함) → 토큰 문제가 아닐 수 있어 재발급 건너뜀")
+                return self._token
             # 재발급은 프로세스 사이에서 한 번에 하나만: 수집기·봇이 동시에 받으면 서로의 토큰을 무효로 만든다
             with self.tokens.issuing():
                 cached = self.tokens.load()
@@ -167,6 +175,7 @@ class TossClient:
                     self._token = cached[0]            # 기다리는 사이 다른 프로세스가 받아 둠
                     return self._token
                 self._token = self._issue_token()
+                self._last_issue = self._clock()
             return self._token
 
     # ---------- 공통 요청 ----------
