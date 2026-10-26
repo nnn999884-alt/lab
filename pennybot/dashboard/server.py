@@ -363,7 +363,11 @@ class Data:
         return self.t("SELECT * FROM trades WHERE status IN ('CLOSED','CANCELED') ORDER BY id DESC LIMIT ?", (limit,))
 
     def signals(self, limit: int) -> list[dict]:
-        return self.t("SELECT * FROM signals ORDER BY ts DESC, ok DESC, score DESC LIMIT ?", (limit,))
+        rows = self.t("SELECT * FROM signals ORDER BY ts DESC, ok DESC, score DESC LIMIT ?", (limit,))
+        names = self._names()
+        for r in rows:
+            r["name"] = names.get(r["symbol"])
+        return rows
 
     # ---------- 수집 상태 ----------
     def collector(self) -> dict:

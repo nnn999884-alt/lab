@@ -182,6 +182,21 @@ tbody tr { cursor: pointer; } tbody tr:hover td { background: var(--panel-2); }
 .kpi .n { font-size: 11.5px; color: var(--text-3); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .card.brief-wrap, .card.shorts-wrap, .card.bot-wrap { padding: 0; margin-bottom: 14px; }
+.card.pick-wrap { margin-bottom: 14px; }
+.card.pick-wrap h2 { margin-bottom: 8px; }
+.pick-it { display: grid; grid-template-columns: 140px auto minmax(0, 1fr); align-items: baseline; gap: 10px; padding: 7px 8px; border-radius: 6px; cursor: pointer; font-size: 12.5px; }
+.pick-it:hover { background: var(--panel-2); }
+.pick-it + .pick-it { border-top: 1px solid var(--line-2); }
+.pick-it.pos { background: var(--up-soft); } .pick-it.pos:hover { background: var(--up-soft); filter: brightness(1.1); }
+.pick-it.muted { opacity: .65; }
+.pick-sym { font-weight: 700; font-family: var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pick-r { color: var(--text-3); white-space: nowrap; }
+.pick-why { color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+@media (max-width: 700px) {
+  .pick-it { grid-template-columns: 1fr auto; row-gap: 2px; }
+  .pick-r { grid-column: 2; text-align: right; }
+  .pick-why { grid-column: 1 / -1; white-space: normal; }
+}
 td .chip, td .ev-kind, td .det-res, td .oh-tag { vertical-align: middle; }
 .brief-wrap > summary, .shorts-wrap > summary, .bot-wrap > summary { list-style: none; margin: 0; padding: 10px 14px; display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; color: var(--text); }
 .brief-wrap > summary::-webkit-details-marker, .shorts-wrap > summary::-webkit-details-marker, .bot-wrap > summary::-webkit-details-marker { display: none; }
@@ -601,6 +616,10 @@ table.ca-tbl tr.off .ca-fill { opacity: .35; }
       <div class="kpi"><div class="k">오늘 신호</div><div class="v" id="k-alerts">-</div><div class="n" id="k-alerts-n"></div></div>
       <div class="kpi"><div class="k">가상 매매</div><div class="v" id="k-vs">-</div><div class="n" id="k-vs-n"></div></div>
       <div class="kpi"><div class="k">급등 후보</div><div class="v" id="k-picks">-</div><div class="n" id="k-picks-n"></div></div>
+    </section>
+    <section class="card pick-wrap" id="pick-wrap">
+      <h2><i class="ic ic-target" aria-hidden="true"></i>지금 봇이 보는 것</h2>
+      <div id="pick-body"></div>
     </section>
     <details class="card brief-wrap" id="brief-wrap">
       <summary><span class="bot-title"><i class="ic ic-news" aria-hidden="true"></i>오늘 브리핑</span><span class="sub" id="brief-sub" style="margin:0 0 0 8px"></span></summary>
@@ -1990,6 +2009,45 @@ function kpiFeed(rows) {
   $("k-alerts-n").textContent = `뉴스 정지 ${today.filter(e => e.kind === "halt" && e.text.includes("뉴스")).length} · 급등 ${n("spike_up")} · 랭킹 ${today.filter(e => e.kind.startsWith("rank:")).length}`;
 }
 
+/* ---------- 지금 봇이 보는 것: 가장 최근 스캔에서 실제로 사려 했는지/왜 안 샀는지 ---------- */
+async function loadPick() {
+  const rows = await api("/api/signals?limit=300");
+  if (unchanged("pick", rows)) return;
+  const box = $("pick-body"); box.replaceChildren();
+  if (!rows.length) { box.appendChild(mk("div", "empty", "아직 스캔 기록 없음 — 데이마켓·프리마켓·정규장 중에만 돕니다")); return; }
+  const latest = rows[0].ts;
+  const batch = rows.filter(r => r.ts === latest);
+  const by = {};
+  batch.forEach(r => { (by[r.symbol] ||= []).push(r); });
+  const buys = [], blocked = [], rejected = [];
+  Object.values(by).forEach(rs => {
+    const risk = rs.find(r => !r.ok && r.reason.startsWith("리스크:"));
+    const pass = rs.find(r => r.ok);
+    if (pass && risk) blocked.push({ ...pass, reason: risk.reason });
+    else if (pass) buys.push(pass);
+    else rejected.push(rs.sort((a, b) => b.score - a.score)[0]);
+  });
+  const item = (r, tone_) => {
+    const it = mk("div", "pick-it" + (tone_ ? " " + tone_ : ""));
+    it.append(mk("div", "pick-sym", r.symbol + (r.name ? ` · ${r.name}` : "")),
+             mk("div", "pick-r", `${STRAT[r.strategy] || r.strategy} · ${fmtPx(r.price)}`),
+             mk("div", "pick-why", r.reason));
+    it.onclick = () => { lookup(r.symbol); showTab("symbol"); };
+    return it;
+  };
+  const when = kst(latest) + " · " + (SESS[batch[0].session] || batch[0].session);
+  if (buys.length) {
+    box.append(mk("div", "sub", `🟢 ${when} · 조건 통과해서 매수 시도함`));
+    buys.forEach(r => box.appendChild(item(r, "pos")));
+  } else if (blocked.length) {
+    box.append(mk("div", "sub", `🟡 ${when} · 조건은 맞는데 리스크 관리에 막힘`));
+    blocked.forEach(r => box.appendChild(item(r)));
+  } else {
+    box.append(mk("div", "sub", `${when} · 지금 조건 통과한 종목 없음`));
+    rejected.sort((a, b) => b.score - a.score).slice(0, 3).forEach(r => box.appendChild(item(r, "muted")));
+  }
+}
+
 /* ---------- 가상 매매 기록 ---------- */
 const vret = r => { const px = r.status === "CLOSED" ? r.exit_price : r.last; return px && r.entry ? (px / r.entry - 1) * 100 : null; };
 async function loadVs() {                                   // 홈: 요약 + 보유·대기
@@ -2504,7 +2562,7 @@ try { const t = localStorage.getItem("theme"); if (t) document.documentElement.d
 
 // 보이는 탭의 데이터만 받는다 (휴대폰 데이터·배터리 절약)
 const TAB_JOBS = {
-  home: () => [loadBrief(), loadDet(), loadFeed(), loadVs(), loadPre()],
+  home: () => [loadPick(), loadBrief(), loadDet(), loadFeed(), loadVs(), loadPre()],
   symbol: () => [loadShorts()],
   trade: () => [loadAccount(), loadVTrade()],
   settings: () => [loadSettings()],
