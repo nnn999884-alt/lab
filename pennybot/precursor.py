@@ -177,7 +177,8 @@ def money_at(bars: list[tuple], k: int, prev_close: float, shares: float | None)
 
 def alert_grade(ts: str, tier_: int, price: float | None, vol_ratio: float | None) -> tuple[str, list[str]]:
     """급등 전조 알림 등급 (장중 재학습 결과, 첫 1분 터짐 476건): 프리 06~09시 터짐(+30% 먼저 41% vs 정규장 8%),
-    ★★★, $2 미만, 전날 거래량 50배+ 일수록 이어지는 경우가 많았다. 둘 이상이면 A, 하나면 B, 없으면 C."""
+    ★★★, $5 미만, 전날 거래량 50배+ 일수록 이어지는 경우가 많았다. 둘 이상이면 A, 하나면 B, 없으면 C.
+    (06~09시는 더는 필수 조건이 아니라 등급에만 보너스로 반영 — presurge() 참고)"""
     from .sessions import ET
     t = datetime.fromisoformat(ts).astimezone(ET)
     why = []
@@ -185,23 +186,24 @@ def alert_grade(ts: str, tier_: int, price: float | None, vol_ratio: float | Non
         why.append("프리 06~09시")
     if tier_ == 3:
         why.append("★★★")
-    if price and price < 2:
-        why.append("$2 미만")
+    if price and price < 5:
+        why.append("$5 미만")
     if (vol_ratio or 0) >= 50:
         why.append("전날 거래량 50배+")
     return ("A" if len(why) >= 2 else "B" if why else "C"), why
 
 
-def presurge(ts: str, tier_: int, price: float | None, vol_ratio: float | None, chg: float | None) -> tuple[bool, list[str]]:
-    """'진짜 급등 전조' — 거래가 붙었다는 것만으로는 안 보내고, 장중 재학습(첫 1분 터짐 476건)에서 성과가 확인된 조합만:
-    동부 06~09시에 터지고 전날 대비 +5%↑ 이면서 ($2 미만 · 전날 거래량 50배+ · ★★★ 중 하나).
-    이 조합은 +30% 가 −20% 보다 먼저 온 비율 약 50% (앞 기간 59~70% / 뒤 42~45%), 전체 평균은 26%."""
-    from .sessions import ET
-    t = datetime.fromisoformat(ts).astimezone(ET)
-    why = [w for ok, w in ((price and price < 2, "$2 미만"), ((vol_ratio or 0) >= 50, "전날 거래량 50배+"),
+def presurge(ts: str, tier_: int, price: float | None, vol_ratio: float | None, chg: float | None,
+            session: str | None = None) -> tuple[bool, list[str]]:
+    """'진짜 급등 전조' — 거래가 붙었다는 것만으로는 안 보내고, 정규장·애프터마켓이 아니고(정규장 터짐은
+    +30% 먼저 올 확률이 8%로 훨씬 낮았음) 전날 대비 +5%↑ 이면서 ($5 미만 · 전날 거래량 50배+ · ★★★ 중 하나) 일 때만 보낸다.
+    원래는 동부 06~09시 터짐만 쳤는데($2 미만 포함 조합 +30% 먼저 약 50%) — RENT 사례(그 시간대 밖에서 터져서
+    급등 전조를 못 받음)를 계기로 '정규장만 아니면 됨'으로 풀었다. 새 조건의 적중률은 아직 재검증 전이라 지켜봐야 한다."""
+    from .sessions import AFTER, REGULAR
+    why = [w for ok, w in ((price and price < 5, "$5 미만"), ((vol_ratio or 0) >= 50, "전날 거래량 50배+"),
                            (tier_ == 3, "★★★")) if ok]
-    ok = 6 <= t.hour < 9 and (chg or 0) >= 5 and bool(why)
-    return ok, (["프리 06~09시"] + why) if ok else why
+    ok = session not in (REGULAR, AFTER) and (chg or 0) >= 5 and bool(why)
+    return ok, why
 
 
 def _head(prefix: str, sym: str, name: str | None, suffix: str = "") -> str:
@@ -230,7 +232,7 @@ def signal_text(sym: str, name: str | None, lv: dict, session_ko: str, tags: lis
         f"💵 {px(m.get('price'))} ({pct(m.get('chg'))}) · {session_ko}",
         f"3분 {money_s(m.get('dollar_3m'))} · 오늘 {money_s(m.get('dollar_today'))}",
         *([f"🏷 {' · '.join(tags)}"] if tags else []),
-        "급등 전조 조건(프리 06~09시 + $2 미만/거래량 50배+/★★★)은 아님 — 참고용",
+        "급등 전조 조건($5 미만/거래량 50배+/★★★ 중 하나 + 전날 대비 +5%↑)은 아님 — 참고용",
     ])
 
 

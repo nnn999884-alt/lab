@@ -1097,7 +1097,7 @@ class Collector:
         m = lv["metrics"]
         dm = json.loads(met or "{}")
         m["presurge"], why = presurge(iso(now), tier_, m.get("price") and m["price"] / (1 + (m.get("chg") or 0) / 100),
-                                      dm.get("vol_ratio"), m.get("chg"))
+                                      dm.get("vol_ratio"), m.get("chg"), session)
         if not m["presurge"]:
             if self.notifier and self._on("burst"):
                 link = None
