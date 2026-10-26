@@ -70,8 +70,9 @@ def quote_check(sym: str, ctx: Ctx):
     b = ctx.mv.book(sym)
     if not b.has_quote:
         return b, "데이마켓 호가 없음"
-    if b.spread_pct > ctx.tcfg.max_spread_pct:
-        return b, f"스프레드 {b.spread_pct:.1f}%"
+    cap = ctx.tcfg.spread_cap(ctx.session)
+    if b.spread_pct > cap:
+        return b, f"스프레드 {b.spread_pct:.1f}% (세션 기준 {cap:.1f}%)"
     return b, None
 
 
@@ -122,10 +123,11 @@ class Strategy:
                     sell_from=min(sell_from, deadline), deadline=deadline,
                     scale_out=p.get("scale_out_pct", 1.0), trail_pct=p.get("trail_pct", 0.0))
 
-    @staticmethod
-    def _entry_price(b) -> float:
-        # 스프레드가 좁으면 ask 로 바로, 넓으면 중간가 근처 지정가
-        return b.ask if b.spread_pct <= 1.0 else min(b.ask, b.mid * 1.002)
+    def _entry_price(self, b) -> float:
+        # 스프레드가 좁으면 ask 로, 넓으면 중간가 근처 지정가 → 거기서 entry_discount_pct 만큼 더 낮게 건다
+        # (체결 확률은 낮아지지만 더 싸게 산다 — 안 붙으면 entry_ttl_seconds 뒤 취소하고 다음 스캔에서 다시 본다)
+        ref = b.ask if b.spread_pct <= 1.0 else min(b.ask, b.mid * 1.002)
+        return ref * (1 - self.p.get("entry_discount_pct", 0.0) / 100)
 
     def _sell_from(self, ctx: Ctx) -> datetime:
         return ctx.regular_open - timedelta(minutes=self.p["sell_before_open_minutes"])
@@ -216,7 +218,7 @@ class DilutionCatalyst(Strategy):
             if why:
                 out.append(self._reject(sym, why, b.mid))
                 continue
-            out.append(self._plan(ctx, sym, b.ask,
+            out.append(self._plan(ctx, sym, self._entry_price(b),
                                   f"{', '.join(LABEL[h] for h in sorted(hits))} "
                                   f"({SESSION_KO.get(f['session'], f['session'])} 공개), 반영 {run:+.1f}%, {note}",
                                   score=20 + (10 if "ATM_TERMINATED" in hits else 0) - run,

@@ -128,7 +128,12 @@ class TradingConfig:
     paper_cash: float = 2000.0
     min_price: float = 0.50
     max_price: float = 5.00
-    max_spread_pct: float = 3.0          # 데이마켓은 스프레드가 넓어 매매 기준보다 조금 느슨하게
+    max_spread_pct: float = 3.0          # 세션별 설정에 없는 세션의 기본값
+    # 세션마다 참가자·유동성이 다르다. 정규장 유동성을 100 이라 하면 프리장 80·애프터 50·데이마켓(한국 낮,
+    # 미국인 거의 없이 알고리즘 위주) 30 정도로 보고, 유동성이 낮을수록 스프레드 상한을 느슨하게 (반비례).
+    # 숫자는 전부 백테스트 전 초안, 조정 필요.
+    max_spread_pct_by_session: dict = field(default_factory=lambda: {
+        "REGULAR": 1.5, "PRE": 2.0, "AFTER": 3.0, "DAY": 5.0})
     entry_cutoff_minutes: int = 30       # 데이마켓 종료 30분 전부터 신규 매수 중단
     scan_minutes: int = 5            # (예전 설정, scan_seconds 가 우선)
     scan_seconds: int = 15           # 전략 스캔 간격 (후보 호가는 웹소켓 실시간)
@@ -175,6 +180,7 @@ class TradingConfig:
                              "min_runner_pct": 30.0, "min_close_loc": 0.6, "min_rotation": 0.3,
                              "min_day_change_pct": -8.0, "max_day_change_pct": 15.0,
                              "max_dilution_score": 45, "take_profit_pct": 12.0, "stop_loss_pct": 10.0,
+                             "entry_discount_pct": 3.0,  # 신호가 뜬 가격보다 3% 낮게 지정가 (체결률은 낮아지지만 더 싸게)
                              "gap_risk_pct": 35.0, "sell_before_open_minutes": 30,
                              "exit_after_open_minutes": 30,
                              # 익절가에서 절반만 팔고, 나머지는 고점 대비 −8% 트레일링 (강제 청산 시각까지)
@@ -183,18 +189,21 @@ class TradingConfig:
                              # 다음 날 시가 수익률이 뚜렷이 나빴음 (오버나이트라 특히 중요) → 그런 날은 거름
                              "max_short_ratio": 0.5, "max_short_surge": 1.5},
         "dilution_catalyst": {"enabled": True, "budget_pct": 0.30, "max_positions": 3,
-                              "max_runup_pct": 15.0, "max_dilution_score": 50,
+                              "max_runup_pct": 15.0, "max_dilution_score": 50, "entry_discount_pct": 3.0,
                               "take_profit_pct": 10.0, "stop_loss_pct": 8.0, "gap_risk_pct": 25.0,
                               "sell_before_open_minutes": 90},
         "day_ignition": {"enabled": True, "budget_pct": 0.30, "max_positions": 3,
                          "min_insider_usd": 10000, "min_move_pct": 5.0, "max_move_pct": 25.0,
-                         "max_pullback_pct": 4.0, "max_dilution_score": 50,
+                         "max_pullback_pct": 4.0, "max_dilution_score": 50, "entry_discount_pct": 3.0,
                          "take_profit_pct": 10.0, "stop_loss_pct": 7.0, "gap_risk_pct": 25.0,
                          "sell_before_open_minutes": 150},
         "day_dip": {"enabled": False, "budget_pct": 0.10, "max_positions": 2,
                     "dip_pct": 12.0, "stop_loss_pct": 8.0, "retrace": 0.5, "take_profit_pct": 10.0,
                     "no_news_days": 3, "stall_minutes": 10, "gap_risk_pct": 25.0},
     })
+
+    def spread_cap(self, session: str) -> float:
+        return self.max_spread_pct_by_session.get(session, self.max_spread_pct)
 
 
 @dataclass

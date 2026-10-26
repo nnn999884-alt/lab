@@ -58,6 +58,7 @@ def tcfg():
     t = TradingConfig(paper_cash=10_000)
     t.strategies["dilution_catalyst"]["enabled"] = False
     t.strategies["day_ignition"]["enabled"] = False
+    t.strategies["runner_overnight"]["entry_discount_pct"] = 0.0   # 아래 테스트는 즉시 체결을 가정
     return t
 
 

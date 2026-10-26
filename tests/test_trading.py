@@ -80,6 +80,7 @@ def env(tmp_path):
     tcfg = TradingConfig(paper_cash=10_000)
     tcfg.strategies["dilution_catalyst"]["enabled"] = False
     tcfg.strategies["day_ignition"]["enabled"] = False
+    tcfg.strategies["runner_overnight"]["entry_discount_pct"] = 0.0   # 아래 테스트는 즉시 체결을 가정 (할인은 따로 테스트)
     ex = PaperExchange(market, 10_000, tmp_path / "paper.json")
     j = Journal(tmp_path / "t.db")
     ctl = Control(tmp_path)
@@ -129,6 +130,26 @@ def test_full_cycle_day_buy_premarket_sell(env):
     assert t["status"] == "CLOSED" and t["exit_reason"] == "매도 구간" and t["exit_session"] == "PRE"
     assert t["pnl"] > 0
     assert j.q("SELECT COUNT(*) AS n FROM signals")[0]["n"] >= 1
+
+
+def test_entry_discount_needs_price_pullback_to_fill(env):
+    """entry_discount_pct=3: 신호 가격보다 3% 낮게 지정가를 걸고, 그 가격까지 안 내려오면 안 붙는다."""
+    tr, market, mv, clock, j, ctl, ex = env
+    tr.tcfg.strategies["runner_overnight"]["entry_discount_pct"] = 3.0
+    market.set("PEN", 1.03, 1.035)
+    tr.tick()
+    o = j.q("SELECT price FROM orders WHERE purpose='entry'")[0]
+    assert o["price"] == pytest.approx(1.035 * 0.97, rel=1e-6)
+    assert j.q("SELECT status FROM trades")[0]["status"] == "PENDING"   # 3% 안 내려와서 아직 미체결
+    market.set("PEN", 1.00, 1.003)            # ask(1.003) 가 지정가(1.035*0.97≈1.00395) 아래로 내려옴
+    tr.tick()
+    assert j.q("SELECT status FROM trades")[0]["status"] == "OPEN"
+
+
+def test_spread_cap_varies_by_session():
+    tcfg = TradingConfig()
+    assert tcfg.spread_cap("REGULAR") < tcfg.spread_cap("PRE") < tcfg.spread_cap("AFTER") < tcfg.spread_cap("DAY")
+    assert tcfg.spread_cap("CLOSED") == tcfg.max_spread_pct          # 세션별 설정에 없으면 기본값
 
 
 def test_unfilled_entry_cancelled_at_session_change(env):
