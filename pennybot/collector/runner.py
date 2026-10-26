@@ -1297,8 +1297,12 @@ class Collector:
         pc = store.query("SELECT close FROM daily_bars WHERE symbol=? AND d=?", (sym, d0))
         pc = pc[0][0] if pc and pc[0][0] else price
         sh = self._rt_shares.get(sym)
-        tag = f"⚡ 실시간 1분 {money_s(d60)}" + (f" · 회전율 {v60 / sh * 100:.1f}%" if sh else "")
-        log.info("실시간 거래 터짐 %s 60초 $%.0f 회전율 %s", sym, d60, f"{v60 / sh * 100:.2f}%" if sh else "-")
+        turn = v60 / sh * 100 if sh else None
+        # 발행주식 많은 종목은 1분 회전율이 1% 미만으로 자주 나와서, 소수점 1자리면 '0.0%'(진짜 0처럼 보임)가 돼
+        # 버린다 → 1% 미만일 때는 2자리로.
+        tag = f"⚡ 실시간 1분 {money_s(d60)}" + (f" · 회전율 {turn:.2f}%" if turn is not None and turn < 1 else
+                                                f" · 회전율 {turn:.1f}%" if turn is not None else "")
+        log.info("실시간 거래 터짐 %s 60초 $%.0f 회전율 %s", sym, d60, f"{turn:.2f}%" if turn is not None else "-")
         self._fast_confirm(now, trade_date, session, store, d0, sym, pc, check=False, tags=[tag])
 
     def _watch_now(self, symbols, store=None) -> None:
@@ -1498,7 +1502,9 @@ class Collector:
                 if not fresh(p["trig_k"]) and not fresh(p["fill_k"]):
                     continue
                 b = today[p["trig_k"]]
-                turn = f" · 1분 회전율 {b[5] / shares * 100:.1f}%" if shares else ""
+                turn_v = b[5] / shares * 100 if shares else None
+                turn = f" · 1분 회전율 {turn_v:.2f}%" if turn_v is not None and turn_v < 1 else \
+                    f" · 1분 회전율 {turn_v:.1f}%" if turn_v is not None else ""
                 reason = (f"1분 거래대금 ${b[4] * b[5] / 1e3:.0f}K{turn} · {datetime.fromisoformat(b[0]).astimezone(ET):%H:%M} ET"
                           f" · 신호가 {b[4]:.4g} (전날 대비 {(b[4] / prev_close - 1) * 100:+.0f}%) · 전조 {score}점")
                 filled = p["fill_k"] is not None

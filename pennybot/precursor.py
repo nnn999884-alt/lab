@@ -338,7 +338,8 @@ def alert_text(sym: str, name: str | None, day: dict, lv: dict, session_ko: str,
         f"현재 상태: {j['state']}",
         f"타이밍: {j['timing']}",
         f"거래 흐름: {j['flow']} (1시간 거래량 {m.get('vol_x', 0):.1f}배 · 오늘 {money_s(m.get('dollar_today'))})",
-        *( [f"회전율: 오늘 {m.get('vol_today', 0) / shares * 100:.1f}% · 3분 {m.get('vol_3m', 0) / shares * 100:.2f}% (발행 {shares / 1e6:.1f}M주)"]
+        *( [f"회전율: 오늘 {m.get('vol_today', 0) / shares * 100:{'.2f' if m.get('vol_today', 0) / shares * 100 < 1 else '.1f'}}%"
+            f" · 3분 {m.get('vol_3m', 0) / shares * 100:.2f}% (발행 {shares / 1e6:.1f}M주)"]
            if shares and m.get('vol_today', 0) / shares * 100 <= MAX_TURNOVER else [] ),
         *( [f"호가: 매도 +10% 안 {money_s(m['ask10'])}"
              + (f" · 3분 거래대금 {money_s(m.get('dollar_3m'))} → {'얇음 ✅' if m['ask10'] < (m.get('dollar_3m') or 0) else '두꺼움'}")]
@@ -498,7 +499,7 @@ def daily_list_text(db_path: str, n: int = 10, dashboard: str | None = None) -> 
         star = f" · {'★' * x['tier']}" if x.get("tier") else ""
         L.append(f"{i}. {x['symbol']} {x.get('name') or ''}{star} · {x['score']}점 · {px(x['close'])}")
         L.append(f"   고점 대비 {pct(m.get('dd60'))} · 전날 거래량 {times(m.get('vol_ratio'))}"
-                 + (f" · 회전율 {x['turnover_d0']:.1f}%" if x.get("turnover_d0") is not None else "")
+                 + (f" · 회전율 {x['turnover_d0']:{'.2f' if x['turnover_d0'] < 1 else '.1f'}}%" if x.get("turnover_d0") is not None else "")
                  + (f" · 최근 급등 {m['last_spike_d'][5:]}" if m.get("last_spike_d") else ""))
         if vol or tags:
             L.append("   🏷 " + " · ".join(vol + tags))
