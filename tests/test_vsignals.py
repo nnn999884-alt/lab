@@ -65,7 +65,7 @@ def test_virtual_limit_order_fill_and_take_profit(tmp_path):
     px = [0.9] * 3 + [1.0, 1.10]
     col._vtrade(T0, "2026-10-22", "PENX", 9, 0.9, bars_of(px), None, "PRE")
     assert st.query("SELECT status, round(entry, 3), strat FROM vsignals")[0] == ("ORDER", 0.864, "S1")   # VWAP 0.96 × 0.9
-    assert sent.msgs[-1][0].startswith("🧪 [전략1 VWAP 눌림] 가상 지정가 주문 (PENX · 펜엑스)") and "VWAP −10%" in sent.msgs[-1][0]
+    assert sent.msgs[-1][0].startswith("🧪 [전략1 VWAP 눌림] 가상 지정가 주문 · PENX(펜엑스)") and "VWAP −10%" in sent.msgs[-1][0]
     col._vtrade(T0, "2026-10-22", "PENX", 9, 0.9, bars_of(px + [0.95]), None, "PRE")   # 안 닿음 → 지정가만 VWAP 따라
     assert st.query("SELECT status, round(entry, 3) FROM vsignals")[0] == ("ORDER", 0.863) and len(sent.msgs) == 1
     px += [0.95, 0.85]
@@ -80,7 +80,7 @@ def test_virtual_limit_order_fill_and_take_profit(tmp_path):
     status, reason = st.query("SELECT status, exit_reason FROM vsignals")[0]
     assert status == "CLOSED" and reason == "익절 +10%"
     text = sent.msgs[-1][0]
-    assert text.startswith("🔵 [전략1 VWAP 눌림] 가상 매도 (PENX · 펜엑스) · 익절 +10%") and "최고 +10.6% (매수 1시간 54분 뒤)" in text
+    assert text.startswith("🔵 [전략1 VWAP 눌림] 가상 매도 · PENX(펜엑스) · 익절 +10%") and "최고 +10.6% (매수 1시간 54분 뒤)" in text
     col._vtrade(T0, "2026-10-22", "PENX", 9, 0.9, bars_of(px), None, "PRE")             # 하루 한 번
     assert st.query("SELECT COUNT(*) FROM vsignals")[0][0] == 1
 
@@ -200,7 +200,7 @@ def test_live_money_signal_and_ask_depth():
     lv["metrics"]["ask10"] = 10800.0
     text = alert_text("PENX", None, {"score": 7, "signals": [], "metrics": {"dd60": -80, "spikes60": 1, "vol_ratio": 5}},
                       lv, "프리마켓")
-    assert "호가: 매도 +10% 안" in text and "얇음 ✅" in text
+    assert "호가 매도 +10% 안" in text and "얇음 ✅" in text
 
 
 def test_day_bars_backfills_once_then_merges(tmp_path):
@@ -353,10 +353,10 @@ def test_burst_sends_signal_or_presurge(tmp_path):
                                             "vol_x": 8, "grade": "A", "grade_why": []}}
     t4 = datetime(2026, 10, 23, 8, 0, tzinfo=timezone.utc)                # 04:00 ET → 짧은 신호
     col._alert(st, t4, "PRE", "PENX", 7, "[]", json.dumps({"dd60": -80, "vol_ratio": 60}), lv, 0, ["⚡ 실시간"])
-    assert sent.msgs[-1][0].startswith("📶 거래 터짐 (PENX · 펜엑스)")
+    assert sent.msgs[-1][0].startswith("📶 거래 터짐 · PENX(펜엑스)")
     t7 = datetime(2026, 10, 23, 11, 0, tzinfo=timezone.utc)               # 07:00 ET + $1 + 60배 → 급등 전조
     col._alert(st, t7, "PRE", "PENX", 7, "[]", json.dumps({"dd60": -80, "vol_ratio": 60, "spikes60": 2}), lv, 0, ["⚡ 실시간"])
-    assert sent.msgs[-1][0].startswith("🚨 급등 전조 (PENX · 펜엑스)") and "+30% 선도달 약 50%" in sent.msgs[-1][0]
+    assert sent.msgs[-1][0].startswith("🚨 급등 전조 · PENX(펜엑스)") and "+30% 선도달 약 50%" in sent.msgs[-1][0]
 
 
 def test_report_counts_rejected_symbols_once():

@@ -140,7 +140,7 @@ def test_realtime_reaccel_after_alert(tmp_path):
     path += [(1.1, 2.0, 1.9), (1.9, 1.9, 1.7), (1.7, 1.7, 1.6), (1.6, 1.62, 1.62), (1.62, 1.8, 1.8)]
     col.clock = lambda: T0 + td(minutes=9)
     col._rt_alert(st, "PENX", 90000.0, 80000.0, 1.8)
-    assert len(alerts()) == 2 and alerts()[-1].startswith("🔁 재가속 (PENX · 펜엑스) — 오늘 1번째")
+    assert len(alerts()) == 2 and alerts()[-1].startswith("🔁 재가속 · PENX(펜엑스) — 오늘 1번째")
     assert st.query("SELECT COUNT(*) FROM events WHERE kind='reaccel'")[0][0] == 1
     col.clock = lambda: T0 + td(minutes=12)
     col._rt_alert(st, "PENX", 90000.0, 80000.0, 1.85)          # 20분 안 → 또 안 보냄
@@ -200,7 +200,7 @@ def test_runners_and_approach_before_breakout(tmp_path):
     j2, = jobs()
     assert j2[3] == 2 and col._approach(st, T0 + td(minutes=1), "PRE", "PENX", 2.10, 2, j2[4], 1.0)
     msgs = [m[0] for m in sent.msgs if m[0].startswith(("👀", "🎯"))]
-    assert msgs[0].startswith("👀 이전 고점 접근 (PENX · 펜엑스) — 6일 전 +120% 급등주") and "$2.20" in msgs[0]
+    assert msgs[0].startswith("👀 이전 고점 접근 · PENX(펜엑스) — 6일 전 +120% 급등주") and "$2.20" in msgs[0]
     assert msgs[1].startswith("🎯 이전 고점 임박") and "+4.8%" in msgs[1]
     assert not col._approach(st, T0 + td(minutes=2), "PRE", "PENX", 2.12, 2, 9e4, 1.0)   # 단계마다 하루 한 번
     from pennybot.precursor import runner_tag

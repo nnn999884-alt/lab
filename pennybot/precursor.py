@@ -204,12 +204,18 @@ def presurge(ts: str, tier_: int, price: float | None, vol_ratio: float | None, 
     return ok, (["프리 06~09시"] + why) if ok else why
 
 
+def _head(prefix: str, sym: str, name: str | None, suffix: str = "") -> str:
+    """모든 알림의 첫 줄: '<이모지+제목> · <종목>(<이름>)<덧붙임>' 으로 통일한다 (messages.py 의 매매 알림과 같은 모양)."""
+    from .trading.messages import sym_s
+    return f"{prefix} · {sym_s(sym, name)}{suffix}"
+
+
 def signal_text(sym: str, name: str | None, lv: dict, session_ko: str, tags: list | None = None) -> str:
     """거래 터짐 신호 (세션 상관없이, 짧게). 급등 전조 조건까지 맞으면 alert_text 를 대신 보낸다."""
     from .trading.messages import money_s, pct, px
     m = lv["metrics"]
     return "\n".join([
-        f"📶 거래 터짐 ({sym}" + (f" · {name}" if name else "") + ")",
+        _head("📶 거래 터짐", sym, name),
         f"💵 {px(m.get('price'))} ({pct(m.get('chg'))}) · {session_ko}",
         f"3분 {money_s(m.get('dollar_3m'))} · 오늘 {money_s(m.get('dollar_today'))}",
         *([f"🏷 {' · '.join(tags)}"] if tags else []),
@@ -255,7 +261,7 @@ def reaccel_text(sym: str, name: str | None, r: dict, prev_close: float | None, 
     badge = "🔁" if n == 1 else "🔁🔁" if n == 2 else "🔥🔥🔥"
     lift = REACCEL_LIFT.get(min(n, 5))
     return "\n".join([
-        f"{badge} 재가속 ({sym}" + (f" · {name}" if name else "") + f") — 오늘 {n}번째",
+        _head(f"{badge} 재가속", sym, name, f" — 오늘 {n}번째"),
         f"💵 {px(r['price'])}" + (f" ({pct(chg)})" if chg is not None else "") + f" · {session_ko}",
         f"고점 {px(r['high'])} → 저점 {px(r['low'])} ({r['drop']:+.0f}%) → 지금 저점 대비 {r['bounce']:+.0f}%",
         f"앞 고점까지 {r['to_high']:+.0f}%" + (f" · 최근 2분 {money_s(dollar_2m)}" if dollar_2m else ""),
@@ -284,7 +290,7 @@ def approach_text(sym: str, name: str | None, r: dict, stage: int, price: float,
     _, _, _, title, past = APPROACH[stage - 1]
     chg = (price / prev_close - 1) * 100 if prev_close else None
     return "\n".join([
-        f"{title} ({sym}" + (f" · {name}" if name else "") + f") — {r['days']}일 전 +{r['run_chg']:.0f}% 급등주",
+        _head(title, sym, name, f" — {r['days']}일 전 +{r['run_chg']:.0f}% 급등주"),
         f"💵 {px(price)}" + (f" ({pct(chg)})" if chg is not None else "") + f" · {session_ko}",
         f"넘어야 할 고점 {px(r['level'])} ({r['run_d'][5:]} 급등 뒤 최고) · 남은 거리 {(r['level'] / price - 1) * 100:+.1f}%",
         f"급등 뒤 최저 {px(r['low'])} ({(r['low'] / r['level'] - 1) * 100:+.0f}%)" + (f" · 최근 1분 {money_s(dollar_60s)}" if dollar_60s else ""),
@@ -322,36 +328,27 @@ def judge(m: dict, dm: dict) -> dict:
 def alert_text(sym: str, name: str | None, day: dict, lv: dict, session_ko: str, dashboard: str | None = None,
                now=None, shares: float | None = None, tags: list | None = None) -> str:
     """텔레그램 알림: 첫 줄 = 무슨 일·종목, 다음 = 한눈 판단, 마지막 = 근거 숫자."""
-    from datetime import datetime, timezone
-    from .sessions import KST
     from .trading.messages import money_s, pct, px
     m, dm = lv["metrics"], day["metrics"]
     j = judge(m, dm)
     on = set(day["signals"]) - ({"vol_up"} if "vol_up_strong" in day["signals"] else set())
     on_d = [lab for k, lab in DAILY_LABELS.items() if k in on]
-    t = (now or datetime.now(timezone.utc)).astimezone(KST)
     g = m.get("grade")
+    turn = m.get("vol_today", 0) / shares * 100 if shares else None
     return "\n".join([
-        f"🚨 급등 전조 ({sym}" + (f" · {name}" if name else "") + ")",
-        "──────────────",
-        f"💵 현재 {px(m['price'])} ({pct(m['chg'])}) · {session_ko}",
-        f"현재 상태: {j['state']}",
-        f"타이밍: {j['timing']}",
-        f"거래 흐름: {j['flow']} (1시간 거래량 {m.get('vol_x', 0):.1f}배 · 오늘 {money_s(m.get('dollar_today'))})",
-        *( [f"회전율: 오늘 {m.get('vol_today', 0) / shares * 100:{'.2f' if m.get('vol_today', 0) / shares * 100 < 1 else '.1f'}}%"
-            f" · 3분 {m.get('vol_3m', 0) / shares * 100:.2f}% (발행 {shares / 1e6:.1f}M주)"]
-           if shares and m.get('vol_today', 0) / shares * 100 <= MAX_TURNOVER else [] ),
-        *( [f"호가: 매도 +10% 안 {money_s(m['ask10'])}"
-             + (f" · 3분 거래대금 {money_s(m.get('dollar_3m'))} → {'얇음 ✅' if m['ask10'] < (m.get('dollar_3m') or 0) else '두꺼움'}")]
-           if m.get("ask10") is not None else [] ),
-        f"3분 거래: {money_s(m.get('dollar_3m'))} · {m.get('vol_3m', 0):,.0f}주",
-        f"변동성 위험: {j['risk']} (하루 변동폭 {dm.get('range30') or 0:.0f}%)",
-        f"한줄 판단: {j['verdict']}",
-        "",
-        f"📉 차트 전조 {day['score']}점: " + " · ".join(on_d),
-        *( [f"🏷 {' · '.join(tags)}"] if tags else [] ),
-        f"   60일 고점 대비 {pct(dm.get('dd60'))} · 60일 급등 {dm.get('spikes60', '-')}회 · 전날 거래량 {times(dm.get('vol_ratio'))}",
-        f"⏱ 갱신: {t:%m.%d %H:%M:%S}",
+        _head("🚨 급등 전조", sym, name, f" [{g}등급]" if g else ""),
+        f"💵 {px(m['price'])} ({pct(m['chg'])}) · {session_ko} · {j['state']}",
+        f"🌊 거래 {j['flow']} (1시간 {m.get('vol_x', 0):.1f}배 · 오늘 {money_s(m.get('dollar_today'))})"
+        f" · 3분 {money_s(m.get('dollar_3m'))} · {m.get('vol_3m', 0):,.0f}주",
+        *([f"회전율 오늘 {turn:{'.2f' if turn < 1 else '.1f'}}% · 3분 {m.get('vol_3m', 0) / shares * 100:.2f}%"
+           f" (발행 {shares / 1e6:.1f}M주)"] if turn is not None and turn <= MAX_TURNOVER else []),
+        *([f"호가 매도 +10% 안 {money_s(m['ask10'])}"
+           + (f" · {'얇음 ✅' if m['ask10'] < (m.get('dollar_3m') or 0) else '두꺼움'}")]
+          if m.get("ask10") is not None else []),
+        f"📉 전조 {day['score']}점: " + " · ".join(on_d)
+        + f" · 60일 고점대비 {pct(dm.get('dd60'))} · 전날 거래량 {times(dm.get('vol_ratio'))}",
+        *([f"🏷 {' · '.join(tags)}"] if tags else []),
+        f"한줄: {j['verdict']} (변동성 위험 {j['risk']} · 하루 변동폭 {dm.get('range30') or 0:.0f}%)",
     ])
 
 
@@ -525,12 +522,10 @@ def vsignal_text(kind: str, sym: str, name: str | None, v: dict, cfg, session_ko
     from .vstrat import LIMIT_KO, STRATEGIES
     st = STRATEGIES.get(v.get("strat") or "", {})
     tag = f"[{st['name']}] " if st else ""
-    head = f"({sym}" + (f" · {name}" if name else "") + ")"
     if kind == "order":
         basis = LIMIT_KO.get(st.get("entry"), "지정가").format(dip=st.get("dip", ""))
         return "\n".join([
-            f"🧪 {tag}가상 지정가 주문 {head}",
-            "──────────────",
+            _head(f"🧪 {tag}가상 지정가 주문".strip(), sym, name),
             f"🧾 {px(v['entry'])} 에 매수 대기 ({basis}) · {st.get('minutes', 60)}분 유효 · {session_ko} · 실제 주문 아님",
             f"근거: {v['reason']}",
             "한줄 판단: 정규장 전에 거래가 터졌습니다. 추격하지 않고 털릴 때 받습니다.",
@@ -538,8 +533,7 @@ def vsignal_text(kind: str, sym: str, name: str | None, v: dict, cfg, session_ko
     if kind == "buy":
         e, tp, sl = v["entry"], v.get("tp") or st.get("tp", 10), v.get("sl") or st.get("sl", 35)
         return "\n".join([
-            f"🧪 {tag}가상 매수 체결 {head}",
-            "──────────────",
+            _head(f"🧪 {tag}가상 매수 체결".strip(), sym, name),
             f"💵 {px(e)} · {session_ko} · 실제 주문 아님",
             f"🎯 익절 {px(e * (1 + tp / 100))} (+{tp:g}%) · 🛑 손절 {px(e * (1 - sl / 100))} (−{sl:g}%) · 애프터장 마감에 정리",
             f"근거: {v['reason']}",
@@ -552,8 +546,7 @@ def vsignal_text(kind: str, sym: str, name: str | None, v: dict, cfg, session_ko
     icon = "🔵" if ret >= 0 else "🔴"
     peak = f" ({until_s(v['opened'], v['high_at'])})" if v.get("high_at") else ""
     return "\n".join([
-        f"{icon} {tag}가상 매도 {head} · {v['exit_reason']}",
-        "──────────────",
+        _head(f"{icon} {tag}가상 매도".strip(), sym, name, f" · {v['exit_reason']}"),
         f"💵 {px(v['entry'])} → {px(v['exit_price'])} ({pct(ret)}) · {session_ko}",
         f"보유 {held_s} · 보유 중 최고 {pct((v['high'] / v['entry'] - 1) * 100)}{peak} · 최저 {pct((v['low'] / v['entry'] - 1) * 100)}",
         "실제 주문 아님 — 전략 검증용 기록",
