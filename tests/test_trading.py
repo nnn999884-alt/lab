@@ -41,6 +41,7 @@ class FakeMV:
         self.hot = []
         self.shorts = {}
         self.names = {}
+        self.day_dollar = {}
 
     def prev_trade_date(self, d): return PREV
     def runners(self, d, min_pct=30.0): return self.run
@@ -54,6 +55,7 @@ class FakeMV:
     def book(self, sym): return self.m.book(sym)
     def short_ratio(self, sym, d): return self.shorts.get(sym, (None, None))
     def name(self, sym): return self.names.get(sym)
+    def day_stats(self, sym, max_age=120): return {"dollar": self.day_dollar[sym]} if sym in self.day_dollar else {}
 
 
 class FakeProfile:
@@ -107,6 +109,19 @@ def test_runner_overnight_skips_short_surge(env):
     market.set("PEN", 1.03, 1.035)
     tr.tick()
     assert j.q("SELECT * FROM trades") == []
+
+
+def test_dilution_gate_overridden_by_high_volume(env):
+    """희석 위험이 상한을 넘어도 오늘 거래대금이 volume_override_dollar 이상이면 통과시킨다 (RENT 사례)."""
+    tr, market, mv, clock, j, ctl, ex = env
+    tr.fake_fund.scores["PEN"] = 100          # 설정 상한(45)보다 훨씬 높음
+    market.set("PEN", 1.03, 1.035)
+    tr.tick()
+    assert j.q("SELECT * FROM trades") == []                 # 거래대금 정보 없으면 그대로 거름
+    mv.day_dollar["PEN"] = 500_000            # 설정 기준(30만$) 이상
+    clock[0] += timedelta(seconds=tr.tcfg.scan_seconds + 1)
+    tr.tick()
+    assert j.q("SELECT status FROM trades")[0]["status"] == "OPEN"
 
 
 def test_full_cycle_day_buy_premarket_sell(env):
