@@ -345,6 +345,31 @@ def test_presurge_rule():
     assert not presurge(t7, 3, 1.5, 80, 12, "AFTER")[0]                   # 애프터마켓도 막힘
 
 
+def test_after_movers_catches_slow_cumulative_move(tmp_path):
+    """애프터마켓 중 정규장 종가 대비 천천히(1분 급등 기준엔 안 걸리게) 누적으로 많이 움직인 종목을 잡는다."""
+    from datetime import date
+    col, st, sent = make(tmp_path)
+    d0 = date(2026, 10, 23)
+    st.put_prices([
+        {"symbol": "BRAI", "ts": "2026-10-23T20:00:00+00:00", "trade_date": "2026-10-23", "session": "REGULAR",
+         "last": 2.15, "price_ts": None},
+        {"symbol": "BRAI", "ts": "2026-10-23T21:35:00+00:00", "trade_date": "2026-10-23", "session": "AFTER",
+         "last": 2.73, "price_ts": None},
+        {"symbol": "FLAT", "ts": "2026-10-23T20:00:00+00:00", "trade_date": "2026-10-23", "session": "REGULAR",
+         "last": 3.00, "price_ts": None},
+        {"symbol": "FLAT", "ts": "2026-10-23T21:35:00+00:00", "trade_date": "2026-10-23", "session": "AFTER",
+         "last": 3.10, "price_ts": None},          # +3.3%, 기준(10%) 밖
+    ])
+    now = datetime(2026, 10, 23, 21, 36, tzinfo=timezone.utc)
+    col.poll_after_movers(now, d0)
+    assert sent.msgs[-1][0].startswith("🌆 애프터마켓 누적 변동 · BRAI")
+    assert "+27" in sent.msgs[-1][0]
+    assert not any("FLAT" in m[0] for m in sent.msgs)
+    assert len(sent.msgs) == 1                     # FLAT 은 안 보냄
+    col.poll_after_movers(now, d0)                 # 같은 날 두 번째는 다시 안 보냄
+    assert len(sent.msgs) == 1
+
+
 def test_burst_sends_signal_or_presurge(tmp_path):
     col, st, sent = make(tmp_path)
 

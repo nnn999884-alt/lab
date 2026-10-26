@@ -223,6 +223,17 @@ def early20_text(sym: str, name: str | None, chg: float, price: float | None, se
     ])
 
 
+def after_move_text(sym: str, name: str | None, chg: float, price: float | None) -> str:
+    """애프터마켓 중 정규장 종가 대비 누적으로 많이 움직임 — 1분 급등(spike_up) 기준(+4%)엔 안 걸릴 만큼
+    천천히 쌓인 경우가 많아서 따로 잡는다. early20 과 같은 성격의 '약한 신호' 쪽."""
+    from .trading.messages import pct, px
+    return "\n".join([
+        _head("🌆 애프터마켓 누적 변동", sym, name),
+        f"💵 {px(price)} ({pct(chg)}, 정규장 종가 대비) · 애프터마켓",
+        "1분 급등 기준엔 안 걸릴 만큼 천천히 쌓인 움직임 — 참고용",
+    ])
+
+
 def signal_text(sym: str, name: str | None, lv: dict, session_ko: str, tags: list | None = None) -> str:
     """거래 터짐 신호 (세션 상관없이, 짧게). 급등 전조 조건까지 맞으면 alert_text 를 대신 보낸다."""
     from .trading.messages import money_s, pct, px

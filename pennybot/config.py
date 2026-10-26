@@ -103,6 +103,9 @@ class CollectorConfig:
     rt_min_turn_dollar: float = 1e4  # 발행주식이 아주 적으면 $2천으로도 회전율이 차서 — 회전율 조건의 최소 거래대금
     rt_surge: float = 5.0            # 최근 60초 거래량이 그 종목 직전 30분 분당 평균의 이만큼 배 이상이면 알림 (등락률은 안 봄)
     spike_min_dollar: float = 5000.0  # 1분 급등·급락 이벤트: 그 2분 거래대금이 이만큼은 돼야 (얇은 체결 소음 제외)
+    # 애프터마켓은 거래가 느릿느릿 쌓여서 1분 급등(spike_up) 기준(+4%)에 거의 안 걸린다 — 정규장 종가 대비
+    # 누적으로 이만큼 올랐으면 따로 잡는다 (early20 의 애프터마켓 버전)
+    after_move_pct: float = 10.0
     precursor_daily_alert: int = 10  # 장 마감 뒤 점수 계산이 끝나면 상위 N종목 목록 알림 (0 = 끔)
     vsignal: bool = True             # 가상 매매 알림 (실제 주문 없음) — 전략 정의는 pennybot/vstrat.py
     keep_days: int = 20            # 고가 +keep_min_run% 급등주는 이 거래일 수만큼 계속 감시 (며칠 뒤 다시 오르는 경우)

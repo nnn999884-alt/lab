@@ -316,6 +316,8 @@ class Collector:
                 self._run("briefing", self.send_briefing, now, trade_date)
             if session in (DAY, PRE, REGULAR) and self._due("precursor_live", now, timedelta(seconds=60)):
                 self._run("precursor_live", self.poll_precursor_live, now, trade_date, session)
+            if session == AFTER and self._due("after_movers", now, timedelta(minutes=2)):
+                self._run("after_movers", self.poll_after_movers, now, trade_date)
         if session == CLOSED:
             self._maybe_research_refresh(now)
             return
@@ -430,6 +432,33 @@ class Collector:
                 self._event(now, r["symbol"], kind,
                             f"{'⚡' if kind == 'spike_up' else '▼'} {r['symbol']} {name} 1분새 {chg:+.1f}% {word} ${r['last']:.4g}"
                             f" · {SESSION_KO.get(session, session)}{vol}", chg)
+
+    def poll_after_movers(self, now: datetime, trade_date) -> None:
+        """애프터마켓은 거래가 천천히 쌓여서 1분 급등(spike_up, +4%) 기준엔 잘 안 걸린다 — 정규장 종가 대비
+        누적으로 after_move_pct% 이상 움직였으면 하루 한 번 따로 잡는다 (early20 의 애프터마켓 버전)."""
+        d0 = trade_date.isoformat()
+        rows = self.store.query("""
+            WITH latest AS (
+              SELECT p.symbol, p.last FROM prices p
+              JOIN (SELECT symbol, MAX(ts) AS ts FROM prices WHERE session='AFTER' AND trade_date=? GROUP BY symbol) m
+                ON p.symbol=m.symbol AND p.ts=m.ts),
+            reg AS (
+              SELECT p.symbol, p.last FROM prices p
+              JOIN (SELECT symbol, MAX(ts) AS ts FROM prices WHERE session='REGULAR' AND trade_date=? GROUP BY symbol) m
+                ON p.symbol=m.symbol AND p.ts=m.ts)
+            SELECT l.symbol, r.last, l.last FROM latest l JOIN reg r ON l.symbol=r.symbol WHERE r.last > 0
+        """, (d0, d0))
+        start = d0 + "T00:00:00"
+        for sym, reg_close, last in rows:
+            chg = (last / reg_close - 1) * 100
+            if abs(chg) < self.cfg.after_move_pct:
+                continue
+            if self.store.query("SELECT 1 FROM events WHERE symbol=? AND kind='after_move' AND ts>=?", (sym, start)):
+                continue
+            if self.notifier and self._on("after_move"):
+                from ..precursor import after_move_text
+                self.notifier.send(after_move_text(sym, (self.universe.get(sym) or {}).get("name"), chg, last))
+            self._event(now, sym, "after_move", f"🌆 {sym} 애프터마켓 누적 {chg:+.1f}% (정규장 종가 대비)", chg)
 
     def poll_orderbooks(self, now: datetime, trade_date, session: str) -> None:
         rows = []
