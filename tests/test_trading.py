@@ -111,15 +111,11 @@ def test_runner_overnight_skips_short_surge(env):
     assert j.q("SELECT * FROM trades") == []
 
 
-def test_dilution_gate_overridden_by_high_volume(env):
-    """희석 위험이 상한을 넘어도 오늘 거래대금이 volume_override_dollar 이상이면 통과시킨다 (RENT 사례)."""
+def test_dilution_score_no_longer_blocks_entry(env):
+    """희석 점수 자체로는 더는 안 거른다 (RENT 사례: 100점이어도 +32% 지속) — 참고 정보로만 note 에 남는다."""
     tr, market, mv, clock, j, ctl, ex = env
-    tr.fake_fund.scores["PEN"] = 100          # 설정 상한(45)보다 훨씬 높음
+    tr.fake_fund.scores["PEN"] = 100          # 예전 상한(45)보다 훨씬 높아도 이제는 안 막힘
     market.set("PEN", 1.03, 1.035)
-    tr.tick()
-    assert j.q("SELECT * FROM trades") == []                 # 거래대금 정보 없으면 그대로 거름
-    mv.day_dollar["PEN"] = 500_000            # 설정 기준(30만$) 이상
-    clock[0] += timedelta(seconds=tr.tcfg.scan_seconds + 1)
     tr.tick()
     assert j.q("SELECT status FROM trades")[0]["status"] == "OPEN"
 
@@ -270,10 +266,10 @@ def test_runner_filters(env):
     sig = {r["symbol"]: r["reason"] for r in j.q("SELECT symbol, reason FROM signals")}
     assert "밀려 마감" in sig["FADE"]
     assert "회전" in sig["THIN"]
-    assert "희석 위험 75점" in sig["DILU"]
+    assert "희석 75점" in sig["DILU"]              # 희석 점수는 더는 안 거르고 참고로만 붙는다
     assert "펌프 위험" in sig["PUMP"]
     assert "증자 공시" in sig["OFFR"]
-    assert [t["symbol"] for t in j.q("SELECT symbol FROM trades")] == ["PEN"]
+    assert set(t["symbol"] for t in j.q("SELECT symbol FROM trades")) == {"PEN", "DILU"}
 
 
 def test_dilution_catalyst_and_ignition(env):

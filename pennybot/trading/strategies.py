@@ -76,22 +76,16 @@ def quote_check(sym: str, ctx: Ctx):
     return b, None
 
 
-def dilution_gate(sym: str, price: float, ctx: Ctx, max_score: float, has_catalyst: bool,
-                  max_flags: int = 2, volume_override_dollar: float | None = None) -> tuple[str | None, str]:
+def dilution_gate(sym: str, price: float, ctx: Ctx, has_catalyst: bool, max_flags: int = 2) -> tuple[str | None, str]:
     """(탈락 사유 또는 None, 설명). 희석 프로필이 있으면 그것으로, 없으면 수집기 공시로 판단.
-    volume_override_dollar: 오늘 거래대금이 이 이상이면 희석 점수 상한(max_score)은 건너뛴다 — 실제로 돈이
-    그만큼 몰렸으면 주가가 오르는 건 같다는 판단(RENT 사례: 희석 100점이어도 +32% 지속). 다만 상폐·사기성
-    공시처럼 '차단' 등급은 거래대금과 무관하게 그대로 막는다."""
+    희석 점수 자체로는 더는 거르지 않는다 (RENT 사례: 100점이어도 +32% 지속 — 점수가 높아도 주가가 오르는 건
+    오른다고 판단, 참고용 note 로만 남김). 다만 상폐·사기성 공시처럼 '차단' 등급과, 펌프 위험 신호 개수는 그대로 막는다."""
     t = ctx.tcfg
     if not (t.min_price <= price <= t.max_price):
         return f"가격범위 밖 ${price:.4f}", ""
-    volume_ok = volume_override_dollar is not None and (ctx.mv.day_stats(sym).get("dollar") or 0) >= volume_override_dollar
     prof = ctx.fund.profile(sym, price, ctx.trade_date) if ctx.fund else None
     if prof is not None:
-        if prof.score > max_score and not volume_ok:
-            return f"희석 위험 {prof.score:.0f}점 ({', '.join(prof.reasons) or '-'})", ""
-        note = f"희석 {prof.score:.0f}점" + (" [거래대금 커서 통과]" if prof.score > max_score else "") \
-            + (f" [{', '.join(prof.recent_positive)}]" if prof.recent_positive else "")
+        note = f"희석 {prof.score:.0f}점" + (f" [{', '.join(prof.recent_positive)}]" if prof.recent_positive else "")
     else:
         filings = [ed.Filing(f["form"], datetime.fromisoformat(f["accepted"]).date(), "", "", f["items"] or "")
                    for f in ctx.mv.filings_for(sym, 120, ctx.now)]
@@ -178,8 +172,7 @@ class RunnerOvernight(Strategy):
             if any(events_of(f) & FINANCING_WORDS for f in recent):
                 out.append(self._reject(sym, "급등 후 증자 공시 나옴", b.mid))
                 continue
-            why, note = dilution_gate(sym, b.mid, ctx, self.p["max_dilution_score"], has_catalyst=bool(recent),
-                                      volume_override_dollar=self.p.get("volume_override_dollar"))
+            why, note = dilution_gate(sym, b.mid, ctx, has_catalyst=bool(recent))
             if why:
                 out.append(self._reject(sym, why, b.mid))
                 continue
@@ -220,8 +213,7 @@ class DilutionCatalyst(Strategy):
             if run > self.p["max_runup_pct"]:
                 out.append(self._reject(sym, f"이미 {run:+.1f}% 반영", b.ask))
                 continue
-            why, note = dilution_gate(sym, b.mid, ctx, self.p["max_dilution_score"], has_catalyst=True,
-                                      volume_override_dollar=self.p.get("volume_override_dollar"))
+            why, note = dilution_gate(sym, b.mid, ctx, has_catalyst=True)
             if why:
                 out.append(self._reject(sym, why, b.mid))
                 continue
@@ -271,8 +263,7 @@ class DayIgnition(Strategy):
                 out.append(self._reject(sym, bad, last))
                 continue
             news = cat != "토스 거래대금 상위"     # 공시·보도자료 촉매 여부
-            why, note = dilution_gate(sym, b.mid, ctx, self.p["max_dilution_score"], has_catalyst=news,
-                                      volume_override_dollar=self.p.get("volume_override_dollar"))
+            why, note = dilution_gate(sym, b.mid, ctx, has_catalyst=news)
             if why:
                 out.append(self._reject(sym, why, b.mid))
                 continue
@@ -308,8 +299,7 @@ class DayDip(Strategy):
             if bad:
                 out.append(self._reject(sym, bad, last))
                 continue
-            why, note = dilution_gate(sym, b.mid, ctx, self.p.get("max_dilution_score", 50),
-                                      has_catalyst=False, max_flags=3)
+            why, note = dilution_gate(sym, b.mid, ctx, has_catalyst=False, max_flags=3)
             if why:
                 out.append(self._reject(sym, why, b.mid))
                 continue
