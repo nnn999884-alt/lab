@@ -133,7 +133,8 @@ class TradingConfig:
     scan_minutes: int = 5            # (예전 설정, scan_seconds 가 우선)
     scan_seconds: int = 15           # 전략 스캔 간격 (후보 호가는 웹소켓 실시간)
     forced_exit_minutes: int = 60        # 정규장 개장 후 N분에 전량 청산
-    entry_ttl_seconds: int = 300         # 매수 지정가 미체결 시 취소
+    entry_ttl_seconds: int = 180         # 매수 지정가 미체결 시 취소
+    max_unfilled_entries: int = 3        # 같은 종목이 오늘 이만큼 연속 미체결(취소)되면 그날은 더 안 건다 (호가가 얇아 체결이 안 붙는 종목)
     exit_reprice_seconds: int = 60       # 매도 지정가 재호가 주기
     exit_slippage_pct: float = 1.0       # 강제 청산 매도가 = bid × (1 − x%)
     max_exit_reprices: int = 3           # 정규장에서 이 횟수 넘게 안 팔리면 최종 청산가로

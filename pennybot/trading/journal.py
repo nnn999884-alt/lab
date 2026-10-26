@@ -156,6 +156,12 @@ class Journal:
         return bool(self.q("SELECT 1 FROM trades WHERE symbol=? AND trade_date=? AND mode=? AND qty>0",
                            (symbol, trade_date, self.mode)))
 
+    def unfilled_entries_today(self, symbol: str, trade_date: str) -> int:
+        """오늘 이 종목에 건 매수가 한 번도 안 붙고(qty=0) 취소된 횟수 — 호가가 얇아 체결이 안 붙는 종목 거르는 데 씀."""
+        r = self.q("SELECT COUNT(*) AS n FROM trades WHERE symbol=? AND trade_date=? AND mode=? "
+                   "AND status='CANCELED' AND qty=0", (symbol, trade_date, self.mode))
+        return r[0]["n"] if r else 0
+
     def strategy_stats(self, strategy: str | None = None, last_n: int | None = None) -> list[dict]:
         rows = self.q("""SELECT strategy, pnl, pnl_pct FROM trades WHERE status='CLOSED' AND mode=?
                          ORDER BY id DESC""", (self.mode,))

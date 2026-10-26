@@ -40,6 +40,7 @@ class FakeMV:
         self.path = []
         self.hot = []
         self.shorts = {}
+        self.names = {}
 
     def prev_trade_date(self, d): return PREV
     def runners(self, d, min_pct=30.0): return self.run
@@ -52,6 +53,7 @@ class FakeMV:
     def session_path(self, sym, d, session): return [(str(i), p) for i, p in enumerate(self.path)]
     def book(self, sym): return self.m.book(sym)
     def short_ratio(self, sym, d): return self.shorts.get(sym, (None, None))
+    def name(self, sym): return self.names.get(sym)
 
 
 class FakeProfile:
@@ -328,6 +330,25 @@ def test_risk_sizing_daily_loss_and_auto_disable(tmp_path):
     assert not ok and "자동 정지" in why
     tcfg.max_daily_loss_usd = 3
     assert risk.can_enter("runner_overnight", "X", str(D), []).startswith("영업일 손실 한도 도달")
+
+
+def test_can_enter_skips_symbol_after_repeated_unfilled_entries(tmp_path):
+    """호가가 얇아 매번 미체결·취소되는 종목은 N번 넘으면 그날은 더 안 건다 (JYD 사례: 5분마다 8번 재시도)."""
+    tcfg = TradingConfig()
+    tcfg.max_unfilled_entries = 3
+    j = Journal(tmp_path / "r.db")
+    risk = Risk(tcfg, j, Control(tmp_path))
+    for _ in range(2):
+        tid = j.open_trade(strategy="runner_overnight", symbol="JYD", trade_date=str(D), planned_qty=30,
+                           stop=1.6, target=2.0, sell_from=et(4, 0), deadline=et(9, 30), reason="", now=et(1, 0))
+        j.entry_finished(tid)                   # 체결 없이(qty=0) CANCELED
+    assert risk.can_enter("runner_overnight", "JYD", str(D), []) is None   # 아직 2번 → 허용
+    tid = j.open_trade(strategy="runner_overnight", symbol="JYD", trade_date=str(D), planned_qty=30,
+                       stop=1.6, target=2.0, sell_from=et(4, 0), deadline=et(9, 30), reason="", now=et(1, 0))
+    j.entry_finished(tid)                        # 3번째
+    assert risk.can_enter("runner_overnight", "JYD", str(D), []).startswith("오늘 3번 미체결")
+    # 체결된 매수는 이 카운트에 안 들어가니 다른 종목은 영향 없음
+    assert risk.can_enter("runner_overnight", "OTHER", str(D), []) is None
 
 
 def test_paper_partial_fill_and_reject():
