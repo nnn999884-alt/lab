@@ -438,6 +438,57 @@ def test_pre_open_watch_once(tmp_path):
     assert col.pre_open_watch(t, "d") == []                               # 하루 한 번
 
 
+def test_poll_steady_flow_flags_persistent_but_not_spiky_symbol(tmp_path):
+    """한 번에 크게 안 터지고 거래대금 랭킹에 꾸준히 올라와 있는 종목('사부작사부작')을 잡는다 —
+    랭킹에 거의 안 든 종목은 걸리지 않는다."""
+    col, st, sent = make(tmp_path)
+    col.universe = {"STDY": {"name": "꾸준이"}, "FLAT": {"name": "평평이"}}
+    base = datetime(2026, 10, 23, 14, 0, tzinfo=timezone.utc)
+    rows = []
+    for i in range(12):                              # 2시간, 10분 간격
+        ts = (base + timedelta(minutes=i * 10)).isoformat()
+        if i % 2 == 0:                                # STDY 는 절반 이상 상위권
+            rows.append({"ts": ts, "trade_date": "2026-10-23", "session": "REGULAR", "type": "MARKET_TRADING_AMOUNT",
+                        "duration": "1d", "rank": 5, "symbol": "STDY", "last": 1.0, "base": 1.0,
+                        "change_rate": None, "volume": 1000, "amount": 1000, "ranked_at": ts})
+        rows.append({"ts": ts, "trade_date": "2026-10-23", "session": "REGULAR", "type": "MARKET_TRADING_AMOUNT",
+                    "duration": "1d", "rank": 1, "symbol": "OTHER", "last": 1.0, "base": 1.0,
+                    "change_rate": None, "volume": 1000, "amount": 1000, "ranked_at": ts})
+    st.put_rankings(rows)
+    now = base + timedelta(minutes=110)
+    col.poll_steady_flow(now, "2026-10-23", "REGULAR")
+    ev = {r[0]: r[1] for r in st.query("SELECT symbol, kind FROM events")}
+    assert ev.get("STDY") == "steady" and "FLAT" not in ev   # FLAT 은 랭킹에 한 번도 안 들어서 안 걸림
+    assert any(m[0].startswith("🫧 꾸준히 거래 붙음 · STDY(꾸준이)") for m in sent.msgs)
+    n = len(sent.msgs)
+    col.poll_steady_flow(now, "2026-10-23", "REGULAR")                             # 쿨다운 안 지났으면 다시 안 보냄
+    assert len(sent.msgs) == n
+
+
+def test_pre_open_watch_ranks_by_dollar_volume_not_pct(tmp_path):
+    """등락률이 아니라 거래대금 순 — 호가만 튀고 거래는 적은 종목이 위로 올라오면 안 된다."""
+    col, st, sent = make(tmp_path)
+    col.universe = {"PENX": {"name": "펜엑스", "last": 1.3}, "BRST": {"name": "터짐", "last": 1.1}}
+    st.put_precursor_daily([{"d0": "2026-10-22", "symbol": s, "score": 7, "close": 1.0, "created": "x", "signals": "[]", "metrics": "{}"}
+                            for s in col.universe])
+    st.put_daily_bars([{"symbol": s, "d": "2026-10-22", "open": 1, "high": 1, "low": 1, "close": 1.0, "volume": 1} for s in col.universe])
+    # PENX: +30%지만 거래대금 적음. BRST: 데이마켓 거래 터짐 + 거래대금 훨씬 큼 (등락률은 낮음)
+    st.put_precursor_live([
+        {"d0": "2026-10-22", "symbol": "PENX", "ts": "x", "signals": "[]", "metrics": json.dumps({"dollar_today": 5_000}),
+         "alerted": "2026-10-22T00:00:00+00:00"},
+        {"d0": "2026-10-22", "symbol": "BRST", "ts": "x", "signals": "[]", "metrics": json.dumps({"dollar_today": 500_000}),
+         "alerted": "2026-10-23T03:00:00+00:00"},
+    ])
+
+    class Cal:
+        def bounds(self, d, s):
+            return (datetime(2026, 10, 23, 0, 0, tzinfo=timezone.utc),)
+    col.cal = Cal()
+    t = datetime(2026, 10, 23, 7, 56, tzinfo=timezone.utc)               # 03:56 ET
+    assert col.pre_open_watch(t, "d") == ["BRST", "PENX"]                 # 등락률로는 PENX 가 위지만 거래대금은 BRST 가 위
+    assert "거래대금 순" in sent.msgs[-1][0]
+
+
 def test_stale_positions_closed_on_restart(tmp_path):
     col, st, sent = make(tmp_path)
     only(col, "S1")

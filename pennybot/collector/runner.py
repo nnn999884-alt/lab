@@ -325,6 +325,7 @@ class Collector:
         if self._due("rankings", now, every):
             self._run("rankings", self.poll_rankings, now, trade_date, session)
             self._run("watch", self.select_watch, now, trade_date)
+            self._run("steady_flow", self.poll_steady_flow, now, trade_date, session)
         if self._due("prices", now, timedelta(seconds=c.price_poll_seconds)):
             self._run("prices", self.poll_prices, now, trade_date, session)
             if c.vsignal:
@@ -511,6 +512,46 @@ class Collector:
                         nm = (self.universe.get(sym) or {}).get("name") or ""
                         self._event(now, sym, f"rank:{typ}", f"📈 {sym} {nm} {names.get(typ, typ)} {moved}".replace("  ", " "), rk)
             self._rank_prev[typ] = ranks
+
+    def poll_steady_flow(self, now: datetime, trade_date, session: str) -> None:
+        """한 번에 크게 안 터지고 계속 거래가 붙는 종목('사부작사부작') — poll_rankings 가 이미 채우는
+        거래대금 랭킹 기록을 재사용해서 판단한다 (API 호출 추가 없음). 숫자는 백테스트 전 초안."""
+        from ..precursor import alert_buttons, steady_text
+        from ..trading.strategies import SESSION_KO
+        c = self.cfg
+        since = iso(now - timedelta(hours=c.steady_window_hours))
+        total = self.store.query(
+            "SELECT COUNT(DISTINCT ts) FROM rankings WHERE ts>=? AND type IN "
+            "('MARKET_TRADING_AMOUNT','TOSS_SECURITIES_TRADING_AMOUNT')", (since,))
+        total = total[0][0] if total else 0
+        if total < c.steady_min_polls:
+            return
+        rows = self.store.query(
+            """SELECT symbol, COUNT(DISTINCT ts) AS n FROM rankings WHERE ts>=? AND rank<=? AND type IN
+               ('MARKET_TRADING_AMOUNT','TOSS_SECURITIES_TRADING_AMOUNT') GROUP BY symbol""",
+            (since, c.steady_rank_cutoff))
+        cool = iso(now - timedelta(hours=c.steady_cooldown_hours))
+        for sym, n in rows:
+            if sym not in self.universe or n / total < c.steady_min_ratio:
+                continue
+            if self.store.query("SELECT 1 FROM events WHERE symbol=? AND kind='steady' AND ts>=?", (sym, cool)):
+                continue
+            price = (self.universe.get(sym) or {}).get("last")
+            pc = self.store.query("SELECT close FROM runners WHERE symbol=? ORDER BY trade_date DESC LIMIT 1", (sym,))
+            chg = (price / pc[0][0] - 1) * 100 if price and pc and pc[0][0] else None
+            self._event(now, sym, "steady",
+                        f"🫧 {sym} 꾸준히 거래 붙음 ({c.steady_window_hours:.0f}시간 중 {n}/{total}회 거래대금 상위 {c.steady_rank_cutoff}위)", chg)
+            log.info("지속 관심 %s (%d/%d회 거래대금 상위 %d위)", sym, n, total, c.steady_rank_cutoff)
+            if self.notifier and self._on("steady"):
+                link = None
+                try:
+                    link = self.link() if self.link else None
+                except Exception:
+                    pass
+                nm = (self.universe.get(sym) or {}).get("name")
+                self.notifier.send(steady_text(sym, nm, price, chg, n, total, c.steady_window_hours,
+                                               SESSION_KO.get(session, session)),
+                                   buttons=alert_buttons(sym, link))
 
     def select_watch(self, now: datetime, trade_date) -> None:
         """공시 > 랭킹 > 급변 순으로 감시 종목을 채운다 (모두 유니버스 안에서만)."""
@@ -1387,10 +1428,21 @@ class Collector:
                     store.put_precursor_daily([row])
         self._rt_set(list(self._rt_syms))
 
+    def _day_dollar(self, sym: str) -> float:
+        """오늘 데이마켓 누적 거래대금 (1분봉 합). precursor_live 에 없는 종목용 폴백."""
+        try:
+            cs = (self.c.candles(sym, "1m", 500) or {}).get("candles", [])
+            return sum(float(cd["volume"]) * float(cd["closePrice"]) for cd in cs)
+        except Exception as e:
+            log.debug("거래대금 조회 실패 %s: %s", sym, e)
+            return 0.0
+
     def pre_open_watch(self, now: datetime, trade_date) -> list[str]:
         """동부 03:55 (데이마켓 끝나기 직전) 한 번: 데이마켓에서 거래가 터졌거나 +15% 넘게 오른 종목 → '프리 개장 주목' 알림.
-        10/23 LABT 는 데이마켓 23:03 에 +20% 였다가 04:01 프리 개장 1분 만에 +122% — 개장 순간에 끝나는 경우가 있다."""
-        from ..trading.messages import pct, px
+        10/23 LABT 는 데이마켓 23:03 에 +20% 였다가 04:01 프리 개장 1분 만에 +122% — 개장 순간에 끝나는 경우가 있다.
+        순위는 등락률이 아니라 거래대금(실제 수급이 붙었는지) 기준 — 등락률만 보면 거래 거의 없이 호가만 튄 종목이
+        위로 올라오는 문제가 있었다."""
+        from ..trading.messages import money_s, pct, px
         t = now.astimezone(ET)
         if not (t.hour == 3 and t.minute >= 55) or getattr(self, "_pre_open_sent", None) == trade_date:
             return []
@@ -1402,20 +1454,29 @@ class Collector:
         day_start = self.cal.bounds(trade_date, DAY)
         start = iso(day_start[0]) if day_start else iso(now - timedelta(hours=8))
         burst = {r[0] for r in self.store.query("SELECT symbol FROM precursor_live WHERE d0=? AND alerted>=?", (d0, start))}
+        live_dollar = {}
+        for s, m in self.store.query("SELECT symbol, metrics FROM precursor_live WHERE d0=?", (d0,)):
+            try:
+                live_dollar[s] = json.loads(m or "{}").get("dollar_today")
+            except Exception:
+                pass
         pcs = dict(self.store.query("SELECT symbol, close FROM daily_bars WHERE d=?", (d0,)))
-        rows = []
+        cands = []
         for s, v in self.universe.items():
             pc, last = pcs.get(s), v.get("last")
             if pc and last and (s in burst or last >= pc * 1.15):
-                rows.append((s, v.get("name") or "", last, (last / pc - 1) * 100, s in burst))
-        rows.sort(key=lambda r: -r[3])
+                cands.append((s, v.get("name") or "", last, (last / pc - 1) * 100, s in burst))
+        rows = [(s, n, p, c, b, live_dollar.get(s) if live_dollar.get(s) is not None else self._day_dollar(s))
+               for s, n, p, c, b in cands]
+        rows.sort(key=lambda r: -r[5])
         rows = rows[:15]
         if not rows:
             return []
         self._watch_now([r[0] for r in rows])
         if self.notifier and self._on("pre_open"):
-            self.notifier.send("\n".join(["🌅 프리마켓 개장(04:00 ET) 주목 — 데이마켓에서 움직인 종목", "──────────────"]
-                                         + [f"{s} {n} · {px(p)} ({pct(c)})" + (" · 거래 터짐" if b else "") for s, n, p, c, b in rows]
+            self.notifier.send("\n".join(["🌅 프리마켓 개장(04:00 ET) 주목 — 데이마켓에서 움직인 종목 (거래대금 순)", "──────────────"]
+                                         + [f"{s} {n} · {px(p)} ({pct(c)}) · {money_s(d)}" + (" · 거래 터짐" if b else "")
+                                           for s, n, p, c, b, d in rows]
                                          + ["", "개장 순간 한 번에 터지는 경우가 있어 실시간 구독에 고정했습니다"]))
         log.info("프리 개장 주목 %d종목: %s", len(rows), ", ".join(r[0] for r in rows))
         return [r[0] for r in rows]

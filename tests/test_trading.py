@@ -42,6 +42,7 @@ class FakeMV:
         self.shorts = {}
         self.names = {}
         self.day_dollar = {}
+        self.flow = []
 
     def prev_trade_date(self, d): return PREV
     def runners(self, d, min_pct=30.0): return self.run
@@ -56,6 +57,7 @@ class FakeMV:
     def short_ratio(self, sym, d): return self.shorts.get(sym, (None, None))
     def name(self, sym): return self.names.get(sym)
     def day_stats(self, sym, max_age=120): return {"dollar": self.day_dollar[sym]} if sym in self.day_dollar else {}
+    def recent_flow(self, since, kinds=("burst", "after_move", "bottom_bounce", "early20")): return self.flow
 
 
 class FakeProfile:
@@ -173,6 +175,153 @@ def test_scan_keeps_running_outside_day_but_does_not_buy(env):
     assert j.q("SELECT * FROM trades") == []                       # 매수는 안 함
     s = j.q("SELECT ok, reason FROM signals WHERE symbol='PEN' ORDER BY ts DESC LIMIT 1")[0]
     assert s["ok"] == 0 and "매수 시간 아님" in s["reason"] and "프리마켓" in s["reason"]
+
+
+def test_scalp_buys_on_realtime_flow_signal_outside_day_session(env):
+    """scalp 는 실시간 수급 신호(거래 터짐 등)가 뜨면 세션 상관없이 바로 사지만, runner_overnight 같은
+    데이마켓 전용 전략은 같은 세션에서 조건이 맞아도 '매수 시간 아님'으로 막혀야 한다."""
+    tr, market, mv, clock, j, ctl, ex = env
+    tr.tcfg.strategies["scalp"]["entry_discount_pct"] = 0.0
+    clock[0] = et(17, 0)                       # 애프터마켓
+    market.set("PEN", 1.03, 1.035)             # runner_overnight 조건은 맞지만 세션 때문에 막혀야 함
+    market.set("FLO", 2.00, 2.02)
+    mv.flow = [{"symbol": "FLO", "kind": "burst", "ts": "x", "text": "거래 터짐 +12%", "chg": 12.0}]
+    tr.tick()
+    rows = {r["symbol"]: r["status"] for r in j.q("SELECT symbol, status FROM trades")}
+    assert rows.get("FLO") == "OPEN"
+    assert "PEN" not in rows
+    s = j.q("SELECT ok, reason FROM signals WHERE symbol='PEN' ORDER BY ts DESC LIMIT 1")[0]
+    assert s["ok"] == 0 and "매수 시간 아님" in s["reason"] and "애프터마켓" in s["reason"]
+
+
+def test_scalp_ignores_symbol_already_held(env):
+    """같은 종목을 이미 들고 있으면 scalp 가 또 신호를 중복으로 사지 않는다."""
+    tr, market, mv, clock, j, ctl, ex = env
+    tr.tcfg.strategies["scalp"]["entry_discount_pct"] = 0.0
+    clock[0] = et(1, 0)
+    market.set("PEN", 1.03, 1.035)
+    tr.tick()                                   # runner_overnight 로 PEN 진입
+    assert j.q("SELECT status FROM trades WHERE symbol='PEN'")[0]["status"] == "OPEN"
+    mv.flow = [{"symbol": "PEN", "kind": "burst", "ts": "x", "text": "거래 터짐", "chg": 5.0}]
+    tr.tick()
+    assert j.q("SELECT COUNT(*) AS n FROM trades WHERE symbol='PEN'")[0]["n"] == 1
+
+
+def test_scalp_does_not_sell_immediately_after_buy(env):
+    """sell_from 을 '지금'으로 두면 '매도 구간' 체크가 사자마자 바로 먹혀서 들고 있지도 못하고 팔리는 버그가 있었다 —
+    목표가·손절가 어느 쪽도 안 건드렸으면 그 다음 틱에도 그대로 들고 있어야 한다."""
+    tr, market, mv, clock, j, ctl, ex = env
+    tr.tcfg.strategies["scalp"]["entry_discount_pct"] = 0.0
+    clock[0] = et(17, 0)
+    market.set("FLO", 2.00, 2.02)
+    mv.flow = [{"symbol": "FLO", "kind": "burst", "ts": "x", "text": "거래 터짐", "chg": 12.0}]
+    tr.tick()
+    assert j.q("SELECT status FROM trades WHERE symbol='FLO'")[0]["status"] == "OPEN"
+    mv.flow = []
+    market.set("FLO", 2.00, 2.02)                # 목표가·손절가 둘 다 안 건드림
+    tr.tick()
+    assert j.q("SELECT status FROM trades WHERE symbol='FLO'")[0]["status"] == "OPEN"
+
+
+def test_stale_exit_after_hours_of_no_movement_outside_day_session(env):
+    """데이마켓이 아닌 세션에서 3시간 동안 가격이 거의 안 움직이면 '변동없음'으로 정리한다."""
+    tr, market, mv, clock, j, ctl, ex = env
+    tr.tcfg.strategies["scalp"]["entry_discount_pct"] = 0.0
+    tr.tcfg.strategies["scalp"]["max_hold_minutes"] = 300   # 강제 청산 시각이 끼어들지 않게 충분히 길게
+    clock[0] = et(10, 0)                         # 정규장
+    market.set("FLO", 2.00, 2.02)
+    mv.flow = [{"symbol": "FLO", "kind": "burst", "ts": "x", "text": "거래 터짐", "chg": 12.0}]
+    tr.tick()                                     # 매수 체결
+    tr.tick()                                     # 같은 틱에선 아직 PENDING이라 '변동없음' 기준가가 이 틱에서 잡힌다
+    assert j.q("SELECT status FROM trades WHERE symbol='FLO'")[0]["status"] == "OPEN"
+    clock[0] = et(12, 59)                        # 거의 3시간, 가격도 거의 그대로 → 아직
+    market.set("FLO", 2.01, 2.02)
+    tr.tick()
+    assert j.q("SELECT status FROM trades WHERE symbol='FLO'")[0]["status"] == "OPEN"
+    clock[0] = et(13, 1)                         # 3시간 지남
+    tr.tick()
+    t = j.q("SELECT status, exit_reason FROM trades WHERE symbol='FLO'")[0]
+    assert t["status"] == "CLOSED" and t["exit_reason"] == "변동없음 청산"
+
+
+def test_stale_exit_does_not_apply_during_day_session(env):
+    """데이마켓은 원래 몇 시간씩 조용하다가 프리마켓에서 움직이는 구조(오버나이트 전략의 전제)라,
+    데이마켓에서 조용한 건 '변동없음'으로 치면 안 된다."""
+    tr, market, mv, clock, j, ctl, ex = env
+    clock[0] = et(1, 0)
+    market.set("PEN", 1.03, 1.035)
+    tr.tick()                                     # runner_overnight: 데이마켓에 진입
+    clock[0] = et(4, 10)                          # 3시간 넘게 지났지만 가격은 그대로, 세션은 아직 DAY 끝물(04:00 전)
+    market.set("PEN", 1.03, 1.035)
+    tr.tick()
+    assert j.q("SELECT status FROM trades")[0]["status"] == "OPEN"
+
+
+def test_morning_cutoff_flattens_positions_regardless_of_strategy_deadline(env):
+    """전략 자체 강제 청산 시각이 9시(ET)보다 늦게 잡혀 있어도, 9시가 되면 전략 상관없이 정리한다."""
+    tr, market, mv, clock, j, ctl, ex = env
+    tr.tcfg.strategies["scalp"]["entry_discount_pct"] = 0.0
+    tr.tcfg.strategies["scalp"]["max_hold_minutes"] = 120
+    clock[0] = et(7, 50)                          # 프리마켓, scalp 강제청산(09:50)은 9시보다 늦게 잡힘
+    market.set("FLO", 2.00, 2.02)
+    mv.flow = [{"symbol": "FLO", "kind": "burst", "ts": "x", "text": "거래 터짐", "chg": 12.0}]
+    tr.tick()
+    assert j.q("SELECT status FROM trades WHERE symbol='FLO'")[0]["status"] == "OPEN"
+    clock[0] = et(8, 59)
+    tr.tick()
+    assert j.q("SELECT status FROM trades WHERE symbol='FLO'")[0]["status"] == "OPEN"
+    clock[0] = et(9, 1)
+    tr.tick()
+    t = j.q("SELECT status, exit_reason FROM trades WHERE symbol='FLO'")[0]
+    assert t["status"] == "CLOSED" and t["exit_reason"] == "9시 전 정리"
+
+
+def test_stop_loss_suppressed_near_session_transition(env):
+    """세션 전환(장통합) 직후 몇 분은 호가가 순간적으로 튈 수 있어 그동안은 손절을 보류하고,
+    그 구간이 지나면 정상적으로 손절한다."""
+    tr, market, mv, clock, j, ctl, ex = env
+    tr.tcfg.backstop = False   # 서버 손절 안전망은 봇 로직과 별개로 발동하므로, 봇 쪽 억제 효과를 보려면 꺼야 한다
+    market.set("PEN", 1.03, 1.035)
+    tr.tick()
+    clock[0] = et(4, 1)                           # DAY→PRE 전환(04:00) 1분 후 — 전환 버퍼(3분) 안
+    market.set("PEN", 0.80, 0.82)                  # 손절가(−10%) 훨씬 아래
+    tr.tick()
+    assert j.q("SELECT status FROM trades")[0]["status"] == "OPEN"        # 전환 버퍼라 손절 보류
+    clock[0] = et(4, 5)                            # 전환 버퍼 지남
+    tr.tick()
+    t = j.q("SELECT status, exit_reason FROM trades")[0]
+    assert t["status"] == "CLOSED" and t["exit_reason"] == "손절"
+
+
+def test_regular_momentum_buys_during_regular_session_on_flow_signal(env):
+    """유일한 '장중 전용' 전략: 다른 전략들은 전부 데이마켓에만 사서 정규장 중엔 신규 매수를 안 하는데,
+    regular_momentum 은 정규장 중에 실시간 수급 신호가 뜨면 그 자리에서 산다."""
+    tr, market, mv, clock, j, ctl, ex = env
+    tr.tcfg.strategies["regular_momentum"]["entry_discount_pct"] = 0.0
+    tr.tcfg.strategies["scalp"]["enabled"] = False     # scalp 도 같은 신호를 보므로 끄고 regular_momentum 만 본다
+    clock[0] = et(11, 0)                               # 정규장
+    mv.path = [1.00, 1.01, 1.02, 1.05, 1.08]            # 전날 종가(1.02) 대비 +5.9%, 고점 대비 밀림 없음
+    market.set("PEN", 1.08, 1.085)
+    mv.flow = [{"symbol": "PEN", "kind": "burst", "ts": "x", "text": "거래 터짐", "chg": 6.0}]
+    tr.tick()
+    t = j.q("SELECT status, strategy, entry_session FROM trades WHERE symbol='PEN'")[0]
+    assert t["status"] == "OPEN" and t["strategy"] == "regular_momentum" and t["entry_session"] == "REGULAR"
+
+
+def test_regular_momentum_rejects_other_sessions(env):
+    """regular_momentum 은 정규장이 아니면 조건이 맞아도 매수하지 않는다 (SESSIONS = {REGULAR})."""
+    tr, market, mv, clock, j, ctl, ex = env
+    tr.tcfg.strategies["runner_overnight"]["enabled"] = False
+    tr.tcfg.strategies["scalp"]["enabled"] = False
+    clock[0] = et(17, 0)                                # 애프터마켓
+    mv.path = [1.00, 1.01, 1.02, 1.05, 1.08]
+    market.set("PEN", 1.08, 1.085)
+    mv.flow = [{"symbol": "PEN", "kind": "burst", "ts": "x", "text": "거래 터짐", "chg": 6.0}]
+    tr.tick()
+    assert j.q("SELECT * FROM trades") == []
+    s = j.q("SELECT ok, reason FROM signals WHERE symbol='PEN' AND strategy='regular_momentum' "
+           "ORDER BY ts DESC LIMIT 1")[0]
+    assert s["ok"] == 0 and "매수 시간 아님" in s["reason"]
 
 
 def test_unfilled_entry_cancelled_at_session_change(env):

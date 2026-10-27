@@ -12,9 +12,11 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime
+from datetime import time as dtime
+from datetime import timedelta, timezone
 
-from ..sessions import CLOSED, DAY, KST, REGULAR, SessionCalendar
+from ..sessions import AFTER, CLOSED, DAY, ET, KST, PRE, REGULAR, SessionCalendar
 from .control import Control
 from ..toss_api import TossApiError
 from .exchange import TERMINAL, Exchange
@@ -90,6 +92,7 @@ class Trader:
         self._stale_alerted: set[int] = set()
         self.mismatch: dict = {}
         self._exit_fail: dict[int, tuple[int, datetime]] = {}   # 매도 주문 실패 횟수·다음 시도 시각
+        self._flat_ref: dict[int, tuple[float, datetime]] = {}  # 변동없음 청산용: (기준가, 그 가격이 된 시각)
         self._recover()
 
     # ---------- 공통 ----------
@@ -344,6 +347,7 @@ class Trader:
             self.notifier.send(msg.scaled_out(t, delta, px, self._info(t["symbol"]), name=nm))
         if t["status"] == "CLOSED":
             self.exit_reprices.pop(w.trade_id, None)
+            self._flat_ref.pop(w.trade_id, None)
             self.notifier.send(msg.closed(self.journal.trade(w.trade_id), self._info(w.symbol), name=nm))
 
     def _name(self, symbol: str) -> str | None:
@@ -397,7 +401,7 @@ class Trader:
         if not w.aggressive:
             # 느긋한 매도(매도 구간·익절) 중에 손절·강제 청산·악재가 오면 공격적으로 바꾼다
             t = self.journal.trade(w.trade_id)
-            r = self._exit_reason(t, b.bid if b.has_quote else 0, now)
+            r = self._exit_reason(t, b.bid if b.has_quote else 0, now, session)
             if r and r[1]:
                 w.aggressive = True
                 self.journal.set_exiting(w.trade_id, r[0])
@@ -540,7 +544,43 @@ class Trader:
                 return "보유 중 악재 공시: " + ",".join(sorted(hit))
         return None
 
-    def _exit_reason(self, t: dict, bid: float, now: datetime) -> tuple[str, bool, int] | None:
+    def _morning_cutoff(self, entry_ts_s: str) -> datetime:
+        """9시 전 전량 정리: 전략별 강제 청산 시각과 상관없이 이 시각부터는 무조건 턴다
+        (깔짝깔짝 단타가 밤새 안 팔리고 남는 걸 막는 안전망). 매수가 그날 9시를 이미 지난 뒤(애프터마켓 등)
+        였으면 지난 9시가 아니라 다음 9시 — 트레이드 날짜가 아니라 실제 매수 시각 기준."""
+        h, m = (int(x) for x in self.tcfg.morning_flatten_et.split(":"))
+        entry = datetime.fromisoformat(entry_ts_s).astimezone(ET)
+        cutoff = datetime.combine(entry.date(), dtime(h, m), tzinfo=ET)
+        return cutoff if cutoff > entry else cutoff + timedelta(days=1)
+
+    def _near_session_transition(self, now: datetime, trade_date_s: str) -> bool:
+        """세션 전환 전후 몇 분은 토스 장통합(세션 간 데이터 전환) 때문에 호가가 순간적으로 튈 수 있다 —
+        그 틈에 손절이 잘못 나가지 않게 이 구간에서는 손절만 보류한다 (익절·강제청산은 그대로)."""
+        buf = self.tcfg.session_transition_buffer_minutes
+        d = date.fromisoformat(trade_date_s)
+        edges = set()
+        for s in (DAY, PRE, REGULAR, AFTER):
+            b = self.cal.bounds(d, s)
+            if b:
+                edges.update(b)
+        return any(abs((now - e).total_seconds()) <= buf * 60 for e in edges)
+
+    def _stale_exit(self, t: dict, bid: float, now: datetime, session: str) -> str | None:
+        """체결가가 stale_exit_hours 동안 stale_move_pct % 안에서만 움직였으면 '변동없음'으로 정리
+        (최대한 많이 매매해 보면서 어떤 전략이 되는지 보려는 실험 단계라, 안 움직이는 자리에 계속 묶여 있지 않게).
+        데이마켓은 원래 몇 시간씩 조용히 가다가 프리마켓에서 움직이는 구조라(오버나이트 전략들의 전제) 그동안은
+        예외 — 그 조용함까지 '변동없음'으로 잘라버리면 오버나이트 전략 자체가 성립하지 않는다."""
+        if bid <= 0 or session == DAY:
+            return None
+        ref = self._flat_ref.get(t["id"])
+        if not ref or abs(bid / ref[0] - 1) * 100 > self.tcfg.stale_move_pct:
+            self._flat_ref[t["id"]] = (bid, now)
+            return None
+        if (now - ref[1]) >= timedelta(hours=self.tcfg.stale_exit_hours):
+            return "변동없음 청산"
+        return None
+
+    def _exit_reason(self, t: dict, bid: float, now: datetime, session: str) -> tuple[str, bool, int] | None:
         """(사유, 공격적 매도 여부, 수량). 수량은 보통 남은 전량, 분할 익절이면 일부."""
         left = t["remaining"]
         if now >= datetime.fromisoformat(t["deadline"]):
@@ -549,7 +589,7 @@ class Trader:
         if bad:
             return bad, True, left
         scaled, trail = bool(t.get("scaled")), t.get("trail_pct") or 0
-        if bid > 0 and bid <= t["stop"]:
+        if bid > 0 and bid <= t["stop"] and not self._near_session_transition(now, t["trade_date"]):
             return ("본전 손절" if scaled else "손절"), True, left
         hw = max(t.get("high_water") or 0, bid)
         if scaled and trail and bid > 0 and bid <= hw * (1 - trail / 100):
@@ -559,8 +599,15 @@ class Trader:
             if 0 < q < left:
                 return SCALE_REASON, False, q
             return "익절", False, left
-        if now >= datetime.fromisoformat(t["sell_from"]) and not (scaled and trail):
-            return "매도 구간", False, left      # 분할 익절 후 나머지는 트레일링으로 강제 청산 시각까지 들고 간다
+        stale = self._stale_exit(t, bid, now, session)
+        if stale:
+            return stale, False, left
+        # 분할 익절 후 나머지는 트레일링으로 강제 청산 시각까지 들고 간다 (매도 구간·9시 정리 둘 다 안 먹힘)
+        if not (scaled and trail):
+            if now >= datetime.fromisoformat(t["sell_from"]):
+                return "매도 구간", False, left
+            if now >= self._morning_cutoff(t["entry_ts"]):
+                return "9시 전 정리", False, left   # 전략 자체 매도 시작 시각이 9시보다 늦게 잡혀도 9시엔 무조건 정리
         return None
 
     def manage_exits(self, now: datetime, session: str, force_reason: str | None = None) -> None:
@@ -585,7 +632,7 @@ class Trader:
             if b.has_quote and b.bid > (t["high_water"] or 0):
                 self.journal.update_high(t["id"], b.bid)
             r = (force_reason, True, t["remaining"]) if force_reason else \
-                self._exit_reason(t, b.bid if b.has_quote else 0, now)
+                self._exit_reason(t, b.bid if b.has_quote else 0, now, session)
             if not r:
                 continue
             reason, aggressive, qty = r
@@ -677,14 +724,22 @@ class Trader:
         if any(v["bot"] > v["account"] for v in self.mismatch.values()):
             rows += [row(p, False, "잔고 불일치 → 신규 매수 중단") for p in plans if p.ok]
             plans = [p for p in plans if not p.ok]
-        # 실제 매수는 데이마켓에서만 (그날 밤 프리~정규장 개장 직후에 파는 구조라, 다른 세션에 사면
-        # 전략이 가정한 보유 기간이 안 맞는다). 다른 세션에서도 스캔 자체는 계속 돌려서 '지금 봇이 보는 것'이
-        # 실시간으로 갱신되게 하고, 조건 통과한 건 '매수 시간 아님'으로 표시만 한다.
-        buy_allowed = session == DAY and self._entry_window(now, trade_date)
-        if not buy_allowed:
+        # 전략마다 매수 가능 세션이 다르다 (runner_overnight 류는 데이마켓에만 사서 그날 밤 판다 — 다른 세션에
+        # 사면 보유 기간 가정이 안 맞음; scalp 는 세션 상관없이 실시간 수급 신호로 바로 들어갔다 바로 턴다).
+        # 지금 세션에 못 사는 전략의 후보는 스캔은 계속 돌리되(=`지금 봇이 보는 것` 실시간 유지) '매수 시간 아님'으로만 표시.
+        def buy_window_ok(strategy_name: str) -> bool:
+            strat = self.strategies.get(strategy_name)
+            if not strat or session not in strat.SESSIONS:
+                return False
+            return self._entry_window(now, trade_date) if session == DAY else True
+
+        blocked_by_session = {(p.strategy, p.symbol) for p in plans if p.ok and not buy_window_ok(p.strategy)}
+        if blocked_by_session:
             from .strategies import SESSION_KO
-            rows = [row(p, False, f"{p.reason} — 매수 시간 아님 ({SESSION_KO.get(session, session)})") if p.ok else row(p, p.ok, p.reason)
-                    for p in plans]
+            rows = [row(p, False, f"{p.reason} — 매수 시간 아님 ({SESSION_KO.get(session, session)})")
+                   if (p.strategy, p.symbol) in blocked_by_session else row(p, p.ok, p.reason) for p in plans]
+            plans = [p for p in plans if (p.strategy, p.symbol) not in blocked_by_session]
+        if not any(p.ok for p in plans):
             self.journal.log_signals(rows)
             self.status["last_scan"] = now.isoformat(timespec="seconds")
             self.status["candidates"] = sum(1 for p in plans if p.ok)
@@ -709,7 +764,8 @@ class Trader:
             tid = self.journal.open_trade(strategy=p.strategy, symbol=p.symbol, trade_date=str(trade_date),
                                           planned_qty=qty, stop=p.stop, target=p.target, session=session,
                                           sell_from=p.sell_from, deadline=p.deadline, reason=p.reason, now=now,
-                                          scale_out=p.scale_out, trail_pct=p.trail_pct)
+                                          scale_out=p.scale_out, trail_pct=p.trail_pct,
+                                          context={**p.context, "planned_qty": qty, "entry_limit": p.price})
             self._submit(tid, p.symbol, "BUY", qty, p.price, "entry", session, now, p.reason)
             open_trades = self.journal.open_trades()
             acct.cash -= qty * p.price

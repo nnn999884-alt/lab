@@ -249,6 +249,18 @@ def bottom_bounce_text(sym: str, name: str | None, price: float, low: float, lev
     ])
 
 
+def steady_text(sym: str, name: str | None, price: float | None, chg: float | None, n: int, total: int,
+                 window_hours: float, session_ko: str) -> str:
+    """한 번에 크게 안 터지고 거래대금 랭킹에 꾸준히 올라와 있는 종목('사부작사부작') — 급등 전조·거래 터짐 같은
+    단발성 신호와는 다른 성격이라 따로 알린다."""
+    from .trading.messages import pct, px
+    return "\n".join([
+        _head("🫧 꾸준히 거래 붙음", sym, name),
+        f"💵 {px(price)}" + (f" ({pct(chg)})" if chg is not None else "") + f" · {session_ko}",
+        f"최근 {window_hours:.0f}시간 중 {n}/{total}회 거래대금 상위권 — 한 번 터진 게 아니라 계속 관심이 붙어 있음",
+    ])
+
+
 def signal_text(sym: str, name: str | None, lv: dict, session_ko: str, tags: list | None = None) -> str:
     """거래 터짐 신호 (세션 상관없이, 짧게). 급등 전조 조건까지 맞으면 alert_text 를 대신 보낸다."""
     from .trading.messages import money_s, pct, px

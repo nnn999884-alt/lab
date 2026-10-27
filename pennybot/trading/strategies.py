@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 
 from ..screener import edgar as ed
-from ..sessions import DAY, PRE, REGULAR, SessionCalendar
+from ..sessions import DAY, PRE, REGULAR, AFTER, SessionCalendar
 
 POSITIVE_DILUTION = {"ATM_TERMINATED", "REGISTRATION_WITHDRAWN", "OFFERING_TERMINATED", "BUYBACK"}
 POSITIVE_NEWS = {"MATERIAL_CONTRACT", "COMPLIANCE_REGAINED", "FDA_APPROVAL", "MATERIAL_NEWS"}
@@ -41,6 +41,7 @@ class Plan:
     deadline: datetime | None = None
     scale_out: float = 1.0      # 익절가에서 팔 비율 (1 = 전량)
     trail_pct: float = 0.0      # 분할 익절 후 나머지: 고점 대비 이만큼 빠지면 청산 (0 = 없음)
+    context: dict = field(default_factory=dict)   # 매매일지용 상세 근거 (reason 문구로는 안 남는 raw 값들)
 
 
 @dataclass
@@ -102,6 +103,7 @@ def dilution_gate(sym: str, price: float, ctx: Ctx, has_catalyst: bool, max_flag
 
 class Strategy:
     name = ""
+    SESSIONS = {DAY}   # 이 세션에서만 신규 매수 (대부분 '데이마켓에 사서 그날 밤 판다' 구조라 데이마켓만)
 
     def __init__(self, params: dict):
         self.p = params
@@ -112,7 +114,8 @@ class Strategy:
     def _reject(self, sym, why, price=0.0) -> Plan:
         return Plan(self.name, sym, False, why, price=price)
 
-    def _plan(self, ctx: Ctx, sym: str, price: float, reason: str, score: float, sell_from: datetime) -> Plan:
+    def _plan(self, ctx: Ctx, sym: str, price: float, reason: str, score: float, sell_from: datetime,
+             context: dict | None = None) -> Plan:
         p = self.p
         deadline = ctx.regular_open + timedelta(minutes=p.get("exit_after_open_minutes",
                                                                ctx.tcfg.forced_exit_minutes))
@@ -120,7 +123,8 @@ class Strategy:
                     stop=price * (1 - p["stop_loss_pct"] / 100),
                     target=price * (1 + p["take_profit_pct"] / 100),
                     sell_from=min(sell_from, deadline), deadline=deadline,
-                    scale_out=p.get("scale_out_pct", 1.0), trail_pct=p.get("trail_pct", 0.0))
+                    scale_out=p.get("scale_out_pct", 1.0), trail_pct=p.get("trail_pct", 0.0),
+                    context=context or {})
 
     def _entry_price(self, b) -> float:
         # 스프레드가 좁으면 ask 로, 넓으면 중간가 근처 지정가 → 거기서 entry_discount_pct 만큼 더 낮게 건다
@@ -186,7 +190,12 @@ class RunnerOvernight(Strategy):
             out.append(self._plan(ctx, sym, self._entry_price(b),
                                   f"전날 +{r['change_pct']:.0f}%" + (f", 회전 {rot:.1f}회" if rot else "")
                                   + f", 데이마켓 {chg:+.1f}%, {note}",
-                                  score=r["change_pct"] / 10 + (rot or 0), sell_from=self._sell_from(ctx)))
+                                  score=r["change_pct"] / 10 + (rot or 0), sell_from=self._sell_from(ctx),
+                                  context={"prev_change_pct": r["change_pct"], "prev_close_loc": r.get("close_loc"),
+                                          "rotation": rot, "day_change_pct": chg, "ask": b.ask, "bid": b.bid,
+                                          "spread_pct": b.spread_pct, "ask_size": b.ask_size,
+                                          "short_ratio": sr, "short_ratio_5d": sr5, "dilution_note": note,
+                                          "has_recent_catalyst": bool(recent)}))
         return out
 
 
@@ -221,7 +230,10 @@ class DilutionCatalyst(Strategy):
                                   f"{', '.join(LABEL[h] for h in sorted(hits))} "
                                   f"({SESSION_KO.get(f['session'], f['session'])} 공개), 반영 {run:+.1f}%, {note}",
                                   score=20 + (10 if "ATM_TERMINATED" in hits else 0) - run,
-                                  sell_from=self._sell_from(ctx)))
+                                  sell_from=self._sell_from(ctx),
+                                  context={"filing_events": sorted(hits), "filing_session": f["session"],
+                                          "prev_close": pc, "runup_pct": run, "ask": b.ask, "bid": b.bid,
+                                          "spread_pct": b.spread_pct, "dilution_note": note}))
         return out
 
 
@@ -268,7 +280,10 @@ class DayIgnition(Strategy):
                 out.append(self._reject(sym, why, b.mid))
                 continue
             out.append(self._plan(ctx, sym, self._entry_price(b), f"{cat}, 데이마켓 {move:+.1f}%, {note}",
-                                  score=move + (10 if news else 0), sell_from=self._sell_from(ctx)))
+                                  score=move + (10 if news else 0), sell_from=self._sell_from(ctx),
+                                  context={"catalyst": cat, "prev_close": pc, "day_high": hi, "move_pct": move,
+                                          "ask": b.ask, "bid": b.bid, "spread_pct": b.spread_pct,
+                                          "dilution_note": note, "has_news_catalyst": news}))
         return out
 
 
@@ -314,4 +329,101 @@ class DayDip(Strategy):
         return out
 
 
-ALL = {cls.name: cls for cls in (RunnerOvernight, DilutionCatalyst, DayIgnition, DayDip)}
+class RegularMomentum(Strategy):
+    """정규장 중에 새로 생기는 호재·수급으로 사는 유일한 '장중 전용' 전략. 나머지는 전부 데이마켓에 사서
+    그날 밤·개장 직후 파는 구조라 정규장이 열려 있는 동안은 신규 매수를 안 한다 — 정규장 중에 새로 터지는
+    공시·내부자 매수·실시간 수급을 그냥 흘려보내고 있었다. day_ignition 과 같은 뼈대지만 기준 세션이 DAY가
+    아니라 REGULAR (오늘 정규장 시작 이후 공시만, 오늘 정규장 가격 경로만 본다). 숫자 전부 백테스트 전 초안."""
+    name = "regular_momentum"
+    SESSIONS = {REGULAR}
+
+    def scan(self, ctx: Ctx) -> list[Plan]:
+        reg_open, reg_close = ctx.bound(REGULAR)
+        catalysts: dict[str, str] = {}
+        for f in ctx.mv.filings_since(reg_open):
+            ev = events_of(f)
+            if not f["symbol"] or ev & FINANCING_WORDS:
+                continue
+            if f["form"] == "4" and (f["insider_buy_usd"] or 0) >= self.p["min_insider_usd"]:
+                catalysts[f["symbol"]] = "내부자 장내매수"
+            elif ev & POSITIVE_NEWS and not (f.get("direction") or 0) < 0:
+                catalysts[f["symbol"]] = "호재 보도자료" if f["form"] == "NEWS" else "호재 공시"
+        for ev in ctx.mv.recent_flow(ctx.now - timedelta(minutes=self.p["signal_window_minutes"])):
+            catalysts.setdefault(ev["symbol"], f"수급 신호({ev['kind']})")
+        out = []
+        for sym, cat in catalysts.items():
+            if sym in ctx.held:
+                continue
+            pc = ctx.mv.prev_close(sym, ctx.trade_date)
+            path = [p for _, p in ctx.mv.session_path(sym, ctx.trade_date, REGULAR)]
+            if not pc or len(path) < 3:
+                continue
+            last, hi = path[-1], max(path)
+            move = (last / pc - 1) * 100
+            if move < self.p["min_move_pct"]:
+                continue
+            if move > self.p["max_move_pct"]:
+                out.append(self._reject(sym, f"{cat}, 이미 {move:+.1f}% (늦음)", last))
+                continue
+            if last < hi * (1 - self.p["max_pullback_pct"] / 100):
+                out.append(self._reject(sym, f"{cat}, 고점 대비 밀림", last))
+                continue
+            b, bad = quote_check(sym, ctx)
+            if bad:
+                out.append(self._reject(sym, bad, last))
+                continue
+            news = "수급 신호" not in cat
+            why, note = dilution_gate(sym, b.mid, ctx, has_catalyst=news)
+            if why:
+                out.append(self._reject(sym, why, b.mid))
+                continue
+            price = self._entry_price(b)
+            deadline = min(ctx.now + timedelta(minutes=self.p["max_hold_minutes"]), reg_close)
+            out.append(Plan(self.name, sym, True, f"{cat}, 정규장 중 {move:+.1f}%, {note}", score=move, price=price,
+                            stop=price * (1 - self.p["stop_loss_pct"] / 100),
+                            target=price * (1 + self.p["take_profit_pct"] / 100),
+                            sell_from=deadline, deadline=deadline, scale_out=1.0, trail_pct=0.0,
+                            context={"catalyst": cat, "prev_close": pc, "day_high": hi, "move_pct": move,
+                                    "ask": b.ask, "bid": b.bid, "spread_pct": b.spread_pct,
+                                    "dilution_note": note, "has_news_catalyst": news}))
+        return out
+
+
+class Scalp(Strategy):
+    """깔짝깔짝 단타: 실시간 수급(거래 터짐·애프터 누적·바닥 재반등·+20% 돌파) 신호가 뜨면 세션 상관없이 바로 들어가서
+    목표가 닿으면 바로 턴다. runner_overnight 류처럼 '밤새 들고 다음 세션에 판다'가 아니라 그 자리에서 짧게 먹고 나옴
+    — 목표가 도달 시 익절은 _exit_reason() 의 익절 체크가 세션·시간 상관없이 항상 먹혀서 별도 처리가 필요 없다.
+    sell_from 은 deadline 과 같게 둔다 (지금으로 두면 '매도 구간' 체크가 사자마자 바로 먹혀서 들고 있지도 못하고 팔림)."""
+    name = "scalp"
+    SESSIONS = {DAY, PRE, REGULAR, AFTER}
+
+    def scan(self, ctx: Ctx) -> list[Plan]:
+        since = ctx.now - timedelta(minutes=self.p.get("signal_window_minutes", 3))
+        out, seen = [], set()
+        for ev in ctx.mv.recent_flow(since):
+            sym = ev["symbol"]
+            if sym in ctx.held or sym in seen:
+                continue
+            seen.add(sym)
+            b, bad = quote_check(sym, ctx)
+            if bad:
+                out.append(self._reject(sym, f"{ev['kind']} 신호, {bad}", 0))
+                continue
+            why, note = dilution_gate(sym, b.mid, ctx, has_catalyst=True)
+            if why:
+                out.append(self._reject(sym, why, b.mid))
+                continue
+            price = self._entry_price(b)
+            out.append(Plan(self.name, sym, True, f"수급 신호({ev['kind']}): {ev['text']}, {note}",
+                            score=abs(ev.get("chg") or 0), price=price,
+                            stop=price * (1 - self.p["stop_loss_pct"] / 100),
+                            target=price * (1 + self.p["take_profit_pct"] / 100),
+                            sell_from=ctx.now + timedelta(minutes=self.p["max_hold_minutes"]),
+                            deadline=ctx.now + timedelta(minutes=self.p["max_hold_minutes"]),
+                            scale_out=1.0, trail_pct=0.0,
+                            context={"flow_kind": ev["kind"], "flow_text": ev["text"], "flow_chg": ev.get("chg"),
+                                    "ask": b.ask, "bid": b.bid, "spread_pct": b.spread_pct, "dilution_note": note}))
+        return out
+
+
+ALL = {cls.name: cls for cls in (RunnerOvernight, DilutionCatalyst, DayIgnition, DayDip, RegularMomentum, Scalp)}

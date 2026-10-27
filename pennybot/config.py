@@ -106,6 +106,13 @@ class CollectorConfig:
     # 애프터마켓은 거래가 느릿느릿 쌓여서 1분 급등(spike_up) 기준(+4%)에 거의 안 걸린다 — 정규장 종가 대비
     # 누적으로 이만큼 올랐으면 따로 잡는다 (early20 의 애프터마켓 버전)
     after_move_pct: float = 10.0
+    # '사부작사부작' 지속 관심: 한 번 크게 터지진 않지만 거래대금 랭킹에 꾸준히 올라와 있는 종목 (poll_rankings 가
+    # 이미 채우는 테이블을 재사용 — API 호출 추가 없음). 숫자는 백테스트 전 초안.
+    steady_window_hours: float = 2.0     # 이 시간 동안의 랭킹 기록을 본다
+    steady_rank_cutoff: int = 30         # 유니버스 내 거래대금 랭킹 상위 N위 안에 들었는지
+    steady_min_ratio: float = 0.5        # 그 기간 폴링 중 이 비율 이상 랭킹에 있었으면 '꾸준함'
+    steady_min_polls: int = 10           # 폴링 기록이 이보다 적으면(세션 시작 직후) 판단 보류
+    steady_cooldown_hours: float = 2.0   # 같은 종목 재알림 간격
     precursor_daily_alert: int = 10  # 장 마감 뒤 점수 계산이 끝나면 상위 N종목 목록 알림 (0 = 끔)
     vsignal: bool = True             # 가상 매매 알림 (실제 주문 없음) — 전략 정의는 pennybot/vstrat.py
     keep_days: int = 20            # 고가 +keep_min_run% 급등주는 이 거래일 수만큼 계속 감시 (며칠 뒤 다시 오르는 경우)
@@ -150,6 +157,10 @@ class TradingConfig:
     day_open_wait_minutes: int = 15      # 데이마켓 개장 직후 호가가 얇을 때는 매수하지 않음
     min_book_ratio: float = 0.3          # 최우선 매도 잔량이 주문 수량의 30% 이상일 때만 (아니면 수량 축소)
     stale_alert_minutes: int = 30        # 강제 청산 시각이 이만큼 지나도 남아 있으면 알림
+    stale_exit_hours: float = 3.0        # 체결가가 이 시간 동안 stale_move_pct 넘게 안 움직이면 '변동없음'으로 청산
+    stale_move_pct: float = 1.0          # 이 % 안에서만 움직였으면 '변동없음'으로 친다
+    morning_flatten_et: str = "09:00"    # 정규장 전 이 시각(ET)부터는 전략 상관없이 전량 강제 청산
+    session_transition_buffer_minutes: int = 3   # 세션 전환 전후 이 시간 동안은 장통합 호가 오류 때문에 손절 보류
     fee_pct: float = 0.1                 # 매매 수수료 % (실거래는 시작할 때 토스 /commissions 값으로 덮어씀)
     use_stream: bool = True              # 토스 웹소켓(호가·체결·내 주문 이벤트). 끊기면 자동으로 REST
     stream_max_age_seconds: float = 5.0  # 웹소켓 호가가 이보다 오래되면 REST 호가
@@ -203,6 +214,18 @@ class TradingConfig:
         "day_dip": {"enabled": False, "budget_pct": 0.10, "max_positions": 2,
                     "dip_pct": 12.0, "stop_loss_pct": 8.0, "retrace": 0.5, "take_profit_pct": 10.0,
                     "no_news_days": 3, "stall_minutes": 10, "gap_risk_pct": 25.0},
+        # 유일한 '장중 전용' 전략 — 정규장 중에 새로 터지는 공시·내부자 매수·실시간 수급으로 산다.
+        # 나머지는 전부 데이마켓에만 사서 정규장 중엔 신규 매수를 안 하기 때문에 따로 둠. 숫자 전부 백테스트 전 초안.
+        "regular_momentum": {"enabled": True, "budget_pct": 0.20, "max_positions": 3,
+                             "min_insider_usd": 10000, "min_move_pct": 3.0, "max_move_pct": 20.0,
+                             "max_pullback_pct": 4.0, "signal_window_minutes": 5,
+                             "entry_discount_pct": 1.0, "max_hold_minutes": 90,
+                             "take_profit_pct": 8.0, "stop_loss_pct": 6.0, "gap_risk_pct": 15.0},
+        # 데이·프리·정규·애프터 상관없이 실시간 수급 신호(거래 터짐 등)가 뜨면 바로 들어가서 목표가에 바로 턴다.
+        # 숫자 전부 백테스트 전 초안 — 다른 전략들과 달리 세션 전환을 기다리지 않고 자주 돌 수 있어서 예산을 작게 잡음.
+        "scalp": {"enabled": True, "budget_pct": 0.15, "max_positions": 3,
+                 "signal_window_minutes": 3, "entry_discount_pct": 1.0, "max_hold_minutes": 120,
+                 "take_profit_pct": 8.0, "stop_loss_pct": 6.0, "gap_risk_pct": 20.0},
     })
 
     def spread_cap(self, session: str) -> float:

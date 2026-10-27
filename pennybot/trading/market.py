@@ -176,6 +176,14 @@ class MarketView:
                 "direction")
         return [dict(zip(keys, r)) for r in rows]
 
+    def recent_flow(self, since: datetime, kinds=("burst", "after_move", "bottom_bounce", "early20", "steady")) -> list[dict]:
+        """수집기가 실시간 체결로 잡아낸 '수급 붙음' 신호 (거래 터짐·애프터 누적·바닥 재반등·+20% 돌파) —
+        장중 눌림 없는 단타용 진입 트리거. 최신 것 먼저."""
+        q = ",".join("?" * len(kinds))
+        rows = self.q(f"SELECT symbol, kind, ts, text, value FROM events WHERE kind IN ({q}) AND ts >= ? "
+                     "ORDER BY ts DESC", (*kinds, _utc(since)))
+        return [{"symbol": s, "kind": k, "ts": ts, "text": t, "chg": v} for s, k, ts, t, v in rows]
+
     def filings_for(self, symbol: str, days: int, now: datetime) -> list[dict]:
         since = _utc(now - timedelta(days=days))
         rows = self.q("""SELECT form, items, accepted, events FROM filings WHERE symbol=? AND accepted >= ? AND accepted <= ?

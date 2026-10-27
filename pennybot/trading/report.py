@@ -11,8 +11,9 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 SESS = {"DAY": "데이", "PRE": "프리", "REGULAR": "정규", "AFTER": "애프터"}
-STRAT = {"runner_overnight": "러너 오버나이트", "dilution_catalyst": "희석 해소 촉매",
-         "day_ignition": "데이마켓 점화", "day_dip": "급락 반등"}
+STRAT = {"runner_overnight": "나이트러너", "dilution_catalyst": "희석 디톡스",
+         "day_ignition": "이그니션", "day_dip": "바닥 캐치", "regular_momentum": "데이트레이더",
+         "scalp": "플래시 스캘프"}
 
 
 def _utc(ts: datetime) -> str:

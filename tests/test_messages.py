@@ -27,7 +27,7 @@ def test_name_appended_when_known_omitted_when_not():
 
 def test_formats():
     buy = msg.buy_filled(T, 120, 1.2345, "DAY")
-    assert "120주 × $1.2345 = $148.14" in buy and "러너 오버나이트 · 데이마켓" in buy and "손절 $1.11" in buy
+    assert "120주 × $1.2345 = $148.14" in buy and "나이트러너 · 데이마켓" in buy and "손절 $1.11" in buy
     c = msg.closed(T)
     assert "+$11.20 (+7.6%)" in c and "$1.2345 → $1.33 · 120주" in c and "데이마켓 → 프리마켓" in c
     assert msg.usd(-3.5, sign=True) == "−$3.50" and msg.px(12.3) == "$12.30" and msg.pct(None) == "-"

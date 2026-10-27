@@ -38,7 +38,7 @@ def test_read_endpoints(server):
     ov = get(base + "/api/overview")
     assert ov["mode"] == "paper" and ov["open_trades"] == 3
     st = {s["strategy"]: s for s in get(base + "/api/strategies")}
-    assert set(st) == {"runner_overnight", "dilution_catalyst", "day_ignition", "day_dip"}
+    assert set(st) == {"runner_overnight", "dilution_catalyst", "day_ignition", "day_dip", "regular_momentum", "scalp"}
     assert st["day_ignition"]["trades"] == 12 and st["day_dip"]["config_enabled"] is False
     pos = get(base + "/api/positions")
     assert {p["symbol"] for p in pos} == {"PENX", "BIOZ", "NANO"}

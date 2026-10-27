@@ -975,8 +975,8 @@ table.ca-tbl tr.off .ca-fill { opacity: .35; }
 "use strict";
 { const w = new URLSearchParams(location.search).get("w"); if (w) { const s = document.createElement("style"); s.textContent = `main{max-width:${+w}px;margin:0;padding-left:12px;padding-right:12px} .tabs{max-width:${+w}px}`; document.head.appendChild(s); } }
 const SESS = { DAY: "데이마켓", PRE: "프리마켓", REGULAR: "정규장", AFTER: "애프터마켓", CLOSED: "휴장" };
-const STRAT = { runner_overnight: "러너 오버나이트", dilution_catalyst: "희석 해소 촉매", day_ignition: "데이마켓 점화", day_dip: "데이마켓 급락 반등" };
-const STRAT_COLOR = { runner_overnight: "--series-1", dilution_catalyst: "--series-2", day_ignition: "--series-3", day_dip: "--series-4" };
+const STRAT = { runner_overnight: "나이트러너", dilution_catalyst: "희석 디톡스", day_ignition: "이그니션", day_dip: "바닥 캐치", regular_momentum: "데이트레이더", scalp: "플래시 스캘프" };
+const STRAT_COLOR = { runner_overnight: "--series-1", dilution_catalyst: "--series-2", day_ignition: "--series-3", day_dip: "--series-4", regular_momentum: "--teal", scalp: "--violet" };
 const EVENT = { ATM_TERMINATED: "ATM 종료", OFFERING_TERMINATED: "공모 철회", REGISTRATION_WITHDRAWN: "증자 등록 철회", BUYBACK: "자사주 매입",
   COMPLIANCE_REGAINED: "상장 요건 회복", MATERIAL_CONTRACT: "중요 계약", ATM_NEW: "ATM 신규", REGISTERED_DIRECT: "등록 직접 공모",
   PUBLIC_OFFERING: "공모", PRIVATE_PLACEMENT: "사모", SECURITIES_PURCHASE_AGREEMENT: "증권매매계약", EQUITY_LINE: "주식 매수 약정",
@@ -1761,8 +1761,8 @@ function candleChart(box, bars, { height = 240, ma = [5, 20], log = false, label
 
 /* ---------- 방금 일어난 일 ---------- */
 let feedFilter = "hot", feedSeen = null;
-const HOT = k => k === "precursor" || k === "burst" || k === "reaccel" || k === "approach" || k === "bottom_bounce" || k === "halt" || k === "spike_up";   // '중요' 보기 (+ 호재 공시)
-const KIND = k => k === "precursor" ? ["급등 전조", "k-pre"] : k === "burst" ? ["거래 터짐", "k-burst"] : k === "reaccel" ? ["재가속", "k-pre"] : k === "approach" ? ["고점 접근", "k-pre"] : k === "bottom_bounce" ? ["바닥 재반등", "k-pre"] : k === "halt" ? ["정지", "k-halt"]
+const HOT = k => k === "precursor" || k === "burst" || k === "reaccel" || k === "approach" || k === "bottom_bounce" || k === "steady" || k === "halt" || k === "spike_up";   // '중요' 보기 (+ 호재 공시)
+const KIND = k => k === "precursor" ? ["급등 전조", "k-pre"] : k === "burst" ? ["거래 터짐", "k-burst"] : k === "reaccel" ? ["재가속", "k-pre"] : k === "approach" ? ["고점 접근", "k-pre"] : k === "bottom_bounce" ? ["바닥 재반등", "k-pre"] : k === "steady" ? ["지속 관심", "k-pre"] : k === "halt" ? ["정지", "k-halt"]
   : k === "spike_up" ? ["급등", "k-up"] : k === "spike_dn" ? ["급락", "k-dn"] : k.startsWith("rank:") ? ["랭킹", "k-rank"]
   : k === "filing" ? ["공시", ""] : [k, ""];
 function beep() {

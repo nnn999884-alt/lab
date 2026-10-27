@@ -77,3 +77,24 @@ def test_collector_stores_news_for_universe_and_market_view_merges(tmp_path):
     mv_past = MarketView(str(tmp_path / "m.db"), None, SessionCalendar(), None,
                          clock=lambda: datetime(2026, 10, 22, 1, tzinfo=timezone.utc))
     assert not mv_past.filings_since(since)
+
+
+def test_recent_flow_reads_realtime_kinds_since_cutoff(tmp_path):
+    """수집기가 실시간 체결로 쓴 거래 터짐/애프터 누적/바닥 재반등/+20% 돌파 이벤트를 단타 전략이 읽을 수 있어야 한다 —
+    cutoff 이전 것과 다른 kind(공시 등)는 섞이면 안 되고, 최신 것이 먼저 와야 한다."""
+    store = Store(tmp_path / "m.db")
+    store.db.execute("INSERT INTO events (ts, symbol, kind, text, value) VALUES "
+                      "('2026-10-22T03:00:00+00:00', 'OLD', 'burst', '옛날 신호', 10)")
+    store.db.execute("INSERT INTO events (ts, symbol, kind, text, value) VALUES "
+                      "('2026-10-22T03:05:00+00:00', 'BRS', 'burst', '거래 터짐', 12.5)")
+    store.db.execute("INSERT INTO events (ts, symbol, kind, text, value) VALUES "
+                      "('2026-10-22T03:06:00+00:00', 'BTM', 'bottom_bounce', '바닥 재반등', 16.0)")
+    store.db.execute("INSERT INTO events (ts, symbol, kind, text, value) VALUES "
+                      "('2026-10-22T03:06:30+00:00', 'OTH', 'filing', '관련없는 공시', 0)")
+    store.db.commit()
+    mv = MarketView(str(tmp_path / "m.db"), None, SessionCalendar(), None,
+                    clock=lambda: datetime(2026, 10, 22, 3, 7, tzinfo=timezone.utc))
+    got = mv.recent_flow(since=datetime(2026, 10, 22, 3, 4, tzinfo=timezone.utc))
+    assert [g["symbol"] for g in got] == ["BTM", "BRS"]   # OLD 는 cutoff 전, OTH 는 kind 가 다름, 최신 순
+    assert got[0] == {"symbol": "BTM", "kind": "bottom_bounce", "ts": "2026-10-22T03:06:00+00:00",
+                      "text": "바닥 재반등", "chg": 16.0}
