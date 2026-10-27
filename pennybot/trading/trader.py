@@ -93,6 +93,7 @@ class Trader:
         self.mismatch: dict = {}
         self._exit_fail: dict[int, tuple[int, datetime]] = {}   # 매도 주문 실패 횟수·다음 시도 시각
         self._flat_ref: dict[int, tuple[float, datetime]] = {}  # 변동없음 청산용: (기준가, 그 가격이 된 시각)
+        self._decline_ref: dict[int, datetime] = {}  # 수급 없는 하락 청산용: 마지막으로 신고점 찍은 시각
         self._recover()
 
     # ---------- 공통 ----------
@@ -348,6 +349,7 @@ class Trader:
         if t["status"] == "CLOSED":
             self.exit_reprices.pop(w.trade_id, None)
             self._flat_ref.pop(w.trade_id, None)
+            self._decline_ref.pop(w.trade_id, None)
             self.notifier.send(msg.closed(self.journal.trade(w.trade_id), self._info(w.symbol), name=nm))
 
     def _name(self, symbol: str) -> str | None:
@@ -580,6 +582,20 @@ class Trader:
             return "변동없음 청산"
         return None
 
+    def _decline_exit(self, t: dict, bid: float, now: datetime) -> str | None:
+        """매집(수급) 없이 계속 떨어지기만 하는 자리 — 손절가까진 안 갔어도 decline_exit_hours 동안 새 고점을
+        한 번도 못 만들면 정리한다. stale_exit 은 '거의 안 움직임'만 잡고, 서서히 쭉 빠지기만 하는 건 못 잡는다."""
+        if bid <= 0:
+            return None
+        hw = max(t.get("high_water") or 0, bid)
+        last = self._decline_ref.get(t["id"])
+        if not last or bid >= hw:
+            self._decline_ref[t["id"]] = now
+            return None
+        if (now - last) >= timedelta(hours=self.tcfg.decline_exit_hours):
+            return "수급 없는 하락 청산"
+        return None
+
     def _exit_reason(self, t: dict, bid: float, now: datetime, session: str) -> tuple[str, bool, int] | None:
         """(사유, 공격적 매도 여부, 수량). 수량은 보통 남은 전량, 분할 익절이면 일부."""
         left = t["remaining"]
@@ -602,6 +618,9 @@ class Trader:
         stale = self._stale_exit(t, bid, now, session)
         if stale:
             return stale, False, left
+        decline = self._decline_exit(t, bid, now)
+        if decline:
+            return decline, False, left
         # 분할 익절 후 나머지는 트레일링으로 강제 청산 시각까지 들고 간다 (매도 구간·9시 정리 둘 다 안 먹힘)
         if not (scaled and trail):
             if now >= datetime.fromisoformat(t["sell_from"]):

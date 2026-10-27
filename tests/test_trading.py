@@ -257,6 +257,33 @@ def test_stale_exit_does_not_apply_during_day_session(env):
     assert j.q("SELECT status FROM trades")[0]["status"] == "OPEN"
 
 
+def test_decline_exit_without_support_over_hours(env):
+    """손절가까진 안 가도, 매집(수급) 없이 신고점을 decline_exit_hours 동안 한 번도 못 만들면 정리한다
+    (서서히 계속 빠지기만 하는 자리 — stale_exit 은 '거의 안 움직임'만 잡아서 이런 경우를 못 잡는다)."""
+    tr, market, mv, clock, j, ctl, ex = env
+    tr.tcfg.strategies["scalp"]["entry_discount_pct"] = 0.0
+    tr.tcfg.strategies["scalp"]["max_hold_minutes"] = 600       # 강제 청산 시각이 끼어들지 않게
+    tr.tcfg.strategies["scalp"]["stop_loss_pct"] = 50.0         # 손절은 절대 안 걸리게
+    clock[0] = et(10, 0)
+    market.set("FLO", 2.00, 2.02)
+    mv.flow = [{"symbol": "FLO", "kind": "burst", "ts": "x", "text": "거래 터짐", "chg": 12.0}]
+    tr.tick()                                    # 매수 체결
+    tr.tick()                                    # 여기서 신고점 기준 시각 최초 등록
+    mv.flow = []
+    clock[0] = et(10, 30)
+    market.set("FLO", 2.05, 2.07)                 # 신고점 (고점 시각 갱신)
+    tr.tick()
+    assert j.q("SELECT status FROM trades WHERE symbol='FLO'")[0]["status"] == "OPEN"
+    clock[0] = et(13, 59)                         # 신고점 뒤 3h29m — 가격은 그 아래, 수급 없이 하락만
+    market.set("FLO", 1.95, 1.97)
+    tr.tick()
+    assert j.q("SELECT status FROM trades WHERE symbol='FLO'")[0]["status"] == "OPEN"   # 아직 3.5시간 안 됨
+    clock[0] = et(14, 1)                          # 3h31m
+    tr.tick()
+    t = j.q("SELECT status, exit_reason FROM trades WHERE symbol='FLO'")[0]
+    assert t["status"] == "CLOSED" and t["exit_reason"] == "수급 없는 하락 청산"
+
+
 def test_morning_cutoff_flattens_positions_regardless_of_strategy_deadline(env):
     """전략 자체 강제 청산 시각이 9시(ET)보다 늦게 잡혀 있어도, 9시가 되면 전략 상관없이 정리한다."""
     tr, market, mv, clock, j, ctl, ex = env
