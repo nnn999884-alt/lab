@@ -197,6 +197,10 @@ tbody tr { cursor: pointer; } tbody tr:hover td { background: var(--panel-2); }
   .pick-r { grid-column: 2; text-align: right; }
   .pick-why { grid-column: 1 / -1; white-space: normal; }
 }
+.reason-row { display: flex; justify-content: space-between; gap: 10px; padding: 4px 8px; font-size: 12.5px; }
+.reason-row + .reason-row { border-top: 1px solid var(--line-2); }
+.reason-label { color: var(--text-2); }
+.reason-n { color: var(--text-3); font-family: var(--mono); white-space: nowrap; }
 td .chip, td .ev-kind, td .det-res, td .oh-tag { vertical-align: middle; }
 .brief-wrap > summary, .shorts-wrap > summary, .bot-wrap > summary { list-style: none; margin: 0; padding: 10px 14px; display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; color: var(--text); }
 .brief-wrap > summary::-webkit-details-marker, .shorts-wrap > summary::-webkit-details-marker, .bot-wrap > summary::-webkit-details-marker { display: none; }
@@ -620,6 +624,10 @@ table.ca-tbl tr.off .ca-fill { opacity: .35; }
     <section class="card pick-wrap" id="pick-wrap">
       <h2><i class="ic ic-target" aria-hidden="true"></i>지금 봇이 보는 것</h2>
       <div id="pick-body"></div>
+      <details class="reasons-wrap" id="reasons-wrap" style="margin-top:10px">
+        <summary class="sub">최근 6시간 탈락 사유 요약 (왜 매매를 안 하는지)</summary>
+        <div id="reasons-body" style="margin-top:6px"></div>
+      </details>
     </section>
     <details class="card brief-wrap" id="brief-wrap">
       <summary><span class="bot-title"><i class="ic ic-news" aria-hidden="true"></i>오늘 브리핑</span><span class="sub" id="brief-sub" style="margin:0 0 0 8px"></span></summary>
@@ -975,8 +983,8 @@ table.ca-tbl tr.off .ca-fill { opacity: .35; }
 "use strict";
 { const w = new URLSearchParams(location.search).get("w"); if (w) { const s = document.createElement("style"); s.textContent = `main{max-width:${+w}px;margin:0;padding-left:12px;padding-right:12px} .tabs{max-width:${+w}px}`; document.head.appendChild(s); } }
 const SESS = { DAY: "데이마켓", PRE: "프리마켓", REGULAR: "정규장", AFTER: "애프터마켓", CLOSED: "휴장" };
-const STRAT = { runner_overnight: "나이트러너", dilution_catalyst: "희석 디톡스", day_ignition: "이그니션", day_dip: "바닥 캐치", regular_momentum: "데이트레이더", scalp: "플래시 스캘프" };
-const STRAT_COLOR = { runner_overnight: "--series-1", dilution_catalyst: "--series-2", day_ignition: "--series-3", day_dip: "--series-4", regular_momentum: "--teal", scalp: "--violet" };
+const STRAT = { runner_overnight: "나이트러너", dilution_catalyst: "희석 디톡스", day_ignition: "이그니션", day_dip: "바닥 캐치", regular_momentum: "데이트레이더", scalp: "플래시 스캘프", steady_trend: "슬로우번" };
+const STRAT_COLOR = { runner_overnight: "--series-1", dilution_catalyst: "--series-2", day_ignition: "--series-3", day_dip: "--series-4", regular_momentum: "--teal", scalp: "--violet", steady_trend: "--good" };
 const EVENT = { ATM_TERMINATED: "ATM 종료", OFFERING_TERMINATED: "공모 철회", REGISTRATION_WITHDRAWN: "증자 등록 철회", BUYBACK: "자사주 매입",
   COMPLIANCE_REGAINED: "상장 요건 회복", MATERIAL_CONTRACT: "중요 계약", ATM_NEW: "ATM 신규", REGISTERED_DIRECT: "등록 직접 공모",
   PUBLIC_OFFERING: "공모", PRIVATE_PLACEMENT: "사모", SECURITIES_PURCHASE_AGREEMENT: "증권매매계약", EQUITY_LINE: "주식 매수 약정",
@@ -2063,6 +2071,19 @@ async function loadPick() {
   }
 }
 
+async function loadReasons() {
+  const r = await api("/api/signal_reasons?hours=6");
+  if (unchanged("reasons", r)) return;
+  const box = $("reasons-body"); box.replaceChildren();
+  if (!r.total_rejected) { box.appendChild(mk("div", "empty", "최근 6시간 탈락 기록 없음")); return; }
+  r.top.forEach(x => {
+    const row = mk("div", "reason-row");
+    row.append(mk("span", "reason-label", x.reason), mk("span", "reason-n", `${x.count}건`));
+    box.appendChild(row);
+  });
+  box.appendChild(mk("div", "sub", `총 탈락 ${r.total_rejected}건`));
+}
+
 /* ---------- 가상 매매 기록 ---------- */
 const vret = r => { const px = r.status === "CLOSED" ? r.exit_price : r.last; return px && r.entry ? (px / r.entry - 1) * 100 : null; };
 async function loadVs() {                                   // 홈: 요약 + 보유·대기
@@ -2582,7 +2603,7 @@ try { const t = localStorage.getItem("theme"); if (t) document.documentElement.d
 
 // 보이는 탭의 데이터만 받는다 (휴대폰 데이터·배터리 절약)
 const TAB_JOBS = {
-  home: () => [loadPick(), loadBrief(), loadDet(), loadFeed(), loadVs(), loadPre()],
+  home: () => [loadPick(), loadReasons(), loadBrief(), loadDet(), loadFeed(), loadVs(), loadPre()],
   symbol: () => [loadShorts()],
   trade: () => [loadAccount(), loadVTrade()],
   settings: () => [loadSettings()],

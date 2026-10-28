@@ -13,10 +13,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
+from datetime import time as dtime
+from datetime import timedelta
 
 from ..screener import edgar as ed
-from ..sessions import DAY, PRE, REGULAR, AFTER, SessionCalendar
+from ..sessions import DAY, ET, PRE, REGULAR, AFTER, SessionCalendar
 
 POSITIVE_DILUTION = {"ATM_TERMINATED", "REGISTRATION_WITHDRAWN", "OFFERING_TERMINATED", "BUYBACK"}
 POSITIVE_NEWS = {"MATERIAL_CONTRACT", "COMPLIANCE_REGAINED", "FDA_APPROVAL", "MATERIAL_NEWS"}
@@ -25,6 +27,14 @@ FINANCING_WORDS = {"ATM_NEW", "REGISTERED_DIRECT", "PUBLIC_OFFERING", "SECURITIE
 SESSION_KO = {"DAY": "데이마켓", "PRE": "프리마켓", "REGULAR": "정규장", "AFTER": "애프터마켓", "CLOSED": "휴장"}
 LABEL = {"ATM_TERMINATED": "ATM 종료", "REGISTRATION_WITHDRAWN": "증자 등록 철회",
          "OFFERING_TERMINATED": "공모 철회", "BUYBACK": "자사주 매입"}
+
+
+def next_day_open(ref: datetime) -> datetime:
+    """세션 상관없이 들어가는 전략들의 최종 안전망 — 애프터마켓 중이라고 거기서 끊지 않고, 다음 데이마켓
+    (그날 20:00 ET, 미국인 거의 없는 한국 낮 시간) 시작되기 직전까지는 들고 갈 수 있게. 이미 지났으면 다음날 20시."""
+    d = ref.astimezone(ET)
+    start = datetime.combine(d.date(), dtime(20, 0), tzinfo=ET)
+    return start if start > d else start + timedelta(days=1)
 
 
 @dataclass
@@ -338,7 +348,7 @@ class RegularMomentum(Strategy):
     SESSIONS = {REGULAR}
 
     def scan(self, ctx: Ctx) -> list[Plan]:
-        reg_open, reg_close = ctx.bound(REGULAR)
+        reg_open, _ = ctx.bound(REGULAR)
         catalysts: dict[str, str] = {}
         for f in ctx.mv.filings_since(reg_open):
             ev = events_of(f)
@@ -378,7 +388,8 @@ class RegularMomentum(Strategy):
                 out.append(self._reject(sym, why, b.mid))
                 continue
             price = self._entry_price(b)
-            deadline = min(ctx.now + timedelta(minutes=self.p["max_hold_minutes"]), reg_close)
+            # 정규장 끝(애프터 시작)이라고 거기서 끊지 않는다 — 다음 데이마켓 시작 직전까지는 들고 갈 수 있게.
+            deadline = min(ctx.now + timedelta(minutes=self.p["max_hold_minutes"]), next_day_open(ctx.now))
             out.append(Plan(self.name, sym, True, f"{cat}, 정규장 중 {move:+.1f}%, {note}", score=move, price=price,
                             stop=price * (1 - self.p["stop_loss_pct"] / 100),
                             target=price * (1 + self.p["take_profit_pct"] / 100),
@@ -414,16 +425,54 @@ class Scalp(Strategy):
                 out.append(self._reject(sym, why, b.mid))
                 continue
             price = self._entry_price(b)
+            # 애프터마켓 중이라고 거기서 끊지 않는다 — max_hold_minutes 가 세션을 넘겨도 다음 데이마켓 시작 직전까지만 캡.
+            deadline = min(ctx.now + timedelta(minutes=self.p["max_hold_minutes"]), next_day_open(ctx.now))
             out.append(Plan(self.name, sym, True, f"수급 신호({ev['kind']}): {ev['text']}, {note}",
                             score=abs(ev.get("chg") or 0), price=price,
                             stop=price * (1 - self.p["stop_loss_pct"] / 100),
                             target=price * (1 + self.p["take_profit_pct"] / 100),
-                            sell_from=ctx.now + timedelta(minutes=self.p["max_hold_minutes"]),
-                            deadline=ctx.now + timedelta(minutes=self.p["max_hold_minutes"]),
+                            sell_from=deadline, deadline=deadline,
                             scale_out=1.0, trail_pct=0.0,
                             context={"flow_kind": ev["kind"], "flow_text": ev["text"], "flow_chg": ev.get("chg"),
                                     "ask": b.ask, "bid": b.bid, "spread_pct": b.spread_pct, "dilution_note": note}))
         return out
 
 
-ALL = {cls.name: cls for cls in (RunnerOvernight, DilutionCatalyst, DayIgnition, DayDip, RegularMomentum, Scalp)}
+class SteadyTrend(Strategy):
+    """scalp 과 같은 '세션 상관없이 바로 들어간다' 류지만, 반응하는 신호와 들고 가는 호흡이 다르다 — scalp 은
+    거래 터짐처럼 순간적으로 터지는 신호에 바로 반응해 짧게 먹고 나오고, 여기는 poll_steady_flow 가 잡는
+    '매집'(한 번에 안 터지고 꾸준히 붙는 수급) 신호에 반응해서 목표가·손절가 안 걸리면 다음 데이마켓 시작
+    직전까지(=세션 안 가리고 그날 하루 전체) 들고 간다. 숫자 전부 백테스트 전 초안."""
+    name = "steady_trend"
+    SESSIONS = {DAY, PRE, REGULAR, AFTER}
+
+    def scan(self, ctx: Ctx) -> list[Plan]:
+        since = ctx.now - timedelta(minutes=self.p.get("signal_window_minutes", 30))
+        out, seen = [], set()
+        for ev in ctx.mv.recent_flow(since, kinds=("steady",)):
+            sym = ev["symbol"]
+            if sym in ctx.held or sym in seen:
+                continue
+            seen.add(sym)
+            b, bad = quote_check(sym, ctx)
+            if bad:
+                out.append(self._reject(sym, f"{ev['kind']} 신호, {bad}", 0))
+                continue
+            why, note = dilution_gate(sym, b.mid, ctx, has_catalyst=True)
+            if why:
+                out.append(self._reject(sym, why, b.mid))
+                continue
+            price = self._entry_price(b)
+            deadline = next_day_open(ctx.now)
+            out.append(Plan(self.name, sym, True, f"매집 신호: {ev['text']}, {note}",
+                            score=abs(ev.get("chg") or 0), price=price,
+                            stop=price * (1 - self.p["stop_loss_pct"] / 100),
+                            target=price * (1 + self.p["take_profit_pct"] / 100),
+                            sell_from=deadline, deadline=deadline, scale_out=1.0, trail_pct=0.0,
+                            context={"flow_kind": ev["kind"], "flow_text": ev["text"], "flow_chg": ev.get("chg"),
+                                    "ask": b.ask, "bid": b.bid, "spread_pct": b.spread_pct, "dilution_note": note}))
+        return out
+
+
+ALL = {cls.name: cls for cls in (RunnerOvernight, DilutionCatalyst, DayIgnition, DayDip, RegularMomentum, Scalp,
+                                 SteadyTrend)}

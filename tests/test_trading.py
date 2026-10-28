@@ -963,3 +963,21 @@ def test_entry_reprice_happens_only_once(env):
     assert tr.entry_reprices[next(iter(tr.entry_reprices))] == 1
     tr.tick()
     assert not tr.working
+
+
+def test_partial_fills_merge_into_one_alert(env):
+    """호가 잔량 때문에 50주 + 나머지로 나뉘어 체결돼도 알림은 한 줄 (GCTK 알림 2개 문제)."""
+    tr, market, mv, clock, j, ctl, ex = env
+    sent = []
+
+    class _N:
+        def send(self, text, **kw): sent.append(text)
+
+    tr.notifier = _N()
+    market.set("PEN", 1.03, 1.035, size=50)      # 최우선 잔량 50주 → 부분 체결
+    tr.tick()
+    assert [m for m in sent if "매수" in m] == []   # 아직 다 안 채워졌으니 기다린다
+    market.set("PEN", 1.03, 1.035)                  # 잔량 충분 → 나머지 체결
+    tr.tick()
+    buys = [m for m in sent if "매수" in m]
+    assert len(buys) == 1 and "완료" in buys[0]

@@ -13,7 +13,7 @@ from pathlib import Path
 SESS = {"DAY": "데이", "PRE": "프리", "REGULAR": "정규", "AFTER": "애프터"}
 STRAT = {"runner_overnight": "나이트러너", "dilution_catalyst": "희석 디톡스",
          "day_ignition": "이그니션", "day_dip": "바닥 캐치", "regular_momentum": "데이트레이더",
-         "scalp": "플래시 스캘프"}
+         "scalp": "플래시 스캘프", "steady_trend": "슬로우번"}
 
 
 def _utc(ts: datetime) -> str:

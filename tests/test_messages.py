@@ -8,28 +8,32 @@ T = {"symbol": "PENX", "strategy": "runner_overnight", "stop": 1.11, "target": 1
 
 
 def test_first_line_names_event_and_symbol():
-    # 잠금화면 미리보기에는 첫 줄만 보인다
-    assert msg.buy_filled(T, 120, 1.2345, "DAY").split("\n")[0] == "🟢 매수 체결 · PENX"
+    # 잠금화면 미리보기에는 첫 줄만 보인다 — 첫 줄에 행동·종목·수량·가격·전략이 다 들어간다
+    assert msg.buy_filled(T, 120, 1.2345, "DAY").split("\n")[0] == \
+        "🟢 매수 완료 PENX · 120주 · $1.2345 · 나이트러너/데이마켓"
+    assert msg.buy_filled(T, 50, 1.2345, "DAY", filled=50, planned=120).split("\n")[0] == \
+        "🟢 매수 중 PENX · 50/120주 · $1.2345 · 나이트러너/데이마켓"
     assert msg.scaled_out(T, 60, 1.38).split("\n")[0] == "🟡 분할 익절 · PENX"
-    assert msg.closed(T).split("\n")[0] == "🔵 청산 · PENX · 익절"
-    assert msg.closed({**T, "pnl": -5.0, "pnl_pct": -3.0, "exit_reason": "손절"}).startswith("🔴 청산 · PENX · 손절")
+    assert msg.closed(T).split("\n")[0] == "🔵 청산 PENX · 익절"
+    assert msg.closed({**T, "pnl": -5.0, "pnl_pct": -3.0, "exit_reason": "손절"}).startswith("🔴 청산 PENX · 손절")
     assert msg.backstop_fired(T).startswith("🛑 서버 손절 안전망 발동 · PENX")
 
 
 def test_name_appended_when_known_omitted_when_not():
-    assert msg.buy_filled(T, 120, 1.2345, "DAY", name="페닉스").split("\n")[0] == "🟢 매수 체결 · PENX(페닉스)"
-    assert msg.buy_filled(T, 120, 1.2345, "DAY").split("\n")[0] == "🟢 매수 체결 · PENX"
+    assert msg.buy_filled(T, 120, 1.2345, "DAY", name="페닉스").split("\n")[0].startswith("🟢 매수 완료 PENX(페닉스) · 120주")
+    assert msg.buy_filled(T, 120, 1.2345, "DAY").split("\n")[0].startswith("🟢 매수 완료 PENX · 120주")
     assert msg.scaled_out(T, 60, 1.38, name="페닉스").split("\n")[0] == "🟡 분할 익절 · PENX(페닉스)"
-    assert msg.closed(T, name="페닉스").split("\n")[0] == "🔵 청산 · PENX(페닉스) · 익절"
+    assert msg.closed(T, name="페닉스").split("\n")[0] == "🔵 청산 PENX(페닉스) · 익절"
     assert msg.backstop_fired(T, name="페닉스").startswith("🛑 서버 손절 안전망 발동 · PENX(페닉스)")
     assert msg.sym_s("PENX", None) == "PENX" and msg.sym_s("PENX", "페닉스") == "PENX(페닉스)"
 
 
 def test_formats():
     buy = msg.buy_filled(T, 120, 1.2345, "DAY")
-    assert "120주 × $1.2345 = $148.14" in buy and "나이트러너 · 데이마켓" in buy and "손절 $1.11" in buy
+    assert "총 $148.14" in buy and "나이트러너/데이마켓" in buy and "손절 $1.11" in buy
+    assert len(buy.split("\n")) <= 3          # 휴대폰에서 스크롤 없이 읽히게
     c = msg.closed(T)
-    assert "+$11.20 (+7.6%)" in c and "$1.2345 → $1.33 · 120주" in c and "데이마켓 → 프리마켓" in c
+    assert "+$11.20 (+7.6%) · 120주" in c and "$1.2345 → $1.33" in c and "데이마켓→프리마켓" in c
     assert msg.usd(-3.5, sign=True) == "−$3.50" and msg.px(12.3) == "$12.30" and msg.pct(None) == "-"
     w = msg.warn("수집기 멈춤", "12분째", "창 확인")
     assert w == "⚠️ 수집기 멈춤\n12분째\n→ 창 확인"
@@ -57,11 +61,10 @@ def test_info_block_readable():
              "filings": {"dilution_score": 28, "motives": [{"label": "ATM 진행 중"}, {"label": "상폐 기한 D-40"}]},
              "events": [{"ts": "2026-10-21T13:00:00+00:00", "summary": "$2.0M · 주당 $0.8000"}], "halts": []}
     L = msg.info_block(stats, brief, "30일 −45%, 데이마켓 전날 종가 근처")
-    text = "\n".join(L)
-    assert L[1] == "── 종목 정보 ──"
-    assert "📊 오늘 +3.1% · 거래량 3.2M (평소 4.1배) · 거래대금 $3.9M" in text
-    assert "🩳 공매도 52% · 대차 수수료 45% (가능 15K주) · SSR" in text
-    assert "💧 희석 28점 · 부양 동기: ATM 진행 중, 상폐 기한 D-40" in text and "📰 10-21 $2.0M" in text
+    assert len(L) <= 3                     # 위험 → 오늘 성과 → 왜 샀는지, 3줄까지
+    assert L[0] == "희석 28 · 공매도 52% · 대차 45% · SSR"
+    assert L[1].startswith("📊 +3.1% · $3.9M · 평소 4.1배")
+    assert L[2].startswith("30일 −45%")
     assert msg.info_block() == []
     full = msg.buy_filled(T, 120, 1.2345, "DAY", L)
-    assert full.startswith("🟢 매수 체결 · PENX\n120주 × $1.2345 = $148.14\n🎯 익절 $1.38")
+    assert full.split("\n")[0].startswith("🟢 매수 완료 PENX · 120주") and "총 $148.14" in full

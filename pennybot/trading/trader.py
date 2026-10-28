@@ -86,6 +86,7 @@ class Trader:
         self.working: dict[str, Working] = {}
         self.exit_reprices: dict[int, int] = {}
         self.entry_reprices: dict[int, int] = {}   # 매수 재호가 횟수 (거래 id → 횟수)
+        self._fill_buf: dict[int, dict] = {}       # 거래 id → {qty, value, session, due} 부분 체결 알림 버퍼
         self.last_session = None
         self._next: dict[str, datetime] = {}
         # 수집기와 같이 켜면 첫 현재가 기록까지 1~2분 걸린다 → 켜자마자 "수집기 멈춤" 오경보를 내지 않게 5분 뒤부터 감시
@@ -162,6 +163,7 @@ class Trader:
             log.info("세션 변경 %s → %s: 걸린 주문 모두 취소", self.last_session, session)
             self.cancel_all(now, "세션 변경")
             self.poll_orders(now, session)
+        self._stage("fills", self.flush_entry_fills, now)
         self.last_session = session
         self.status = {"session": session, "trade_date": str(trade_date) if trade_date else None,
                        "mode": self.journal.mode, "working": len(self.working)}
@@ -342,8 +344,7 @@ class Trader:
         nm = self._name(w.symbol)
         if w.purpose == "entry":
             self.journal.record_entry_fill(w.trade_id, delta, px, session, now, fee=self._fee(delta, px))
-            tr = self.journal.trade(w.trade_id)
-            self.notifier.send(msg.buy_filled(tr, delta, px, session, self._info(w.symbol, tr.get("reason")), name=nm))
+            self._queue_entry_fill(w, delta, px, session, now)
             return
         t = self.journal.record_exit_fill(w.trade_id, delta, px, session, now, fee=self._fee(delta, px))
         if w.scale and not t["scaled"]:
@@ -354,6 +355,35 @@ class Trader:
             self._flat_ref.pop(w.trade_id, None)
             self._decline_ref.pop(w.trade_id, None)
             self.notifier.send(msg.closed(self.journal.trade(w.trade_id), self._info(w.symbol), name=nm))
+
+    def _queue_entry_fill(self, w: Working, delta: int, px: float, session: str, now: datetime) -> None:
+        """부분 체결이 1주씩 나도 알림은 한 줄로: fill_flush_seconds 동안 모아서 보낸다.
+        다 채워지면 기다리지 않고 바로 보낸다 (GCTK 50주 + 2주 → 알림 2개 문제)."""
+        b = self._fill_buf.setdefault(w.trade_id, {"qty": 0, "value": 0.0, "session": session,
+                                                   "due": now + self._flush_after()})
+        b["qty"] += delta
+        b["value"] += delta * px
+        b["due"] = now + self._flush_after()
+        if w.filled >= w.qty:
+            self._flush_entry_fill(w.trade_id)
+
+    def _flush_after(self) -> timedelta:
+        return timedelta(seconds=getattr(self.tcfg, "fill_flush_seconds", 15) or 0)
+
+    def flush_entry_fills(self, now: datetime) -> None:
+        for tid, b in list(self._fill_buf.items()):
+            if now >= b["due"]:
+                self._flush_entry_fill(tid)
+
+    def _flush_entry_fill(self, trade_id: int) -> None:
+        b = self._fill_buf.pop(trade_id, None)
+        if not b or not b["qty"]:
+            return
+        t = self.journal.trade(trade_id)
+        avg = b["value"] / b["qty"]
+        filled, planned = int(t["qty"] or 0), int(t["planned_qty"] or b["qty"])
+        self.notifier.send(msg.buy_filled(t, b["qty"], avg, b["session"], self._info(t["symbol"], t.get("reason")),
+                                          name=self._name(t["symbol"]), filled=filled, planned=planned))
 
     def _name(self, symbol: str) -> str | None:
         try:

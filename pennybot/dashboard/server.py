@@ -369,6 +369,36 @@ class Data:
             r["name"] = names.get(r["symbol"])
         return rows
 
+    def signal_reasons(self, hours: int) -> dict:
+        """'왜 매매를 안 하는지' 바로 보려고 — 최근 N시간 탈락 사유를 뭉뚱그려 세어본다.
+        사유 문구는 전략마다 조금씩 다르지만(스프레드 %, 가격범위, 세션 등) 앞부분 패턴으로 묶는다."""
+        import re
+        since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat(timespec="seconds")
+        rows = self.t("SELECT reason, strategy FROM signals WHERE ok=0 AND ts>=?", (since,))
+        buckets = [
+            (re.compile(r"매수 시간 아님"), "매수 시간 아님 (세션 제한)"),
+            (re.compile(r"스프레드"), "스프레드 너무 넓음"),
+            (re.compile(r"가격범위 밖"), "가격범위 밖 ($0.5~$5)"),
+            (re.compile(r"희석|상폐"), "희석/상폐 공시 차단"),
+            (re.compile(r"펌프 위험"), "펌프 위험 신호"),
+            (re.compile(r"공매도"), "공매도 비율·급증"),
+            (re.compile(r"이미.*늦음"), "이미 많이 움직여서 늦음"),
+            (re.compile(r"고점 대비 밀림"), "고점 대비 밀림"),
+            (re.compile(r"저점 갱신 중"), "아직 저점 갱신 중"),
+            (re.compile(r"^리스크:"), "리스크 관리에 막힘"),
+            (re.compile(r"호가 없음"), "호가 없음"),
+        ]
+        counts: dict[str, int] = {}
+        total = len(rows)
+        for r in rows:
+            label = next((lab for pat, lab in buckets if pat.search(r["reason"] or "")), "기타")
+            counts[label] = counts.get(label, 0) + 1
+        top = sorted(counts.items(), key=lambda x: -x[1])
+        n_candidates = self.t("SELECT COUNT(DISTINCT symbol || ts) AS n FROM signals WHERE ts>=?", (since,))
+        return {"hours": hours, "total_rejected": total,
+               "total_scans": n_candidates[0]["n"] if n_candidates else 0,
+               "top": [{"reason": lab, "count": c} for lab, c in top]}
+
     # ---------- 수집 상태 ----------
     def collector(self) -> dict:
         r = self.m("SELECT MAX(trade_date) AS d FROM prices")
@@ -566,6 +596,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/orders": lambda: d.orders(n("limit", 50)),
             "/api/trades": lambda: d.trades(n("limit", 50)),
             "/api/signals": lambda: d.signals(n("limit", 200)),
+            "/api/signal_reasons": lambda: d.signal_reasons(n("hours", 6)),
             "/api/collector": lambda: d.collector(),
             "/api/research": lambda: d.research(n("days", 20)),
             "/api/runners": lambda: d.runners(n("days", 10)),

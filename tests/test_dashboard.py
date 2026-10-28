@@ -38,7 +38,8 @@ def test_read_endpoints(server):
     ov = get(base + "/api/overview")
     assert ov["mode"] == "paper" and ov["open_trades"] == 3
     st = {s["strategy"]: s for s in get(base + "/api/strategies")}
-    assert set(st) == {"runner_overnight", "dilution_catalyst", "day_ignition", "day_dip", "regular_momentum", "scalp"}
+    assert set(st) == {"runner_overnight", "dilution_catalyst", "day_ignition", "day_dip", "regular_momentum",
+                       "scalp", "steady_trend"}
     assert st["day_ignition"]["trades"] == 12 and st["day_dip"]["config_enabled"] is False
     pos = get(base + "/api/positions")
     assert {p["symbol"] for p in pos} == {"PENX", "BIOZ", "NANO"}
@@ -59,6 +60,10 @@ def test_read_endpoints(server):
     reps = get(base + "/api/reports")
     assert reps and reps[0]["text"].startswith("📊 일일 리포트") and "trades" in reps[0]
     assert [r["trade_date"] for r in reps] == sorted((r["trade_date"] for r in reps), reverse=True)
+    sr = get(base + "/api/signal_reasons?hours=6")
+    assert sr["total_rejected"] > 0 and sr["top"]
+    labels = {x["reason"] for x in sr["top"]}
+    assert "스프레드 너무 넓음" in labels and "리스크 관리에 막힘" in labels
     sh = get(base + "/api/shorts")
     assert sh and sh[0]["held"] and any(r["ssr"] for r in sh) and all("fee_rate" in r for r in sh)
     b = get(base + "/api/symbol?s=penx")

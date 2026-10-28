@@ -152,6 +152,7 @@ class TradingConfig:
     entry_ttl_seconds: int = 180         # 매수 지정가 미체결 시 취소
     entry_reprice_limit: int = 1         # 취소 전에 최우선 매도호가로 한 번 따라가 볼 횟수 (0 = 예전처럼 바로 취소)
     entry_chase_pct: float = 2.0         # 그때 허용하는 추격폭 (처음 지정가 대비 %). 넘으면 체결 포기
+    fill_flush_seconds: int = 15         # 부분 체결 알림을 이 시간만큼 모아 한 줄로 보낸다 (1주씩 체결되면 알림 폭주)
     max_unfilled_entries: int = 3        # 같은 종목이 오늘 이만큼 연속 미체결(취소)되면 그날은 더 안 건다 (호가가 얇아 체결이 안 붙는 종목)
     exit_reprice_seconds: int = 60       # 매도 지정가 재호가 주기
     exit_slippage_pct: float = 1.0       # 강제 청산 매도가 = bid × (1 − x%)
@@ -223,13 +224,20 @@ class TradingConfig:
         "regular_momentum": {"enabled": True, "budget_pct": 0.20, "max_positions": 3,
                              "min_insider_usd": 10000, "min_move_pct": 3.0, "max_move_pct": 20.0,
                              "max_pullback_pct": 4.0, "signal_window_minutes": 5,
-                             "entry_discount_pct": 1.0, "max_hold_minutes": 480,  # 정규장 안에서만(마감 전 강제 정리) 도니까 8시간까지 둬도 됨
+                             # 정규장 마감(애프터 시작)이라고 거기서 끊지 않고 다음 데이마켓 시작 전까지 캡 → 8시간까지 둬도 됨
+                             "entry_discount_pct": 1.0, "max_hold_minutes": 480,
                              "take_profit_pct": 8.0, "stop_loss_pct": 6.0, "gap_risk_pct": 15.0},
         # 데이·프리·정규·애프터 상관없이 실시간 수급 신호(거래 터짐 등)가 뜨면 바로 들어가서 목표가에 바로 턴다.
         # 숫자 전부 백테스트 전 초안 — 다른 전략들과 달리 세션 전환을 기다리지 않고 자주 돌 수 있어서 예산을 작게 잡음.
         "scalp": {"enabled": True, "budget_pct": 0.15, "max_positions": 3,
                  "signal_window_minutes": 3, "entry_discount_pct": 1.0, "max_hold_minutes": 120,
                  "take_profit_pct": 8.0, "stop_loss_pct": 6.0, "gap_risk_pct": 20.0},
+        # scalp 과 같은 '세션 안 가리는' 전략이지만 반응하는 신호가 다르다 — poll_steady_flow 가 잡는 '매집'
+        # (한 번에 안 터지고 꾸준히 붙는 수급) 신호에 반응해서 목표가·손절가 안 걸리면 다음 데이마켓 시작
+        # 직전까지 길게 들고 간다. 숫자 전부 백테스트 전 초안.
+        "steady_trend": {"enabled": True, "budget_pct": 0.15, "max_positions": 3,
+                        "signal_window_minutes": 30, "entry_discount_pct": 1.0,
+                        "take_profit_pct": 15.0, "stop_loss_pct": 8.0, "gap_risk_pct": 20.0},
     })
 
     def spread_cap(self, session: str) -> float:
