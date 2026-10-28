@@ -319,3 +319,31 @@ def test_runner_candidates_uses_daily_bars(tmp_path):
     store.db.commit()
     assert store.runner_candidates("2026-10-27", "2026-10-26", 30.0) == [("AAA", 1.00, 1.40)]
     assert store.daily_ohlcv("2026-10-27")["AAA"][3] == 1.40
+
+
+class _FakeCandles:
+    """일봉 페이지 2장: 최근 200봉 → nextBefore → 2025-01-01 이전 봉."""
+
+    def __init__(self):
+        self.calls = 0
+
+    def candles(self, symbol, interval="1m", count=200, before=None, adjusted=True):
+        self.calls += 1
+        if before is None:
+            return {"candles": [{"timestamp": f"2026-{(i % 12) + 1:02d}-01T00:00:00Z", "openPrice": 1, "highPrice": 1,
+                                 "lowPrice": 1, "closePrice": 1, "volume": 10} for i in range(200)],
+                    "nextBefore": "2025-12-31T00:00:00Z"}
+        return {"candles": [{"timestamp": "2024-12-31T00:00:00Z", "openPrice": 1, "highPrice": 1,
+                             "lowPrice": 1, "closePrice": 1, "volume": 10}], "nextBefore": None}
+
+
+def test_backfill_daily_pages_and_resumes(tmp_path):
+    from pennybot.collector.backfill import backfill_daily, done_map
+    store = Store(tmp_path / "m.db")
+    fake = _FakeCandles()
+    rep = backfill_daily(fake, store, ["AAA", "BBB"], since="2025-01-01")
+    assert rep["symbols"] == 2 and fake.calls == 4          # 종목당 2페이지
+    assert store.query("SELECT COUNT(*) FROM daily_bars")[0][0] >= 2
+    assert done_map(store) == {"AAA": "2025-01-01", "BBB": "2025-01-01"}
+    rep2 = backfill_daily(fake, store, ["AAA", "BBB"], since="2025-01-01")
+    assert rep2["symbols"] == 0                              # 이미 받은 종목은 건너뛴다

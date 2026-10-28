@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import argparse
 import logging
+
+log = logging.getLogger(__name__)
 import sys
 from collections import Counter
 from datetime import datetime, timedelta, timezone
@@ -92,6 +94,22 @@ def cmd_check(cfg: Config) -> None:
 def cmd_accounts(cfg: Config) -> None:
     for a in make_client(cfg).accounts():
         print(f"accountSeq={a['accountSeq']}  계좌={a['accountNo']}  유형={a['accountType']}")
+
+
+def cmd_backfill_daily(cfg: Config, args) -> None:
+    """2년치 일봉을 받아 daily_bars 를 채운다 (셋업 백테스트·패턴 학습의 입력)."""
+    from .collector import Store
+    from .collector.backfill import backfill_daily
+    setup_file_log(cfg, "backfill")
+    client = make_client(cfg, "collector")
+    store = Store(cfg.collector.db_path)
+    syms = [r["symbol"] for r in store.query("SELECT symbol FROM stock_info WHERE symbol IS NOT NULL ORDER BY symbol")]
+    if not syms:
+        syms = [r["symbol"] for r in store.query("SELECT DISTINCT symbol FROM universe ORDER BY symbol")]
+    log.info("일봉 백필 시작: %d종목, since=%s", len(syms), getattr(args, "since", "2025-01-01"))
+    rep = backfill_daily(client, store, syms, since=args.since, sleep=args.pause, limit=args.limit or None,
+                         progress=lambda i, n, r: log.info("일봉 진행 %d/%d (누적 %d행)", i, n, r))
+    log.info("일봉 백필 끝: %s", rep)
 
 
 def cmd_collect(cfg: Config, once: bool) -> None:
@@ -421,6 +439,9 @@ def main() -> None:
     ap.add_argument("--no-edgar", action="store_true", help="research: SEC 공시 판정 생략 (빠름)")
     ap.add_argument("--no-intraday", action="store_true", help="bigruns: 1분봉(데이마켓) 분석 생략 (빠름)")
     ap.add_argument("--min-pct", type=float, default=30.0, help="research: 급등 기준 %%")
+    ap.add_argument("--since", default="2025-01-01", help="backfill-daily: 언제까지 거슬러 받을지")
+    ap.add_argument("--limit", type=int, default=0, help="backfill-daily: 종목 수 제한 (0 = 전체)")
+    ap.add_argument("--pause", type=float, default=0.1, help="backfill-daily: 종목당 대기(초)")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
     for stream in (sys.stdout, sys.stderr):    # 윈도우 콘솔(cp949)에서 이모지 때문에 멈추지 않게
@@ -476,6 +497,7 @@ def _dispatch(cfg, args) -> None:
         "anatomy": lambda: cmd_anatomy(cfg),
         "screen": lambda: cmd_screen(cfg),
         "run": lambda: cmd_run(cfg, args.once),
+        "backfill-daily": lambda: cmd_backfill_daily(cfg, args),
     }[args.command]()
 
 
