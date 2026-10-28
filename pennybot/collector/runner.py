@@ -365,14 +365,16 @@ class Collector:
             sleep(max(1.0, 5 - (time.time() % 5)))
 
     def stall_reason(self, now_mono: float, session: str) -> str | None:
-        """장중인데 메인 틱이 오래 끝나지 않았으면 사유. 휴장 중에는 과거 패턴 갱신 등 오래 걸리는 작업이 정상이라 면제."""
-        limit = (getattr(self.cfg, "stall_restart_minutes", 0) or 0) * 60
-        if limit <= 0 or session == CLOSED:
+        """메인 틱이 오래 끝나지 않았으면 사유. 휴장 중에도 메인 틱 자체는 몇 초 안에 돌아와야 하므로
+        (오래 걸리는 과거 패턴 갱신은 별도 스레드에서 돈다) 휴장이라고 면제하지 않고 기준만 2배로 준다."""
+        base = (getattr(self.cfg, "stall_restart_minutes", 0) or 0) * 60
+        if base <= 0:
             return None
+        limit = base * 2 if session == CLOSED else base
         idle = now_mono - self._tick_ok_at
         if idle < limit:
             return None
-        return f"메인 루프 {idle / 60:.0f}분 무응답 (마지막 단계: {self._stage})"
+        return f"{session} 중 메인 루프 {idle / 60:.0f}분 무응답 (마지막 단계: {self._stage})"
 
     def _stall_watch(self, sleep=time.sleep) -> None:
         import os
@@ -383,8 +385,6 @@ class Collector:
             except Exception:
                 session = CLOSED
             why = self.stall_reason(time.monotonic(), session)
-            if session == CLOSED:
-                self._tick_ok_at = time.monotonic()      # 휴장 중에는 재시작 기준을 계속 미뤄 둔다
             if not why:
                 continue
             log.error("수집기 멈춤 — %s → 프로세스 재시작", why)

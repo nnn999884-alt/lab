@@ -302,6 +302,8 @@ def test_stall_reason_only_when_live_session_and_stuck(tmp_path):
     assert col.stall_reason(1000.0 + 14 * 60, "DAY") is None
     why = col.stall_reason(1000.0 + 15 * 60, "DAY")
     assert why and "prices" in why and "15분" in why
-    assert col.stall_reason(1000.0 + 600 * 60, "CLOSED") is None      # 휴장 중 장시간 작업은 정상
-    col.cfg.stall_restart_minutes = 0                                  # 끄면 감시 안 함
+    assert col.stall_reason(1000.0 + 20 * 60, "CLOSED") is None       # 휴장 중엔 기준 2배(30분)
+    why = col.stall_reason(1000.0 + 31 * 60, "CLOSED")                # 10/27·10/28 은 장 마감 직후 멈췄다
+    assert why and "CLOSED" in why
+    col.cfg.stall_restart_minutes = 0                                 # 끄면 감시 안 함
     assert col.stall_reason(1000.0 + 600 * 60, "DAY") is None
