@@ -336,7 +336,8 @@ class Data:
             recent = self.t("SELECT pnl FROM trades WHERE status='CLOSED' AND strategy=? ORDER BY id DESC LIMIT ?",
                             (name, n))
             auto_off = len(recent) >= n and sum(x["pnl"] for x in recent) / n < 0
-            out.append({"strategy": name, "config_enabled": params.get("enabled", True),
+            out.append({"strategy": name, "strategy_name": self._strat_names().get(name, name),
+                        "config_enabled": params.get("enabled", True),
                         "toggle": ctl.get(name, True), "auto_disabled": auto_off,
                         "trades": r.get("trades", 0), "win_rate": (r["wins"] / r["trades"]) if r.get("trades") else None,
                         "pnl": r.get("pnl") or 0.0, "expectancy": r.get("expectancy"), "avg_pct": r.get("avg_pct"),
@@ -347,6 +348,10 @@ class Data:
 
     def positions(self) -> list[dict]:
         rows = self.t("SELECT * FROM trades WHERE status IN ('PENDING','OPEN','EXITING') ORDER BY id")
+        names, ko = self._names(), self._strat_names()
+        for r in rows:
+            r["name"] = names.get(r["symbol"])
+            r["strategy_name"] = ko.get(r["strategy"], r["strategy"])
         for r in rows:
             p = self.m("SELECT last, ts FROM prices WHERE symbol=? ORDER BY ts DESC LIMIT 1", (r["symbol"],))
             r["last"] = p[0]["last"] if p else None
@@ -357,10 +362,25 @@ class Data:
         return rows
 
     def orders(self, limit: int) -> list[dict]:
-        return self.t("SELECT * FROM orders ORDER BY ts DESC LIMIT ?", (limit,))
+        rows = self.t("SELECT * FROM orders ORDER BY ts DESC LIMIT ?", (limit,))
+        names, ko = self._names(), self._strat_names()
+        strat = {r["id"]: r["strategy"] for r in self.t("SELECT id, strategy FROM trades")}
+        for r in rows:
+            r["name"] = names.get(r["symbol"])
+            r["strategy_name"] = ko.get(strat.get(r["trade_id"]), strat.get(r["trade_id"]))
+        return rows
 
     def trades(self, limit: int) -> list[dict]:
-        return self.t("SELECT * FROM trades WHERE status IN ('CLOSED','CANCELED') ORDER BY id DESC LIMIT ?", (limit,))
+        rows = self.t("SELECT * FROM trades WHERE status IN ('CLOSED','CANCELED') ORDER BY id DESC LIMIT ?", (limit,))
+        names, ko = self._names(), self._strat_names()
+        for r in rows:
+            r["name"] = names.get(r["symbol"])
+            r["strategy_name"] = ko.get(r["strategy"], r["strategy"])
+        return rows
+
+    def _strat_names(self) -> dict:
+        from ..trading.strategies import STRATEGY_KO
+        return STRATEGY_KO
 
     def signals(self, limit: int) -> list[dict]:
         rows = self.t("SELECT * FROM signals ORDER BY ts DESC, ok DESC, score DESC LIMIT ?", (limit,))

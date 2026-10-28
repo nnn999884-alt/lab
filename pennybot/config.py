@@ -241,7 +241,8 @@ class TradingConfig:
         "scalp": {"enabled": True, "budget_pct": 0.15, "max_positions": 3,
                  "signal_window_minutes": 3, "entry_discount_pct": 1.0, "max_hold_minutes": 120,
                  "take_profit_pct": 8.0, "stop_loss_pct": 6.0, "gap_risk_pct": 20.0,
-                 "stop_loss_pct_override": 10.0, "take_profit_pct_override": 10.0},
+                 "stop_loss_pct_override": 10.0, "take_profit_pct_override": 10.0,
+                 "scale_out_pct": 0.5, "trail_pct": 2.0},
         # scalp 과 같은 '세션 안 가리는' 전략이지만 반응하는 신호가 다르다 — poll_steady_flow 가 잡는 '매집'
         # (한 번에 안 터지고 꾸준히 붙는 수급) 신호에 반응해서 목표가·손절가 안 걸리면 다음 데이마켓 시작
         # 직전까지 길게 들고 간다. 숫자 전부 백테스트 전 초안.

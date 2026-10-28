@@ -983,7 +983,7 @@ table.ca-tbl tr.off .ca-fill { opacity: .35; }
 "use strict";
 { const w = new URLSearchParams(location.search).get("w"); if (w) { const s = document.createElement("style"); s.textContent = `main{max-width:${+w}px;margin:0;padding-left:12px;padding-right:12px} .tabs{max-width:${+w}px}`; document.head.appendChild(s); } }
 const SESS = { DAY: "데이마켓", PRE: "프리마켓", REGULAR: "정규장", AFTER: "애프터마켓", CLOSED: "휴장" };
-const STRAT = { runner_overnight: "나이트러너", dilution_catalyst: "희석 디톡스", day_ignition: "이그니션", day_dip: "바닥 캐치", regular_momentum: "데이트레이더", scalp: "플래시 스캘프", steady_trend: "슬로우번" };
+const STRAT = { runner_overnight: "러너 오버나이트", dilution_catalyst: "희석 촉매", day_ignition: "데이 점화", day_dip: "급락 반등", regular_momentum: "정규장 모멘텀", scalp: "플래시 스캘프", steady_trend: "매집 스텝업" };
 const STRAT_COLOR = { runner_overnight: "--series-1", dilution_catalyst: "--series-2", day_ignition: "--series-3", day_dip: "--series-4", regular_momentum: "--teal", scalp: "--violet", steady_trend: "--good" };
 const EVENT = { ATM_TERMINATED: "ATM 종료", OFFERING_TERMINATED: "공모 철회", REGISTRATION_WITHDRAWN: "증자 등록 철회", BUYBACK: "자사주 매입",
   COMPLIANCE_REGAINED: "상장 요건 회복", MATERIAL_CONTRACT: "중요 계약", ATM_NEW: "ATM 신규", REGISTERED_DIRECT: "등록 직접 공모",
@@ -1264,7 +1264,7 @@ async function loadStrategies() {
   rows.forEach(r => {
     const card = document.createElement("div"); card.className = "strat";
     const h = document.createElement("h3"); const sw = document.createElement("span"); sw.className = "swatch"; sw.style.background = css(STRAT_COLOR[r.strategy]);
-    h.appendChild(sw); h.appendChild(document.createTextNode(STRAT[r.strategy] || r.strategy)); card.appendChild(h);
+    h.appendChild(sw); h.appendChild(document.createTextNode(r.strategy_name || STRAT[r.strategy] || r.strategy)); card.appendChild(h);
     const kv = document.createElement("div"); kv.className = "kv";
     [["거래", r.trades + "회"], ["승률", r.win_rate == null ? "-" : Math.round(r.win_rate * 100) + "%"], ["평균 손익", fmtUsd(r.expectancy, true)], ["평균 수익률", fmtPct(r.avg_pct)], ["보유 중", r.open + "건"]]
       .forEach(([k, v]) => { const a = document.createElement("span"); a.textContent = k; const b = document.createElement("span"); b.textContent = v; kv.appendChild(a); kv.appendChild(b); });
@@ -1286,7 +1286,7 @@ async function loadTables() {
   const [pos, orders, trades, sigs] = await Promise.all([api("/api/positions"), api("/api/orders?limit=60"), api("/api/trades?limit=60"), api("/api/signals?limit=300")]);
   if (unchanged("tables", [pos, orders, trades, sigs, $("only-ok").checked])) return;
   table($("positions"), [
-    { h: "종목", f: r => r.symbol }, { h: "전략", f: r => STRAT[r.strategy] || r.strategy }, { h: "상태", f: r => ({ PENDING: "매수 주문 중", OPEN: "보유", EXITING: "매도 주문 중" })[r.status] || r.status },
+    { h: "종목", f: r => r.name ? `${r.symbol} ${r.name}` : r.symbol }, { h: "전략", f: r => r.strategy_name || STRAT[r.strategy] || r.strategy }, { h: "상태", f: r => ({ PENDING: "매수 주문 중", OPEN: "보유", EXITING: "매도 주문 중" })[r.status] || r.status },
     { h: "수량", num: 1, f: r => r.remaining || r.planned_qty }, { h: "매수가", num: 1, f: r => fmtPx(r.entry_price) }, { h: "현재가", num: 1, f: r => fmtPx(r.last) },
     { h: "평가손익", num: 1, f: r => fmtUsd(r.unrealized, true), tone: r => tone(r.unrealized) }, { h: "수익률", num: 1, f: r => fmtPct(r.unrealized_pct), tone: r => tone(r.unrealized_pct) },
     { h: "손절", num: 1, f: r => fmtPx(r.stop) }, { h: "익절", num: 1, f: r => r.scaled ? `분할 완료 · 트레일 ${fmtPx((r.high_water || 0) * (1 - (r.trail_pct || 0) / 100))}` : fmtPx(r.target) }, { h: "매도 시작", minor: 1, f: r => kst(r.sell_from) }, { h: "강제 청산", f: r => kst(r.deadline) },
@@ -1298,14 +1298,14 @@ async function loadTables() {
     { h: "상태", f: r => ({ OPEN: "대기", FILLED: "체결", CANCELED: "취소", REJECTED: "거부", REPLACED: "정정됨" })[r.status] || r.status }, { h: "세션", minor: 1, f: r => SESS[r.session] || r.session }, { h: "메모", minor: 1, f: r => r.note },
   ], orders);
   table($("trades"), [
-    { h: "종목", f: r => r.symbol }, { h: "전략", f: r => STRAT[r.strategy] || r.strategy }, { h: "청산", f: r => r.status === "CANCELED" ? "매수 미체결" : r.exit_reason },
+    { h: "종목", f: r => r.name ? `${r.symbol} ${r.name}` : r.symbol }, { h: "전략", f: r => r.strategy_name || STRAT[r.strategy] || r.strategy }, { h: "청산", f: r => r.status === "CANCELED" ? "매수 미체결" : r.exit_reason },
     { h: "손익", num: 1, f: r => fmtUsd(r.pnl, true), tone: r => tone(r.pnl) }, { h: "수익률", num: 1, f: r => fmtPct(r.pnl_pct), tone: r => tone(r.pnl_pct) },
     { h: "세션", minor: 1, f: r => r.entry_session ? `${SESS[r.entry_session] || r.entry_session} → ${SESS[r.exit_session] || r.exit_session || "-"}` : r.attempt_session ? `${SESS[r.attempt_session] || r.attempt_session} (미체결)` : "-" }, { h: "영업일", minor: 1, f: r => r.trade_date },
   ], trades);
   const onlyOk = $("only-ok").checked;
   const latest = sigs.length ? sigs[0].ts : null;
   table($("signals"), [
-    { h: "종목", f: r => `${r.symbol} · ${r.ok ? "통과" : "탈락"}`, tone: r => r.ok ? "pos" : null }, { h: "전략", f: r => STRAT[r.strategy] || r.strategy },
+    { h: "종목", f: r => `${r.symbol}${r.name ? " " + r.name : ""} · ${r.ok ? "통과" : "탈락"}`, tone: r => r.ok ? "pos" : null }, { h: "전략", f: r => r.strategy_name || STRAT[r.strategy] || r.strategy },
     { h: "시각", minor: 1, f: r => kst(r.ts) }, { h: "가격", num: 1, f: r => fmtPx(r.price) }, { h: "사유", wide: 1, f: r => r.reason },
   ], sigs.filter(r => (!onlyOk || r.ok) && (!latest || r.ts >= new Date(new Date(latest) - 3600e3).toISOString().slice(0, 19))), "후보 없음 (데이마켓 시간에 스캔합니다)");
 }

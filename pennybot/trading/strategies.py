@@ -24,6 +24,15 @@ POSITIVE_DILUTION = {"ATM_TERMINATED", "REGISTRATION_WITHDRAWN", "OFFERING_TERMI
 POSITIVE_NEWS = {"MATERIAL_CONTRACT", "COMPLIANCE_REGAINED", "FDA_APPROVAL", "MATERIAL_NEWS"}
 FINANCING_WORDS = {"ATM_NEW", "REGISTERED_DIRECT", "PUBLIC_OFFERING", "SECURITIES_PURCHASE_AGREEMENT",
                    "PRIVATE_PLACEMENT", "EQUITY_LINE", "TAKEDOWN"}
+STRATEGY_KO = {
+    "runner_overnight": "러너 오버나이트",
+    "dilution_catalyst": "희석 촉매",
+    "day_ignition": "데이 점화",
+    "day_dip": "급락 반등",
+    "regular_momentum": "정규장 모멘텀",
+    "scalp": "플래시 스캘프",
+    "steady_trend": "매집 스텝업",
+}
 SESSION_KO = {"DAY": "데이마켓", "PRE": "프리마켓", "REGULAR": "정규장", "AFTER": "애프터마켓", "CLOSED": "휴장"}
 LABEL = {"ATM_TERMINATED": "ATM 종료", "REGISTRATION_WITHDRAWN": "증자 등록 철회",
          "OFFERING_TERMINATED": "공모 철회", "BUYBACK": "자사주 매입"}
@@ -432,7 +441,7 @@ class Scalp(Strategy):
                             stop=price * (1 - self.p["stop_loss_pct"] / 100),
                             target=price * (1 + self.p["take_profit_pct"] / 100),
                             sell_from=deadline, deadline=deadline,
-                            scale_out=1.0, trail_pct=0.0,
+                            scale_out=self.p.get("scale_out_pct", 1.0), trail_pct=self.p.get("trail_pct", 0.0),
                             context={"flow_kind": ev["kind"], "flow_text": ev["text"], "flow_chg": ev.get("chg"),
                                     "ask": b.ask, "bid": b.bid, "spread_pct": b.spread_pct, "dilution_note": note}))
         return out

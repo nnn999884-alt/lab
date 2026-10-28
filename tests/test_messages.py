@@ -10,9 +10,9 @@ T = {"symbol": "PENX", "strategy": "runner_overnight", "stop": 1.11, "target": 1
 def test_first_line_names_event_and_symbol():
     # 잠금화면 미리보기에는 첫 줄만 보인다 — 첫 줄에 행동·종목·수량·가격·전략이 다 들어간다
     assert msg.buy_filled(T, 120, 1.2345, "DAY").split("\n")[0] == \
-        "🟢 매수 완료 PENX · 120주 · $1.2345 · 나이트러너/데이마켓"
+        "🟢 매수 완료 PENX · 120주 · $1.2345 · 러너 오버나이트/데이마켓"
     assert msg.buy_filled(T, 50, 1.2345, "DAY", filled=50, planned=120).split("\n")[0] == \
-        "🟢 매수 중 PENX · 50/120주 · $1.2345 · 나이트러너/데이마켓"
+        "🟢 매수 중 PENX · 50/120주 · $1.2345 · 러너 오버나이트/데이마켓"
     assert msg.scaled_out(T, 60, 1.38).split("\n")[0] == "🟡 분할 익절 · PENX"
     assert msg.closed(T).split("\n")[0] == "🔵 청산 PENX · 익절"
     assert msg.closed({**T, "pnl": -5.0, "pnl_pct": -3.0, "exit_reason": "손절"}).startswith("🔴 청산 PENX · 손절")
@@ -30,7 +30,7 @@ def test_name_appended_when_known_omitted_when_not():
 
 def test_formats():
     buy = msg.buy_filled(T, 120, 1.2345, "DAY")
-    assert "총 $148.14" in buy and "나이트러너/데이마켓" in buy and "손절 $1.11" in buy
+    assert "총 $148.14" in buy and "러너 오버나이트/데이마켓" in buy and "손절 $1.11" in buy
     assert len(buy.split("\n")) <= 3          # 휴대폰에서 스크롤 없이 읽히게
     c = msg.closed(T)
     assert "+$11.20 (+7.6%) · 120주" in c and "$1.2345 → $1.33" in c and "데이마켓→프리마켓" in c

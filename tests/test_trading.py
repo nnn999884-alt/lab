@@ -1049,3 +1049,28 @@ def test_no_rebound_keeps_position_when_accumulating(env):
     market.set("PEN", 1.02, 1.03)
     tr.tick()
     assert j.q("SELECT status FROM trades")[0]["status"] == "OPEN"
+
+
+def test_scalp_sells_half_then_trails_the_rest(env):
+    """고정 익절로 전량 팔지 않는다 — +10%에서 절반만 팔고, 나머지는 고점 대비 −2%에서 청산."""
+    tr, market, mv, clock, j, ctl, ex = env
+    tr.tcfg.flatten_kst = ""
+    tr.tcfg.entry_cutoff_kst = ""
+    for n in tr.tcfg.strategies:                        # 스캘프 단독으로 본다
+        tr.tcfg.strategies[n]["enabled"] = (n == "scalp")
+    tr.tcfg.strategies["scalp"]["entry_discount_pct"] = 0.0   # 즉시 체결 (할인은 따로 테스트)
+    mv.flow = [{"symbol": "PEN", "kind": "burst", "text": "거래 터짐", "chg": 15.0}]
+    market.set("PEN", 1.03, 1.035)
+    tr.tick()
+    t = j.q("SELECT * FROM trades")[0]
+    qty = t["qty"]
+    assert t["scale_out"] == 0.5 and t["trail_pct"] == 2.0
+    clock[0] = et(1, 30)                              # 강제 청산 시각 전
+    market.set("PEN", 1.16, 1.17)                     # +12% → 목표 초과, 고점 갱신
+    tr.tick()
+    t = j.q("SELECT * FROM trades")[0]
+    assert t["scaled"] == 1 and t["remaining"] == qty - qty // 2   # 절반만 팔고 나머지 유지
+    clock[0] = et(1, 40)
+    market.set("PEN", 1.12, 1.13)                     # 고점(1.16) 대비 −3% → 나머지 청산
+    tr.tick()
+    assert j.q("SELECT status FROM trades")[0]["status"] in ("CLOSED", "EXITING")
