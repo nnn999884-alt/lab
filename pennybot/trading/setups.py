@@ -32,6 +32,12 @@ def _dollar(mv, symbol: str, trade_date, minutes: float | None = None) -> float:
     return float(r[0][0] or 0) if r else 0.0
 
 
+def _last_price(mv, symbol: str, trade_date) -> float | None:
+    r = mv.q("SELECT last FROM prices WHERE symbol=? AND trade_date=? AND ts<=? ORDER BY ts DESC LIMIT 1",
+             (symbol, trade_date.isoformat(), mv._asof()))
+    return float(r[0][0]) if r and r[0][0] else None
+
+
 def _atr(bars: list[tuple], n: int) -> float | None:
     if len(bars) < n + 1:
         return None
@@ -202,11 +208,14 @@ class SessionGap(Strategy):
         out = []
         for sym in _candidates(ctx):
             pc = ctx.mv.prev_close(sym, ctx.trade_date, allow_api=False)
-            b = ctx.mv.book(sym)
-            if not pc or not b.has_quote or b.spread_pct > p["max_spread_pct"]:
+            last = _last_price(ctx.mv, sym, ctx.trade_date)
+            if not pc or not last:
                 continue
-            discount = (b.mid / pc - 1) * 100
+            discount = (last / pc - 1) * 100
             if discount > -p["discount_pct"]:
+                continue
+            b = ctx.mv.book(sym)
+            if not b.has_quote or b.spread_pct > p["max_spread_pct"]:
                 continue
             dollar = _dollar(ctx.mv, sym, ctx.trade_date)
             if dollar < p["min_dollar"]:
@@ -257,11 +266,14 @@ class Reversal(Strategy):
         out = []
         for sym in _candidates(ctx):
             pc = ctx.mv.prev_close(sym, ctx.trade_date, allow_api=False)
-            b = ctx.mv.book(sym)
-            if not pc or not b.has_quote:
+            last = _last_price(ctx.mv, sym, ctx.trade_date)
+            if not pc or not last:
                 continue
-            drop = (b.mid / pc - 1) * 100
+            drop = (last / pc - 1) * 100
             if drop > -p["min_drop_pct"]:
+                continue
+            b = ctx.mv.book(sym)
+            if not b.has_quote:
                 continue
             day_low = ctx.mv.q("SELECT MIN(low) FROM bars_1m WHERE symbol=? AND trade_date=? AND ts<=?",
                                (sym, ctx.trade_date.isoformat(), ctx.mv._asof()))

@@ -113,11 +113,13 @@ def test_news_skips_already_pumped():
 def test_session_gap_needs_discount():
     sql = [("FROM bars_1m WHERE symbol=? AND trade_date=? AND ts<=?", [(2_000_000.0,)])]
     cheap = FakeMV(books={"PEN": Book("PEN", 1.90, 1.92, 10_000, 10_000, 1.91)},
-                   sql=sql, closes={"PEN": 2.00}, attention=[("PEN", 3)])
+                   sql=sql + [("SELECT last FROM prices", [(1.91,)])], closes={"PEN": 2.00},
+                   attention=[("PEN", 3)])
     assert [p.symbol for p in scan("session_gap", cheap)] == ["PEN"]
 
     flat = FakeMV(books={"PEN": Book("PEN", 1.98, 1.99, 10_000, 10_000, 1.985)},
-                  sql=sql, closes={"PEN": 2.00}, attention=[("PEN", 3)])
+                  sql=sql + [("SELECT last FROM prices", [(1.985,)])], closes={"PEN": 2.00},
+                  attention=[("PEN", 3)])
     assert scan("session_gap", flat) == []
 
 
@@ -153,6 +155,7 @@ def test_reversal_skips_dilution_filing():
     sql = [
         ("MIN(low) FROM bars_1m", [(1.00,)]),
         ("FROM bars_1m WHERE symbol=? AND trade_date=? AND ts<=?", [(6_000_000.0,)]),
+        ("SELECT last FROM prices", [(1.205,)]),
         ("FROM halts", []),
     ]
     book = {"PEN": Book("PEN", 1.20, 1.21, 10_000, 10_000, 1.205)}
