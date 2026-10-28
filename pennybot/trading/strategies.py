@@ -32,6 +32,11 @@ STRATEGY_KO = {
     "regular_momentum": "정규장 모멘텀",
     "scalp": "플래시 스캘프",
     "steady_trend": "매집 스텝업",
+    "squeeze": "공매도 스퀴즈",
+    "news": "뉴스 단타",
+    "session_gap": "데이-프리 가격차",
+    "accumulation": "매집 포착",
+    "reversal": "역추세 반등",
 }
 SESSION_KO = {"DAY": "데이마켓", "PRE": "프리마켓", "REGULAR": "정규장", "AFTER": "애프터마켓", "CLOSED": "휴장"}
 LABEL = {"ATM_TERMINATED": "ATM 종료", "REGISTRATION_WITHDRAWN": "증자 등록 철회",
@@ -470,3 +475,7 @@ class SteadyTrend(Strategy):
 
 ALL = {cls.name: cls for cls in (RunnerOvernight, DilutionCatalyst, DayIgnition, DayDip, RegularMomentum, Scalp,
                                  SteadyTrend)}
+
+from .setups import ALL as SETUP_ALL   # noqa: E402  (setups 가 이 모듈의 Strategy·Plan 을 쓰므로 뒤에서 합친다)
+
+ALL.update(SETUP_ALL)

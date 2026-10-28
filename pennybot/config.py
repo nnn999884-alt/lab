@@ -250,6 +250,24 @@ class TradingConfig:
         "steady_trend": {"enabled": True, "budget_pct": 0.15, "max_positions": 3,
                         "signal_window_minutes": 30, "entry_discount_pct": 1.0,
                         "take_profit_pct": 15.0, "stop_loss_pct": 8.0, "gap_risk_pct": 20.0},
+        # 설계 문서(2026-10-28)의 당일 셋업 5개. 숫자는 백테스트 전 초안이고, 청산은 공통 규칙이 맡는다.
+        "squeeze": {"enabled": True, "budget_pct": 0.10, "max_positions": 2, "entry_discount_pct": 1.0,
+                    "min_short_ratio": 0.40, "min_borrow_fee": 30.0, "min_dollar": 2e6, "max_spread_pct": 3.0,
+                    "take_profit_pct": 20.0, "stop_loss_pct": 50.0, "gap_risk_pct": 25.0,
+                    "scale_out_pct": 0.5, "trail_pct": 10.0},
+        "news": {"enabled": True, "budget_pct": 0.10, "max_positions": 2, "entry_discount_pct": 1.0,
+                 "window_minutes": 60, "min_dollar_3m": 2e5, "max_spread_pct": 2.0,
+                 "max_runup_after_signal_pct": 30.0,
+                 "take_profit_pct": 8.0, "stop_loss_pct": 50.0, "gap_risk_pct": 25.0},
+        "session_gap": {"enabled": True, "budget_pct": 0.10, "max_positions": 2, "entry_discount_pct": 1.0,
+                        "discount_pct": 3.0, "min_dollar": 1e6, "max_spread_pct": 3.0,
+                        "take_profit_pct": 3.0, "stop_loss_pct": 50.0, "gap_risk_pct": 20.0},
+        "accumulation": {"enabled": True, "budget_pct": 0.10, "max_positions": 2, "entry_discount_pct": 1.0,
+                         "box_pct": 5.0, "max_atr_ratio": 0.7, "min_vol_ratio": 1.3,
+                         "take_profit_pct": 20.0, "stop_loss_pct": 50.0, "gap_risk_pct": 25.0},
+        "reversal": {"enabled": True, "budget_pct": 0.10, "max_positions": 2, "entry_discount_pct": 1.0,
+                     "min_drop_pct": 35.0, "min_dollar": 5e6, "recover_pct": 15.0,
+                     "take_profit_pct": 12.0, "stop_loss_pct": 50.0, "gap_risk_pct": 25.0},
     })
 
     def spread_cap(self, session: str) -> float:
