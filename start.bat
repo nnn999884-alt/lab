@@ -13,4 +13,4 @@ timeout /t 5 /nobreak >nul
 start /min "pennybot 매매" cmd /c run_forever.bat trade
 start /min "pennybot 대시보드" cmd /c run_forever.bat dashboard
 rem tunnel.bat 을 한 번 실행해 cloudflared 를 받아 뒀으면 외부 주소도 연다 (주소는 텔레그램으로)
-if exist tools\cloudflared.exe start /min "pennybot 외부 주소" cmd /c tunnel.bat
+if exist tools\cloudflared.exe start /min "pennybot 외부 주소" cmd /c run_forever.bat tunnel
