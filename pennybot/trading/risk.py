@@ -78,8 +78,9 @@ class Risk:
             return "전략 동시 보유 한도"
         if any(t["symbol"] == symbol for t in open_trades) or self.j.traded_today(symbol, trade_date):
             return "이미 보유/오늘 매매한 종목"
-        if self.t.max_unfilled_entries and self.j.unfilled_entries_today(symbol, trade_date) >= self.t.max_unfilled_entries:
-            return f"오늘 {self.t.max_unfilled_entries}번 미체결(호가 얇음) → 오늘은 그만"
+        other = self.j.strategies_today(symbol, trade_date) - {strategy}
+        if other:
+            return f"오늘 다른 전략({', '.join(sorted(other))})이 이 종목 매매"
         return None
 
     def size(self, strategy: str, price: float, stop: float, acct: Account) -> int:

@@ -83,6 +83,7 @@ def env(tmp_path):
     market.set("IWM", 199.9, 200.1)
     clock = [et(1, 0)]                       # 데이마켓 (한국 14:00)
     tcfg = TradingConfig(paper_cash=10_000)
+    tcfg.stop_loss_pct_override = 0.0      # 전략별 손절폭을 검증하는 테스트라 전역 −50% 덮어쓰기는 끈다
     tcfg.strategies["dilution_catalyst"]["enabled"] = False
     tcfg.strategies["day_ignition"]["enabled"] = False
     tcfg.strategies["runner_overnight"]["entry_discount_pct"] = 0.0   # 아래 테스트는 즉시 체결을 가정 (할인은 따로 테스트)
@@ -164,6 +165,10 @@ def test_spread_cap_varies_by_session():
     tcfg = TradingConfig()
     assert tcfg.spread_cap("REGULAR") < tcfg.spread_cap("PRE") < tcfg.spread_cap("AFTER") < tcfg.spread_cap("DAY")
     assert tcfg.spread_cap("CLOSED") == tcfg.max_spread_pct          # 세션별 설정에 없으면 기본값
+
+
+def test_default_hard_stop_is_50pct():
+    assert TradingConfig().stop_loss_pct_override == 50.0
 
 
 def test_scan_keeps_running_outside_day_but_does_not_buy(env):
@@ -586,22 +591,26 @@ def test_can_enter_rejects_blocked_symbol(tmp_path):
     assert risk.can_enter("runner_overnight", "JYD", str(D), []) is None
 
 
-def test_can_enter_skips_symbol_after_repeated_unfilled_entries(tmp_path):
-    """호가가 얇아 매번 미체결·취소되는 종목은 N번 넘으면 그날은 더 안 건다 (JYD 사례: 5분마다 8번 재시도)."""
+def test_can_enter_allows_retry_after_canceled_entries(tmp_path):
     tcfg = TradingConfig()
-    tcfg.max_unfilled_entries = 3
     j = Journal(tmp_path / "r.db")
     risk = Risk(tcfg, j, Control(tmp_path))
-    for _ in range(2):
+    for _ in range(3):
         tid = j.open_trade(strategy="runner_overnight", symbol="JYD", trade_date=str(D), planned_qty=30,
                            stop=1.6, target=2.0, sell_from=et(4, 0), deadline=et(9, 30), reason="", now=et(1, 0))
-        j.entry_finished(tid)                   # 체결 없이(qty=0) CANCELED
-    assert risk.can_enter("runner_overnight", "JYD", str(D), []) is None   # 아직 2번 → 허용
-    tid = j.open_trade(strategy="runner_overnight", symbol="JYD", trade_date=str(D), planned_qty=30,
+        j.entry_finished(tid)
+    assert risk.can_enter("runner_overnight", "JYD", str(D), []) is None
+
+
+def test_can_enter_blocks_symbol_used_by_another_strategy_today(tmp_path):
+    tcfg = TradingConfig()
+    j = Journal(tmp_path / "r.db")
+    risk = Risk(tcfg, j, Control(tmp_path))
+    tid = j.open_trade(strategy="scalp", symbol="JYD", trade_date=str(D), planned_qty=30,
                        stop=1.6, target=2.0, sell_from=et(4, 0), deadline=et(9, 30), reason="", now=et(1, 0))
-    j.entry_finished(tid)                        # 3번째
-    assert risk.can_enter("runner_overnight", "JYD", str(D), []).startswith("오늘 3번 미체결")
-    # 체결된 매수는 이 카운트에 안 들어가니 다른 종목은 영향 없음
+    j.entry_finished(tid)
+    assert "다른 전략" in risk.can_enter("runner_overnight", "JYD", str(D), [])
+    assert risk.can_enter("scalp", "JYD", str(D), []) is None
     assert risk.can_enter("runner_overnight", "OTHER", str(D), []) is None
 
 

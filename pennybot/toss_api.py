@@ -168,6 +168,12 @@ class TossClient:
             if force and self._last_issue is not None and self._clock() - self._last_issue < 10:
                 log.warning("401 반복 (10초 안에 재발급함) → 토큰 문제가 아닐 수 있어 재발급 건너뜀")
                 return self._token
+            if force:
+                self._sleep(0.4)
+                cached = self.tokens.load()
+                if cached and cached[1] - 60 > self._clock() and cached[0] != self._token:
+                    self._token = cached[0]
+                    return self._token
             # 재발급은 프로세스 사이에서 한 번에 하나만: 수집기·봇이 동시에 받으면 서로의 토큰을 무효로 만든다
             with self.tokens.issuing():
                 cached = self.tokens.load()

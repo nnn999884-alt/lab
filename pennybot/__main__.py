@@ -103,9 +103,9 @@ def cmd_backfill_daily(cfg: Config, args) -> None:
     setup_file_log(cfg, "backfill")
     client = make_client(cfg, "collector")
     store = Store(cfg.collector.db_path)
-    syms = [r["symbol"] for r in store.query("SELECT symbol FROM stock_info WHERE symbol IS NOT NULL ORDER BY symbol")]
+    syms = [r[0] for r in store.query("SELECT symbol FROM stock_info WHERE symbol IS NOT NULL ORDER BY symbol")]
     if not syms:
-        syms = [r["symbol"] for r in store.query("SELECT DISTINCT symbol FROM universe ORDER BY symbol")]
+        syms = [r[0] for r in store.query("SELECT DISTINCT symbol FROM universe ORDER BY symbol")]
     log.info("일봉 백필 시작: %d종목, since=%s", len(syms), getattr(args, "since", "2025-01-01"))
     rep = backfill_daily(client, store, syms, since=args.since, sleep=args.pause, limit=args.limit or None,
                          progress=lambda i, n, r: log.info("일봉 진행 %d/%d (누적 %d행)", i, n, r))
@@ -418,7 +418,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="미국 페니주 자동매매 (토스증권)")
     ap.add_argument("command", nargs="?", default="collect",
                     choices=["check", "accounts", "collect", "summarize", "trade", "dashboard", "probe-orders",
-                             "backtest", "research", "bigruns", "chart30", "trigger", "anatomy", "telegram-setup", "tunnel", "screen", "run"])
+                             "backtest", "research", "bigruns", "chart30", "trigger", "anatomy", "telegram-setup", "tunnel", "screen", "run",
+                             "backfill-daily"])
     ap.add_argument("--config", default="config.yaml")
     ap.add_argument("--once", action="store_true", help="collect/run: 한 번만 실행")
     ap.add_argument("--date", help="summarize: 미국 영업일 YYYY-MM-DD")

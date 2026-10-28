@@ -170,6 +170,11 @@ class Journal:
                    "AND status='CANCELED' AND qty=0", (symbol, trade_date, self.mode))
         return r[0]["n"] if r else 0
 
+    def strategies_today(self, symbol: str, trade_date: str) -> set[str]:
+        rows = self.q("SELECT DISTINCT strategy FROM trades WHERE symbol=? AND trade_date=? AND mode=?",
+                      (symbol, trade_date, self.mode))
+        return {r["strategy"] for r in rows}
+
     def strategy_stats(self, strategy: str | None = None, last_n: int | None = None) -> list[dict]:
         rows = self.q("""SELECT strategy, pnl, pnl_pct FROM trades WHERE status='CLOSED' AND mode=?
                          ORDER BY id DESC""", (self.mode,))

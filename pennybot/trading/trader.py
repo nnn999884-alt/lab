@@ -24,7 +24,7 @@ from . import messages as msg
 from .journal import Journal
 from .notify import Notifier
 from .risk import Account, Risk
-from .strategies import ALL, FINANCING_WORDS, Ctx, events_of
+from .strategies import ALL, FINANCING_WORDS, Ctx, Plan, events_of
 
 # 들고 있는 동안 이런 공시가 나오면 즉시 청산 (급등주 최대 위험: 밤사이 증자 발표)
 HOLD_ALARM = FINANCING_WORDS | {"DELISTING_NOTICE", "OFFERING_FILED", "SHELF_FILED", "WARRANT_INDUCEMENT",
@@ -875,6 +875,15 @@ class Trader:
             rows = [row(p, False, f"{p.reason} — 매수 시간 아님 ({SESSION_KO.get(session, session)})")
                    if (p.strategy, p.symbol) in blocked_by_session else row(p, p.ok, p.reason) for p in plans]
             plans = [p for p in plans if (p.strategy, p.symbol) not in blocked_by_session]
+        best_by_symbol: dict[str, Plan] = {}
+        for p in plans:
+            if p.ok and (p.symbol not in best_by_symbol or p.score > best_by_symbol[p.symbol].score):
+                best_by_symbol[p.symbol] = p
+        losers = {id(p) for p in plans if p.ok and best_by_symbol[p.symbol] is not p}
+        if losers:
+            rows = [row(p, False, f"{p.reason} — 같은 종목은 {best_by_symbol[p.symbol].strategy} 전략이 선택")
+                    if id(p) in losers else row(p, p.ok, p.reason) for p in plans]
+            plans = [p for p in plans if id(p) not in losers]
         if not any(p.ok for p in plans):
             self.journal.log_signals(rows)
             self.status["last_scan"] = now.isoformat(timespec="seconds")

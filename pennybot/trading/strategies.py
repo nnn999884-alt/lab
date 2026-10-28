@@ -100,9 +100,6 @@ def dilution_gate(sym: str, price: float, ctx: Ctx, has_catalyst: bool, max_flag
     """(탈락 사유 또는 None, 설명). 희석 프로필이 있으면 그것으로, 없으면 수집기 공시로 판단.
     희석 점수 자체로는 더는 거르지 않는다 (RENT 사례: 100점이어도 +32% 지속 — 점수가 높아도 주가가 오르는 건
     오른다고 판단, 참고용 note 로만 남김). 다만 상폐·사기성 공시처럼 '차단' 등급과, 펌프 위험 신호 개수는 그대로 막는다."""
-    t = ctx.tcfg
-    if not (t.min_price <= price <= t.max_price):
-        return f"가격범위 밖 ${price:.4f}", ""
     prof = ctx.fund.profile(sym, price, ctx.trade_date) if ctx.fund else None
     if prof is not None:
         note = f"희석 {prof.score:.0f}점" + (f" [{', '.join(prof.recent_positive)}]" if prof.recent_positive else "")
@@ -283,12 +280,6 @@ class DayIgnition(Strategy):
             move = (last / pc - 1) * 100
             if move < self.p["min_move_pct"]:
                 continue
-            if move > self.p["max_move_pct"]:
-                out.append(self._reject(sym, f"{cat}, 이미 {move:+.1f}% (늦음)", last))
-                continue
-            if last < hi * (1 - self.p["max_pullback_pct"] / 100):
-                out.append(self._reject(sym, f"{cat}, 고점 대비 밀림", last))
-                continue
             b, bad = quote_check(sym, ctx)
             if bad:
                 out.append(self._reject(sym, bad, last))
@@ -380,12 +371,6 @@ class RegularMomentum(Strategy):
             last, hi = path[-1], max(path)
             move = (last / pc - 1) * 100
             if move < self.p["min_move_pct"]:
-                continue
-            if move > self.p["max_move_pct"]:
-                out.append(self._reject(sym, f"{cat}, 이미 {move:+.1f}% (늦음)", last))
-                continue
-            if last < hi * (1 - self.p["max_pullback_pct"] / 100):
-                out.append(self._reject(sym, f"{cat}, 고점 대비 밀림", last))
                 continue
             b, bad = quote_check(sym, ctx)
             if bad:

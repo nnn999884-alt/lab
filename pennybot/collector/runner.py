@@ -1341,7 +1341,8 @@ class Collector:
                     self._rb_sent.update({(sym, s_) for s_ in range(1, stage + 1)})   # 2단계면 1단계도 건너뜀
                     self._rt_q.put(("approach", sym, price, stage, d60))
                     break
-        if t - self._rt_fired.get(sym, 0) < 600 or not self._settings.get().get("realtime", True):
+        if t - self._rt_fired.get(sym, 0) < getattr(self.cfg, "rt_cooldown_seconds", 600) \
+                or not self._settings.get().get("realtime", True):
             return
         d60 = sum(p * v for _, p, v in w)
         v60 = sum(v for _, _, v in w)
@@ -1350,7 +1351,10 @@ class Collector:
                                                     and self.cfg.rt_min_turnover <= v60 / sh * 100 <= 1000)):
             return
         base = sum(v for k, v in mins.items() if m - 31 <= k <= m - 2) / 30   # 직전 30분 분당 평균 (지금 분·직전 분 제외)
-        if sym not in self._rt_seeded or v60 < self.cfg.rt_surge * max(base, 1.0):
+        if sym in self._rt_seeded:
+            if v60 < self.cfg.rt_surge * max(base, 1.0):
+                return
+        elif d60 < self.cfg.rt_min_dollar * 3:
             return
         self._rt_fired[sym] = t
         self._rt_q.put(("alert", sym, d60, v60, price))

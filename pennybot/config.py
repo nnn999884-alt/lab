@@ -95,14 +95,15 @@ class CollectorConfig:
     precursor_min_score: int = 5     # 장중 감시·알림 대상 일봉 점수 (최대 10)
     precursor_live_max: int = 80     # 장중 감시 종목 수 상한 (1분에 이만큼 1분봉 조회)
     precursor_rank_max: int = 40     # 목록 밖이라도 지금 랭킹(급등률·거래대금·거래량)에 든 종목을 이만큼 더 장중 감시
-    fast_scan_seconds: int = 10      # 거래대금·거래량 실시간 랭킹을 이 간격으로 봐서 새로 든 종목을 바로 실시간 구독 (0 = 끔)
+    fast_scan_seconds: int = 3      # 거래대금·거래량 실시간 랭킹을 이 간격으로 봐서 새로 든 종목을 바로 실시간 구독 (0 = 끔)
     realtime_alerts: bool = True     # 웹소켓 체결로 실시간 알림 (계정당 연결 2개 중 1개 사용, 끊기면 1분 확인으로 대체)
     halt_alerts: bool = True         # 뉴스 대기 거래정지가 뜨면 바로 알림 + 실시간 구독 (재개 순간 거래 터짐을 잡게)
     pre_open_watch: bool = True      # 03:55 ET: 데이마켓에서 움직인 종목을 '프리 개장 주목' 으로 다시 알리고 실시간 구독 고정
+    rt_cooldown_seconds: int = 180     # 같은 종목 실시간 알림 재발송 최소 간격 (기존 600초는 너무 느림)
     rt_min_dollar: float = 5e4       # 최근 60초 거래대금 이상이거나
     rt_min_turnover: float = 0.5     # 최근 60초 회전율(%) 이상이고 (이때도 거래대금은 rt_min_turn_dollar 이상)
     rt_min_turn_dollar: float = 1e4  # 발행주식이 아주 적으면 $2천으로도 회전율이 차서 — 회전율 조건의 최소 거래대금
-    rt_surge: float = 5.0            # 최근 60초 거래량이 그 종목 직전 30분 분당 평균의 이만큼 배 이상이면 알림 (등락률은 안 봄)
+    rt_surge: float = 3.5            # 최근 60초 거래량이 그 종목 직전 30분 분당 평균의 이만큼 배 이상이면 알림 (등락률은 안 봄)
     spike_min_dollar: float = 5000.0  # 1분 급등·급락 이벤트: 그 2분 거래대금이 이만큼은 돼야 (얇은 체결 소음 제외)
     # 애프터마켓은 거래가 느릿느릿 쌓여서 1분 급등(spike_up) 기준(+4%)에 거의 안 걸린다 — 정규장 종가 대비
     # 누적으로 이만큼 올랐으면 따로 잡는다 (early20 의 애프터마켓 버전)
@@ -112,8 +113,8 @@ class CollectorConfig:
     steady_window_hours: float = 2.0     # 이 시간 동안의 랭킹 기록을 본다
     steady_rank_cutoff: int = 30         # 유니버스 내 거래대금 랭킹 상위 N위 안에 들었는지
     steady_min_ratio: float = 0.5        # 그 기간 폴링 중 이 비율 이상 랭킹에 있었으면 '꾸준함'
-    steady_min_polls: int = 10           # 폴링 기록이 이보다 적으면(세션 시작 직후) 판단 보류
-    steady_cooldown_hours: float = 2.0   # 같은 종목 재알림 간격
+    steady_min_polls: int = 6           # 폴링 기록이 이보다 적으면(세션 시작 직후) 판단 보류
+    steady_cooldown_hours: float = 1.0   # 같은 종목 재알림 간격
     precursor_daily_alert: int = 10  # 장 마감 뒤 점수 계산이 끝나면 상위 N종목 목록 알림 (0 = 끔)
     vsignal: bool = True             # 가상 매매 알림 (실제 주문 없음) — 전략 정의는 pennybot/vstrat.py
     keep_days: int = 20            # 고가 +keep_min_run% 급등주는 이 거래일 수만큼 계속 감시 (며칠 뒤 다시 오르는 경우)
@@ -147,7 +148,7 @@ class TradingConfig:
         "REGULAR": 1.5, "PRE": 2.0, "AFTER": 3.0, "DAY": 5.0})
     entry_cutoff_minutes: int = 30       # 데이마켓 종료 30분 전부터 신규 매수 중단
     scan_minutes: int = 5            # (예전 설정, scan_seconds 가 우선)
-    scan_seconds: int = 15           # 전략 스캔 간격 (후보 호가는 웹소켓 실시간)
+    scan_seconds: int = 5           # 전략 스캔 간격 (후보 호가는 웹소켓 실시간)
     forced_exit_minutes: int = 60        # 정규장 개장 후 N분에 전량 청산
     entry_ttl_seconds: int = 180         # 매수 지정가 미체결 시 취소
     entry_reprice_limit: int = 1         # 취소 전에 최우선 매도호가로 한 번 따라가 볼 횟수 (0 = 예전처럼 바로 취소)
@@ -155,14 +156,14 @@ class TradingConfig:
     fill_flush_seconds: int = 15
     signal_alerts: bool = True           # 후보가 잡혀 주문 직전에 텔레그램으로 '수급 신호' 알림
     signal_alert_minutes: int = 10       # 같은 종목·같은 셋업 신호는 이 간격으로만         # 부분 체결 알림을 이 시간만큼 모아 한 줄로 보낸다 (1주씩 체결되면 알림 폭주)
-    stop_loss_pct_override: float = 0.0  # 0 이 아니면 셋업 손절 대신 진입가 × (1 − x%) 하드 손절 (50 = −50%)
+    stop_loss_pct_override: float = 50.0  # 0 이 아니면 셋업 손절 대신 진입가 × (1 − x%) 하드 손절 (50 = −50%)
     no_rebound_minutes: int = 0          # 0 = 끔. 체결 후 이 시간이 지나도 반등·매집이 없으면 시간 손절
     no_rebound_high_pct: float = 3.0     # '반등'으로 인정하는 고점 기준 (진입가 대비 %)
     take_profit_pct_override: float = 0.0  # 0 이 아니면 셋업 목표가 대신 진입가 × (1 + x%)
     trail_from_high_pct: float = 0.0     # 0 이 아니면 고점 대비 이만큼 밀리면 익절 (2 = −2%)
     flatten_kst: str = ""                # "08:50" 이면 매일 이 시각(KST) 전량 청산 (빈 값 = morning_flatten_et 사용)
     entry_cutoff_kst: str = ""           # "08:20" 이면 이 시각~flatten 사이 신규 진입 중단
-    max_unfilled_entries: int = 3        # 같은 종목이 오늘 이만큼 연속 미체결(취소)되면 그날은 더 안 건다 (호가가 얇아 체결이 안 붙는 종목)
+    max_unfilled_entries: int = 0        # 0 = 끔. (예전: 같은 종목 3번 미체결이면 그날 제외 — 사용자 요청으로 삭제)
     exit_reprice_seconds: int = 60       # 매도 지정가 재호가 주기
     exit_slippage_pct: float = 1.0       # 강제 청산 매도가 = bid × (1 − x%)
     max_exit_reprices: int = 3           # 정규장에서 이 횟수 넘게 안 팔리면 최종 청산가로
@@ -241,7 +242,7 @@ class TradingConfig:
         "scalp": {"enabled": True, "budget_pct": 0.15, "max_positions": 3,
                  "signal_window_minutes": 3, "entry_discount_pct": 1.0, "max_hold_minutes": 120,
                  "take_profit_pct": 8.0, "stop_loss_pct": 6.0, "gap_risk_pct": 20.0,
-                 "stop_loss_pct_override": 10.0, "take_profit_pct_override": 10.0,
+                 "take_profit_pct_override": 10.0,
                  "scale_out_pct": 0.5, "trail_pct": 2.0},
         # scalp 과 같은 '세션 안 가리는' 전략이지만 반응하는 신호가 다르다 — poll_steady_flow 가 잡는 '매집'
         # (한 번에 안 터지고 꾸준히 붙는 수급) 신호에 반응해서 목표가·손절가 안 걸리면 다음 데이마켓 시작
