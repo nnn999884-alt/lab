@@ -756,7 +756,7 @@ table.ca-tbl tr.off .ca-fill { opacity: .35; }
       <div class="tablewrap"><table class="ra-tbl" id="ra-tbl"></table></div>
     </section>
     <section class="card vacct">
-      <div class="pre-head"><h2><i class="ic ic-wallet" aria-hidden="true"></i>가상 계좌</h2><span class="sub" style="margin:0" id="va-rule"></span></div>
+      <div class="pre-head"><h2><i class="ic ic-wallet" aria-hidden="true"></i>가상 매매 계좌 (S1~S6 실험)</h2><span class="sub" style="margin:0" id="va-rule"></span></div>
       <div class="va-row">
         <div class="va-big"><div class="k">평가액</div><div class="v mono" id="va-eq">-</div><div class="n mono" id="va-eq-n"></div></div>
         <div class="va-cell"><div class="k">오늘 실현</div><div class="v mono" id="va-today">-</div></div>
@@ -771,7 +771,7 @@ table.ca-tbl tr.off .ca-fill { opacity: .35; }
       <div class="grid strats" id="live-strats"></div>
     </section>
     <section class="kpis" aria-label="가상 매매 요약">
-      <div class="kpi"><div class="k">누적 성과 (새 전략)</div><div class="v" id="vt-k-all">-</div><div class="n" id="vt-k-all-n"></div></div>
+      <div class="kpi"><div class="k">가상 전략 누적 성과</div><div class="v" id="vt-k-all">-</div><div class="n" id="vt-k-all-n"></div></div>
       <div class="kpi"><div class="k">오늘</div><div class="v" id="vt-k-today">-</div><div class="n" id="vt-k-today-n"></div></div>
       <div class="kpi"><div class="k">보유 중</div><div class="v" id="vt-k-open">-</div><div class="n" id="vt-k-open-n"></div></div>
       <div class="kpi"><div class="k">지정가 대기</div><div class="v" id="vt-k-wait">-</div><div class="n">신호 뒤 지정가 유효 시간 안</div></div>
@@ -822,17 +822,10 @@ table.ca-tbl tr.off .ca-fill { opacity: .35; }
       <div class="chart" id="equity-chart"></div>
     </section>
 
-    <section class="grid two">
-      <div class="card">
-        <h2>전략별 누적 손익</h2>
-        <p class="sub long">청산된 매매의 실현 손익 합계 (USD)</p>
-        <div class="chart" id="strat-chart"></div>
-      </div>
-      <div class="card">
-        <h2>전략</h2>
-        <p class="sub long">끄면 그 전략의 신규 매수만 멈춥니다. 보유 종목 청산은 계속됩니다.</p>
-        <div class="grid strats" id="strats"></div>
-      </div>
+    <section class="card">
+      <h2>전략별 누적 손익</h2>
+      <p class="sub long">청산된 매매의 실현 손익 합계 (USD)</p>
+      <div class="chart" id="strat-chart"></div>
     </section>
     <section class="grid two">
       <div class="card"><h2>최근 주문</h2><p class="sub long">매수·매도 주문과 체결 상태</p>
@@ -2209,7 +2202,7 @@ async function loadVTrade() {
   // 보유·대기
   table2($("vt-open"), [["종목"], ["전략"], ["상태", 0, 1], ["매수가·지정가", 1], ["현재가", 1, 1], ["수익", 1], ["최고", 1, 1], ["익절가", 1, 1], ["손절가", 1, 1], ["시각", 0, 1]],
     open.concat(wait).map(r => { const v = r.status === "OPEN" ? vret(r) : null;
-      return [[r.symbol, "scr-sym-c"], [(STRAT_NAME[r.strat] || "이전").split(" ")[0]], [r.status === "OPEN" ? "보유" : "지정가 대기"],
+      return [[r.name ? `${r.symbol} ${r.name}` : r.symbol, "scr-sym-c"], [(STRAT_NAME[r.strat] || "이전").split(" ")[0]], [r.status === "OPEN" ? "보유" : "지정가 대기"],
               [fmtPx(r.entry), "num"], [fmtPx(r.last), "num"], [v == null ? "-" : fmtPct(v), "num " + (tone(v) || "")],
               [r.status === "OPEN" && r.high ? fmtPct((r.high / r.entry - 1) * 100, 0) : "-", "num"],
               [r.status === "OPEN" ? fmtPx(r.entry * (1 + (r.tp || 15) / 100)) : "-", "num"], [r.status === "OPEN" ? fmtPx(r.entry * (1 - (r.sl || 35) / 100)) : "-", "num"],
@@ -2227,7 +2220,7 @@ async function loadVTrade() {
     .sort((a, b) => (b.closed > a.closed ? 1 : -1));
   table2($("vt-hist"), [["매도 시각"], ["종목"], ["전략"], ["매수가", 1, 1], ["매도가", 1, 1], ["수익", 1], ["최고 (도달)", 1, 1], ["보유", 0, 1], ["사유"]],
     hist.map(r => { const v = vret(r); const hi = r.high && r.entry ? (r.high / r.entry - 1) * 100 : null;
-      return [[kst(r.closed)], [r.symbol, "scr-sym-c"], [(STRAT_NAME[r.strat] || "이전").split(" ")[0]], [fmtPx(r.entry), "num"], [fmtPx(r.exit_price), "num"],
+      return [[kst(r.closed)], [r.name ? `${r.symbol} ${r.name}` : r.symbol, "scr-sym-c"], [(STRAT_NAME[r.strat] || "이전").split(" ")[0]], [fmtPx(r.entry), "num"], [fmtPx(r.exit_price), "num"],
               [v == null ? "-" : fmtPct(v), "num " + (tone(v) || "")], [hi == null ? "-" : fmtPct(hi, 0) + (r.high_at ? ` (${dur(r.opened, r.high_at)})` : ""), "num"],
               [dur(r.opened, r.closed)], [r.exit_reason || "", "scr-tags"]]; }),
     "이 기간에 끝난 매매 없음");
@@ -2235,6 +2228,9 @@ async function loadVTrade() {
 document.querySelectorAll("#vt-range button").forEach(b => b.onclick = () => {
   vtRange = +b.dataset.r; document.querySelectorAll("#vt-range button").forEach(x => x.setAttribute("aria-pressed", x === b)); loadVTrade(); });
 $("bot-wrap").addEventListener("toggle", () => { if ($("bot-wrap").open) { delete _seen.tables; redrawAll(); } });
+{ const t = document.querySelector('.tab[data-tab="trade"]'); const bot = $("bot-wrap"); const racct = $("racct");
+  if (t && bot && racct && racct.parentElement === t) t.insertBefore(bot, racct.nextSibling);
+  if (bot) bot.open = true; }
 
 
 /* ---------- 설정 탭 ---------- */
