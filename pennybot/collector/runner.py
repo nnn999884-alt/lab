@@ -110,6 +110,11 @@ class Collector:
             pass
         self._last_session: tuple | None = None
         self._seen_accessions: set[str] = set()
+        # 메인 루프 감시: 10/28 에 메인 틱이 9시간 동안 통째로 멈춰 state/market.db 에 현재가·호가·랭킹이
+        # 한 줄도 안 쌓였는데(백그라운드 스레드는 계속 로그를 남겨서 겉보기엔 살아 있었다) 아무도 몰랐다.
+        # 별도 스레드가 '마지막으로 틱이 끝난 시각'을 보고, 장중에 이만큼 멈추면 프로세스를 재시작한다.
+        self._tick_ok_at = time.monotonic()
+        self._stage = "start"
 
     def _on(self, alert: str) -> bool:
         """설정 탭의 알림 켜기·끄기."""
@@ -251,6 +256,7 @@ class Collector:
         return False
 
     def _run(self, name: str, fn, *args) -> None:
+        self._stage = name
         try:
             fn(*args)
         except TossApiError as e:
@@ -338,6 +344,8 @@ class Collector:
     def run(self, sleep=time.sleep) -> None:
         log.info("수집기 시작 (DB=%s)", self.cfg.db_path)
         import threading
+        if getattr(self.cfg, "stall_restart_minutes", 0):
+            threading.Thread(target=self._stall_watch, name="stall-watchdog", daemon=True).start()
         if self.cfg.fast_scan_seconds and self.cfg.precursor:
             threading.Thread(target=self._fast_loop, name="rank-scan", daemon=True).start()
         if self.cfg.realtime_alerts and self.cfg.precursor:
@@ -353,7 +361,41 @@ class Collector:
                 self.tick()
             except Exception:
                 log.exception("수집 틱 실패 (계속 진행)")
+            self._tick_ok_at = time.monotonic()
             sleep(max(1.0, 5 - (time.time() % 5)))
+
+    def stall_reason(self, now_mono: float, session: str) -> str | None:
+        """장중인데 메인 틱이 오래 끝나지 않았으면 사유. 휴장 중에는 과거 패턴 갱신 등 오래 걸리는 작업이 정상이라 면제."""
+        limit = (getattr(self.cfg, "stall_restart_minutes", 0) or 0) * 60
+        if limit <= 0 or session == CLOSED:
+            return None
+        idle = now_mono - self._tick_ok_at
+        if idle < limit:
+            return None
+        return f"메인 루프 {idle / 60:.0f}분 무응답 (마지막 단계: {self._stage})"
+
+    def _stall_watch(self, sleep=time.sleep) -> None:
+        import os
+        while True:
+            sleep(30)
+            try:
+                session = self.cal.classify(self.clock())[1]
+            except Exception:
+                session = CLOSED
+            why = self.stall_reason(time.monotonic(), session)
+            if session == CLOSED:
+                self._tick_ok_at = time.monotonic()      # 휴장 중에는 재시작 기준을 계속 미뤄 둔다
+            if not why:
+                continue
+            log.error("수집기 멈춤 — %s → 프로세스 재시작", why)
+            try:
+                if self.notifier:
+                    from ..trading import messages as msg
+                    self.notifier.send(msg.warn("수집기 멈춤 → 자동 재시작", why,
+                                                "30초 뒤 수집기가 다시 켜집니다 (run_forever)"))
+            except Exception:
+                log.exception("수집기 멈춤 알림 실패")
+            os._exit(1)                                  # run_forever.bat 이 30초 뒤 다시 켠다
 
     # ---------- 작업 ----------
     def refresh_universe(self, now: datetime) -> None:

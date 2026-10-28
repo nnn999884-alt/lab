@@ -292,3 +292,16 @@ def test_event_from_other_thread_uses_passed_store(tmp_path):
     assert result.get("ok"), result.get("err")
     rows = store.query("SELECT symbol, kind FROM events WHERE kind='burst'")
     assert rows == [("XNDU", "burst")]
+
+def test_stall_reason_only_when_live_session_and_stuck(tmp_path):
+    """10/28: 메인 틱이 9시간 멈춰 현재가·호가가 안 쌓였는데 백그라운드 스레드 로그만 남아 몰랐다 → 재시작 판단."""
+    col, toss, store, clock = make(tmp_path, et(1, 0))     # 데이마켓 중
+    col.cfg.stall_restart_minutes = 15
+    col._tick_ok_at = 1000.0
+    col._stage = "prices"
+    assert col.stall_reason(1000.0 + 14 * 60, "DAY") is None
+    why = col.stall_reason(1000.0 + 15 * 60, "DAY")
+    assert why and "prices" in why and "15분" in why
+    assert col.stall_reason(1000.0 + 600 * 60, "CLOSED") is None      # 휴장 중 장시간 작업은 정상
+    col.cfg.stall_restart_minutes = 0                                  # 끄면 감시 안 함
+    assert col.stall_reason(1000.0 + 600 * 60, "DAY") is None

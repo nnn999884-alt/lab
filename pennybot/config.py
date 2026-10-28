@@ -82,6 +82,7 @@ class CollectorConfig:
     min_price: float = 0.20          # 수집은 매매 범위보다 넓게
     max_price: float = 10.0
     price_poll_seconds: int = 60     # 유니버스 전체 현재가 (200개씩 묶음 조회)
+    stall_restart_minutes: int = 15  # 메인 루프가 이만큼 통째로 멈추면 프로세스 재시작 (run_forever 가 다시 켬). 0 = 끔
     watch_size: int = 120            # 호가·1분봉을 촘촘히 받을 종목 수
     orderbook_poll_seconds: int = 60
     candle_sync_minutes: int = 30    # 감시 종목 1분봉 동기화 주기 (세션 종료 시에도 실행)
@@ -149,6 +150,8 @@ class TradingConfig:
     scan_seconds: int = 15           # 전략 스캔 간격 (후보 호가는 웹소켓 실시간)
     forced_exit_minutes: int = 60        # 정규장 개장 후 N분에 전량 청산
     entry_ttl_seconds: int = 180         # 매수 지정가 미체결 시 취소
+    entry_reprice_limit: int = 1         # 취소 전에 최우선 매도호가로 한 번 따라가 볼 횟수 (0 = 예전처럼 바로 취소)
+    entry_chase_pct: float = 2.0         # 그때 허용하는 추격폭 (처음 지정가 대비 %). 넘으면 체결 포기
     max_unfilled_entries: int = 3        # 같은 종목이 오늘 이만큼 연속 미체결(취소)되면 그날은 더 안 건다 (호가가 얇아 체결이 안 붙는 종목)
     exit_reprice_seconds: int = 60       # 매도 지정가 재호가 주기
     exit_slippage_pct: float = 1.0       # 강제 청산 매도가 = bid × (1 − x%)

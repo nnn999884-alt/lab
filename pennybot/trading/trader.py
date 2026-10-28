@@ -58,6 +58,7 @@ class Working:
     final: set = field(default_factory=set)     # 더 바뀌지 않는 id (체결 완료·취소·정정됨)
     ids: list = field(default_factory=list)
     fills: dict = field(default_factory=dict)   # id → (filled, avg)
+    limit0: float | None = None                 # 처음 낸 지정가 (매수 재호가 허용폭 계산용)
 
     @property
     def current(self) -> str:
@@ -84,6 +85,7 @@ class Trader:
         self.strategies = {n: cls(self.tcfg.strategies[n]) for n, cls in ALL.items() if n in self.tcfg.strategies}
         self.working: dict[str, Working] = {}
         self.exit_reprices: dict[int, int] = {}
+        self.entry_reprices: dict[int, int] = {}   # 매수 재호가 횟수 (거래 id → 횟수)
         self.last_session = None
         self._next: dict[str, datetime] = {}
         # 수집기와 같이 켜면 첫 현재가 기록까지 1~2분 걸린다 → 켜자마자 "수집기 멈춤" 오경보를 내지 않게 5분 뒤부터 감시
@@ -293,7 +295,8 @@ class Trader:
                 continue          # 정정·취소 처리 중
             age = (now - w.placed_at).total_seconds()
             if w.purpose == "entry" and age > self.tcfg.entry_ttl_seconds:
-                self._cancel(key, "매수 미체결 TTL", now)
+                if not self._reprice_entry(key, w, now, session):
+                    self._cancel(key, "매수 미체결 TTL", now)
             elif w.purpose == "exit" and age > self.tcfg.exit_reprice_seconds:
                 self._reprice(key, w, now, session)
 
@@ -391,6 +394,48 @@ class Trader:
         if session == REGULAR and aggressive:
             return True, None
         return False, None
+
+    def _reprice_entry(self, key: str, w: Working, now: datetime, session: str) -> bool:
+        """매수 지정가가 TTL 안에 안 붙었을 때, 취소 대신 최우선 매도호가로 한 번 따라가 본다.
+
+        프리마켓·데이마켓은 호가가 몇 초 만에 움직여서 중간가 지정가가 계속 비껴간다 (10/27 진입 8건 중 1건만 체결).
+        추격은 `entry_chase_pct` 안에서만 하고, 호가가 그보다 더 뛰었거나 스프레드가 세션 상한을 넘으면 포기한다
+        (급등 추격 금지·얇은 호가 회피는 그대로). 정정은 토스 규칙대로 '가격 정정' → 새 주문 id 로 줄기를 잇는다."""
+        limit_n = getattr(self.tcfg, "entry_reprice_limit", 0) or 0
+        if limit_n <= 0 or self.entry_reprices.get(w.trade_id, 0) >= limit_n:
+            return False
+        try:
+            b = self.ex.book(w.symbol)
+        except Exception as e:
+            log.warning("매수 재호가용 호가 실패 %s: %s", w.symbol, e)
+            return False
+        if not b.has_quote or b.ask <= 0:
+            return False
+        cap = self.tcfg.spread_cap(session)
+        if b.spread_pct > cap:
+            log.info("매수 재호가 포기 %s: 스프레드 %.1f%% (상한 %.1f%%)", w.symbol, b.spread_pct, cap)
+            return False
+        chase = getattr(self.tcfg, "entry_chase_pct", 0.0) or 0.0
+        if w.limit0 and b.ask > w.limit0 * (1 + chase / 100):
+            log.info("매수 재호가 포기 %s: 매도호가 $%.4f > 처음 지정가 $%.4f +%.1f%%",
+                     w.symbol, b.ask, w.limit0, chase)
+            return False
+        price = round(b.ask, 4)
+        try:
+            new_id = self.ex.modify(w.current, price)
+        except Exception as e:
+            log.warning("매수 정정 실패 %s (%s) → 취소", w.current, e)
+            return False
+        self.entry_reprices[w.trade_id] = self.entry_reprices.get(w.trade_id, 0) + 1
+        w.ids.append(new_id)
+        w.placed_at = now
+        left = max(w.qty - w.filled, 0)
+        self.journal.log_order({"order_id": new_id, "symbol": w.symbol, "side": w.side, "type": "LIMIT",
+                                "qty": left, "price": price, "status": "OPEN", "filled": 0, "avg_price": None},
+                               trade_id=w.trade_id, purpose=w.purpose, session=session, now=now,
+                               note=f"매수 재호가 {self.entry_reprices[w.trade_id]}회 (매도호가 추종)")
+        log.info("매수 정정 %s $%.4f → %s", w.symbol, price, new_id)
+        return True
 
     def _reprice(self, key: str, w: Working, now: datetime, session: str) -> None:
         """매도 재호가: 취소 후 재주문 대신 가격 정정 (미국 주식은 가격만 정정 가능). 실패하면 취소."""
@@ -813,7 +858,8 @@ class Trader:
         if purpose == "exit":
             self._exit_fail.pop(trade_id, None)
         self.working[o["order_id"]] = Working(o["order_id"], trade_id, purpose, symbol, side, now, note=note,
-                                              aggressive=aggressive, qty=qty, scale=scale, ids=[o["order_id"]])
+                                              aggressive=aggressive, qty=qty, scale=scale, ids=[o["order_id"]],
+                                              limit0=price)
         self.poll_orders(now, session)   # 즉시 체결분 반영
 
     def _order_failed(self, trade_id: int, purpose: str, symbol: str, now: datetime, why: str) -> None:

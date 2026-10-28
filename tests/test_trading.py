@@ -57,7 +57,8 @@ class FakeMV:
     def short_ratio(self, sym, d): return self.shorts.get(sym, (None, None))
     def name(self, sym): return self.names.get(sym)
     def day_stats(self, sym, max_age=120): return {"dollar": self.day_dollar[sym]} if sym in self.day_dollar else {}
-    def recent_flow(self, since, kinds=("burst", "after_move", "bottom_bounce", "early20")): return self.flow
+    def recent_flow(self, since, kinds=("burst", "after_move", "bottom_bounce", "early20", "steady")):
+        return [e for e in self.flow if e["kind"] in kinds]
 
 
 class FakeProfile:
@@ -318,6 +319,26 @@ def test_stop_loss_suppressed_near_session_transition(env):
     tr.tick()
     t = j.q("SELECT status, exit_reason FROM trades")[0]
     assert t["status"] == "CLOSED" and t["exit_reason"] == "손절"
+
+
+def test_steady_trend_buys_on_persistent_signal_and_rides_past_after_close(env):
+    """steady_trend 은 scalp 과 달리 '매집'(steady) 신호에 반응하고, 애프터마켓이 끝난다고 거기서 끊지 않고
+    다음 데이마켓 시작 직전까지 들고 간다."""
+    tr, market, mv, clock, j, ctl, ex = env
+    tr.tcfg.strategies["scalp"]["enabled"] = False
+    tr.tcfg.strategies["steady_trend"]["entry_discount_pct"] = 0.0
+    clock[0] = et(17, 0)                               # 애프터마켓
+    market.set("FLO", 2.00, 2.02)
+    mv.flow = [{"symbol": "FLO", "kind": "steady", "ts": "x", "text": "꾸준히 거래 붙음", "chg": 6.0}]
+    tr.tick()
+    t = j.q("SELECT status, strategy, deadline FROM trades WHERE symbol='FLO'")[0]
+    assert t["status"] == "OPEN" and t["strategy"] == "steady_trend"
+    assert datetime.fromisoformat(t["deadline"]) == et(20, 0)   # 다음 데이마켓 시작 직전까지 (애프터마켓 끝이 아님)
+    mv.flow = []
+    clock[0] = et(19, 45)                              # 애프터마켓 거의 끝 — 목표가·손절가 안 걸렸으면 계속 보유
+    market.set("FLO", 2.00, 2.02)
+    tr.tick()
+    assert j.q("SELECT status FROM trades WHERE symbol='FLO'")[0]["status"] == "OPEN"
 
 
 def test_regular_momentum_buys_during_regular_session_on_flow_signal(env):
@@ -639,6 +660,7 @@ def test_modify_lineage_sums_fills_across_ids(env):
 def test_cancel_rejected_is_retried(env):
     tr, market, mv, clock, j, ctl, ex = env
     tr.tcfg.entry_ttl_seconds = 60
+    tr.tcfg.entry_reprice_limit = 0                    # 재호가 없이 곧바로 취소하는 경로만 본다
     market.set("PEN", 1.00, 1.025)                    # 미체결로 남는 매수
     clock[0] = et(1, 0)
     tr.tick()
@@ -890,3 +912,54 @@ def test_exit_rejections_back_off(env):
         clock[0] += timedelta(seconds=5)
         tr.tick()
     assert len(calls) <= 3                            # 매 틱 재주문하지 않는다 (30초, 60초 …)
+
+
+def test_unfilled_entry_follows_ask_once_before_cancel(env):
+    """지정가가 안 붙으면 취소하지 않고 최우선 매도호가로 한 번 따라가 체결한다 (10/27 진입 8건 중 1건만 체결)."""
+    tr, market, mv, clock, j, ctl, ex = env
+    tr.tcfg.entry_ttl_seconds = 60
+    market.set("PEN", 1.00, 1.04)                     # 스프레드 4% → 중간가 지정가라 안 붙음
+    tr.tick()
+    assert j.q("SELECT status FROM trades")[0]["status"] == "PENDING"
+    first = next(iter(tr.working.values()))
+    assert first.limit0 == pytest.approx(first.limit0) and first.limit0 < 1.04
+    clock[0] += timedelta(seconds=61)
+    tr.tick()
+    ids = j.q("SELECT order_id, status, price FROM orders WHERE purpose='entry' ORDER BY rowid")
+    assert len(ids) == 2 and ids[-1]["price"] == pytest.approx(1.04)
+    assert ex.order(ids[0]["order_id"])["status"] == "REPLACED"
+    tr.tick()
+    t = j.q("SELECT * FROM trades")[0]
+    assert t["status"] == "OPEN" and t["entry_price"] == pytest.approx(1.04)
+
+
+def test_entry_reprice_gives_up_when_ask_jumps(env):
+    """호가가 처음 지정가보다 entry_chase_pct 넘게 뛰면 추격하지 않고 취소한다."""
+    tr, market, mv, clock, j, ctl, ex = env
+    tr.tcfg.entry_ttl_seconds = 60
+    market.set("PEN", 1.00, 1.04)
+    tr.tick()
+    clock[0] += timedelta(seconds=61)
+    market.set("PEN", 1.03, 1.08)                     # ask 1.08 > 중간가 지정가(1.022) + 2%
+    tr.tick()
+    assert next(iter(tr.working.values())).cancel_sent
+    tr.tick()
+    assert j.q("SELECT status FROM trades")[0]["status"] == "CANCELED"
+    assert ex.open_orders() == []
+
+
+def test_entry_reprice_happens_only_once(env):
+    """따라가도 안 붙으면 그다음 TTL 에는 취소한다 (무한 추격 금지)."""
+    tr, market, mv, clock, j, ctl, ex = env
+    tr.tcfg.entry_ttl_seconds = 60
+    market.set("PEN", 1.00, 1.04)
+    tr.tick()
+    clock[0] += timedelta(seconds=61)
+    market.set("PEN", 1.00, 1.04, size=1)             # 호가는 그대로, 최우선 잔량만 1주 → 정정은 되고 미체결
+    tr.tick()
+    assert len(next(iter(tr.working.values())).ids) == 2
+    clock[0] += timedelta(seconds=61)
+    tr.tick()                                        # 두 번째 TTL: 더는 따라가지 않고 취소
+    assert tr.entry_reprices[next(iter(tr.entry_reprices))] == 1
+    tr.tick()
+    assert not tr.working
