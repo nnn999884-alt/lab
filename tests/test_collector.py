@@ -307,3 +307,15 @@ def test_stall_reason_only_when_live_session_and_stuck(tmp_path):
     assert why and "CLOSED" in why
     col.cfg.stall_restart_minutes = 0                                 # 끄면 감시 안 함
     assert col.stall_reason(1000.0 + 600 * 60, "DAY") is None
+
+
+def test_runner_candidates_uses_daily_bars(tmp_path):
+    """10/28: prices 로 급등주를 뽑다 쿼리가 몇 시간 걸려 수집기가 멈췄다 → 일봉 기본키로 즉시 계산."""
+    store = Store(tmp_path / "m.db")
+    for sym, d, close, vol in (("AAA", "2026-10-26", 1.00, 1000), ("AAA", "2026-10-27", 1.40, 2000),
+                               ("BBB", "2026-10-26", 2.00, 1000), ("BBB", "2026-10-27", 2.10, 1000)):
+        store.db.execute("INSERT INTO daily_bars (symbol, d, open, high, low, close, volume) VALUES (?,?,?,?,?,?,?)",
+                         (sym, d, close, close * 1.1, close * 0.9, close, vol))
+    store.db.commit()
+    assert store.runner_candidates("2026-10-27", "2026-10-26", 30.0) == [("AAA", 1.00, 1.40)]
+    assert store.daily_ohlcv("2026-10-27")["AAA"][3] == 1.40

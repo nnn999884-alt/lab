@@ -143,16 +143,32 @@ class Store:
     def put_precursor_live(self, rows): return self._put("precursor_live", rows)
 
     def runner_candidates(self, trade_date: str, prev_date: str, min_pct: float) -> list[tuple]:
-        """정규장 마지막 현재가 기준으로 전 영업일 대비 min_pct% 이상 오른 종목 → (symbol, prev_close, close)."""
+        """전날 종가 대비 min_pct% 이상 오른 종목 → (symbol, prev_close, close).
+
+        10/28 사고: prices(하루 76만행)로 MAX(ts) 를 GROUP BY 하면 인덱스가 안 먹어 쿼리가 몇 시간씩 걸렸고,
+        그동안 수집기 메인 루프가 멈춰 급등주가 한 건도 안 쌓였다. 일봉(daily_bars)은 (symbol, d) 기본키라 즉시 끝난다.
+        일봉이 아직 없는 날짜만 예전처럼 prices 로 계산한다(장 마감 직후 등)."""
+        rows = self.query("""
+            SELECT a.symbol, b.close, a.close FROM daily_bars a JOIN daily_bars b ON a.symbol = b.symbol
+            WHERE a.d = ? AND b.d = ? AND b.close > 0 AND a.close / b.close - 1 >= ?
+            ORDER BY a.close / b.close DESC""", (trade_date, prev_date, min_pct / 100))
+        if rows:
+            return [(s, pc, c) for s, pc, c in rows]
         return self.query("""
             WITH last AS (
-              SELECT p.symbol, p.trade_date, p.last FROM prices p
-              JOIN (SELECT symbol, trade_date, MAX(ts) AS ts FROM prices
-                    WHERE session='REGULAR' AND trade_date IN (?, ?) GROUP BY symbol, trade_date) m
-                ON p.symbol=m.symbol AND p.ts=m.ts)
-            SELECT a.symbol, b.last, a.last FROM last a JOIN last b ON a.symbol=b.symbol
-            WHERE a.trade_date=? AND b.trade_date=? AND b.last > 0 AND a.last / b.last - 1 >= ?""",
-                          (trade_date, prev_date, trade_date, prev_date, min_pct / 100))
+              SELECT p.symbol, p.trade_date, MAX(p.ts) AS ts FROM prices p
+              WHERE p.session='REGULAR' AND p.trade_date IN (?, ?) GROUP BY p.symbol, p.trade_date)
+            SELECT a.symbol, b.last, a.last FROM last la
+            JOIN prices a ON a.symbol=la.symbol AND a.ts=la.ts
+            JOIN last lb ON lb.symbol=la.symbol AND lb.trade_date=?
+            JOIN prices b ON b.symbol=lb.symbol AND b.ts=lb.ts
+            WHERE la.trade_date=? AND b.last > 0 AND a.last / b.last - 1 >= ?
+            ORDER BY a.last / b.last DESC""", (trade_date, prev_date, prev_date, trade_date, min_pct / 100))
+
+    def daily_ohlcv(self, trade_date: str) -> dict[str, tuple]:
+        """그날 일봉 (symbol → (open, high, low, close, volume)). 급등주 기록에서 API 호출을 아낀다."""
+        return {r[0]: (r[1], r[2], r[3], r[4], r[5]) for r in self.query(
+            "SELECT symbol, open, high, low, close, volume FROM daily_bars WHERE d=?", (trade_date,))}
 
     def query(self, sql: str, args=()) -> list[tuple]:
         return self.db.execute(sql, args).fetchall()

@@ -1923,22 +1923,29 @@ class Collector:
                              (trade_date,))
         prev = r[0][0] if r else None
         if not prev:
+            log.warning("급등주 %s: 이전 영업일 데이터가 없어 건너뜀", trade_date)
             return
         day = datetime.fromisoformat(trade_date).date()
+        ohlcv = self.store.daily_ohlcv(trade_date)      # 일봉이 있으면 API 를 안 부른다 (종목 수만큼 호출 방지)
         rows = []
         for sym, pc, close in self.store.runner_candidates(trade_date, prev, self.cfg.runner_min_pct):
             row = {"trade_date": trade_date, "symbol": sym, "prev_close": pc, "close": close,
                    "change_pct": (close / pc - 1) * 100, "high": None, "low": None, "volume": None,
                    "close_loc": None, "shares": None, "rotation": None, "dilution_score": None,
                    "dilution_bucket": None, "dilution_reasons": None, "pump_flags": None}
-            try:
-                for cd in (self.c.candles(sym, "1d", 3) or {}).get("candles", []):
-                    if cd["timestamp"][:10] == trade_date:
-                        h, lo, v = float(cd["highPrice"]), float(cd["lowPrice"]), float(cd["volume"])
-                        row.update(high=h, low=lo, volume=v,
-                                   close_loc=(close - lo) / (h - lo) if h > lo else None)
-            except TossApiError as e:
-                log.debug("급등주 일봉 실패 %s: %s", sym, e)
+            o = ohlcv.get(sym)
+            if o:
+                _, h, lo, _, v = o
+                row.update(high=h, low=lo, volume=v, close_loc=(close - lo) / (h - lo) if h > lo else None)
+            else:
+                try:
+                    for cd in (self.c.candles(sym, "1d", 3) or {}).get("candles", []):
+                        if cd["timestamp"][:10] == trade_date:
+                            h, lo, v = float(cd["highPrice"]), float(cd["lowPrice"]), float(cd["volume"])
+                            row.update(high=h, low=lo, volume=v,
+                                       close_loc=(close - lo) / (h - lo) if h > lo else None)
+                except TossApiError as e:
+                    log.debug("급등주 일봉 실패 %s: %s", sym, e)
             if self.fund:
                 sh = self.fund.shares(sym, day)
                 row["shares"] = sh
@@ -1951,6 +1958,10 @@ class Collector:
                 has_cat = bool(self.store.query("SELECT 1 FROM filings WHERE symbol=? AND trade_date=?",
                                                 (sym, trade_date)))
                 row["pump_flags"] = ", ".join(self.fund.flags(sym, day, has_cat))
+                if row["rotation"] is None and row["volume"]:
+                    sh2 = row["shares"]
+                    if sh2:
+                        row["rotation"] = row["volume"] / sh2
             rows.append(row)
         self.store.put_runners(rows)
         log.info("급등주 %s: %d종목 (+%.0f%% 이상)", trade_date, len(rows), self.cfg.runner_min_pct)
