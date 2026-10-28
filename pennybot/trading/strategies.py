@@ -101,6 +101,35 @@ def quote_check(sym: str, ctx: Ctx):
     return b, None
 
 
+def chase_guard(sym: str, price: float, ctx: Ctx) -> str | None:
+    t = ctx.tcfg
+    if not getattr(t, "chase_guard", False):
+        return None
+    q = getattr(ctx.mv, "q", None)
+    if q is None or price <= 0:
+        return None
+    rows = q("SELECT high, close, volume FROM bars_1m WHERE symbol=? AND trade_date=? AND ts<=? ORDER BY ts",
+             (sym, ctx.trade_date.isoformat(), ctx.mv._asof()))
+    if len(rows) < 10:
+        return None
+    vol = sum(v for _, _, v in rows) or 1.0
+    vwap = sum(c * v for _, c, v in rows) / vol
+    day_high = max(h for h, _, _ in rows)
+    up = 0
+    for k in range(len(rows) - 1, 0, -1):
+        if rows[k][1] > rows[k - 1][1]:
+            up += 1
+        else:
+            break
+    hi_pct = getattr(t, "chase_guard_high_pct", 1.0)
+    vw_pct = getattr(t, "chase_guard_vwap_pct", 3.0)
+    if price >= day_high * (1 - hi_pct / 100) and price >= vwap * (1 + vw_pct / 100):
+        return f"고점 추격 (고점 −{hi_pct:g}% 이내 + VWAP +{vw_pct:g}% 이상)"
+    if up >= 3 and price >= vwap * 1.02:
+        return f"수직 상승 직후 (연속 상승 {up}분)"
+    return None
+
+
 def dilution_gate(sym: str, price: float, ctx: Ctx, has_catalyst: bool, max_flags: int = 2) -> tuple[str | None, str]:
     """(탈락 사유 또는 None, 설명). 희석 프로필이 있으면 그것으로, 없으면 수집기 공시로 판단.
     희석 점수 자체로는 더는 거르지 않는다 (RENT 사례: 100점이어도 +32% 지속 — 점수가 높아도 주가가 오르는 건
@@ -381,6 +410,10 @@ class RegularMomentum(Strategy):
             if bad:
                 out.append(self._reject(sym, bad, last))
                 continue
+            chased = chase_guard(sym, b.mid, ctx)
+            if chased:
+                out.append(self._reject(sym, f"{cat}, {chased}", b.mid))
+                continue
             news = "수급 신호" not in cat
             why, note = dilution_gate(sym, b.mid, ctx, has_catalyst=news)
             if why:
@@ -419,6 +452,10 @@ class Scalp(Strategy):
             if bad:
                 out.append(self._reject(sym, f"{ev['kind']} 신호, {bad}", 0))
                 continue
+            chased = chase_guard(sym, b.mid, ctx)
+            if chased:
+                out.append(self._reject(sym, f"{ev['kind']} 신호, {chased}", b.mid))
+                continue
             why, note = dilution_gate(sym, b.mid, ctx, has_catalyst=True)
             if why:
                 out.append(self._reject(sym, why, b.mid))
@@ -456,6 +493,10 @@ class SteadyTrend(Strategy):
             b, bad = quote_check(sym, ctx)
             if bad:
                 out.append(self._reject(sym, f"{ev['kind']} 신호, {bad}", 0))
+                continue
+            chased = chase_guard(sym, b.mid, ctx)
+            if chased:
+                out.append(self._reject(sym, f"{ev['kind']} 신호, {chased}", b.mid))
                 continue
             why, note = dilution_gate(sym, b.mid, ctx, has_catalyst=True)
             if why:

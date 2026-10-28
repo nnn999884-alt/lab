@@ -766,6 +766,10 @@ table.ca-tbl tr.off .ca-fill { opacity: .35; }
       </div>
       <div class="chart" id="va-chart"></div>
     </section>
+    <section class="card">
+      <div class="pre-head"><h2><i class="ic ic-sliders" aria-hidden="true"></i>봇 전략</h2><span class="sub" style="margin:0" id="live-strat-n"></span></div>
+      <div class="grid strats" id="live-strats"></div>
+    </section>
     <section class="kpis" aria-label="가상 매매 요약">
       <div class="kpi"><div class="k">누적 성과 (새 전략)</div><div class="v" id="vt-k-all">-</div><div class="n" id="vt-k-all-n"></div></div>
       <div class="kpi"><div class="k">오늘</div><div class="v" id="vt-k-today">-</div><div class="n" id="vt-k-today-n"></div></div>
@@ -789,8 +793,8 @@ table.ca-tbl tr.off .ca-fill { opacity: .35; }
       </div>
       <div class="scr-wrap"><table class="scr" id="vt-hist"></table></div>
     </section>
-    <details class="card bot-wrap" id="bot-wrap" hidden>
-      <summary><span class="bot-title">모의 계좌 · 매매 봇 (옛 전략)</span><span class="sub" style="margin:0 0 0 8px">계좌·주문·청산·후보·일일 리포트</span></summary>
+    <details class="card bot-wrap" id="bot-wrap">
+      <summary><span class="bot-title">모의매매 봇 · 계좌·주문·청산·후보·리포트</span><span class="sub" style="margin:0 0 0 8px">실제 주문 없음 (paper)</span></summary>
       <div class="bot-body">
     <div class="grid tiles">
       <div class="card tile"><div class="label">계좌 평가액</div><div class="value" id="t-equity">-</div><div class="note" id="t-cash"></div></div>
@@ -1260,26 +1264,33 @@ async function loadStrategies() {
   barChart($("strat-chart"), rows.map(r => ({ label: STRAT[r.strategy] || r.strategy, v: r.trades ? r.pnl : null, color: STRAT_COLOR[r.strategy],
     tip: [["", fmtUsd(r.pnl, true), css(STRAT_COLOR[r.strategy])], ["", STRAT[r.strategy]], ["거래", `${r.trades}회`], ["승률", r.win_rate == null ? "-" : Math.round(r.win_rate * 100) + "%"]] })),
     { valueFmt: v => fmtUsd(v, true), empty: "아직 청산된 매매가 없습니다." });
-  const box = $("strats"); box.replaceChildren();
-  rows.forEach(r => {
-    const card = document.createElement("div"); card.className = "strat";
-    const h = document.createElement("h3"); const sw = document.createElement("span"); sw.className = "swatch"; sw.style.background = css(STRAT_COLOR[r.strategy]);
-    h.appendChild(sw); h.appendChild(document.createTextNode(r.strategy_name || STRAT[r.strategy] || r.strategy)); card.appendChild(h);
-    const kv = document.createElement("div"); kv.className = "kv";
-    [["거래", r.trades + "회"], ["승률", r.win_rate == null ? "-" : Math.round(r.win_rate * 100) + "%"], ["평균 손익", fmtUsd(r.expectancy, true)], ["평균 수익률", fmtPct(r.avg_pct)], ["보유 중", r.open + "건"]]
-      .forEach(([k, v]) => { const a = document.createElement("span"); a.textContent = k; const b = document.createElement("span"); b.textContent = v; kv.appendChild(a); kv.appendChild(b); });
-    card.appendChild(kv);
-    const st = document.createElement("div"); st.className = "status";
-    const on = r.config_enabled && r.toggle && !r.auto_disabled;
-    const why = !r.config_enabled ? " 설정에서 꺼짐" : r.auto_disabled ? ` 자동 정지 (최근 성적 음수)` : !r.toggle ? " 꺼짐" : " 켜짐";
-    pillStatus(st, why, on ? "good" : r.auto_disabled ? "serious" : "idle");
-    card.appendChild(st);
-    const btn = document.createElement("button"); btn.textContent = r.toggle ? "끄기" : "켜기"; btn.style.marginTop = "8px";
-    btn.disabled = !r.config_enabled;
-    btn.onclick = () => control({ strategy: r.strategy, enabled: !r.toggle });
-    card.appendChild(btn);
-    box.appendChild(card);
-  });
+  const box = $("strats"); 
+  const cards = el => {
+    if (!el) return;
+    el.replaceChildren();
+    rows.forEach(r => {
+      const card = document.createElement("div"); card.className = "strat";
+      const h = document.createElement("h3"); const sw = document.createElement("span"); sw.className = "swatch"; sw.style.background = css(STRAT_COLOR[r.strategy]);
+      h.appendChild(sw); h.appendChild(document.createTextNode(r.strategy_name || STRAT[r.strategy] || r.strategy)); card.appendChild(h);
+      const kv = document.createElement("div"); kv.className = "kv";
+      [["거래", r.trades + "회"], ["승률", r.win_rate == null ? "-" : Math.round(r.win_rate * 100) + "%"], ["평균 손익", fmtUsd(r.expectancy, true)], ["평균 수익률", fmtPct(r.avg_pct)], ["보유 중", r.open + "건"]]
+        .forEach(([k, v]) => { const a = document.createElement("span"); a.textContent = k; const b = document.createElement("span"); b.textContent = v; kv.appendChild(a); kv.appendChild(b); });
+      card.appendChild(kv);
+      const st = document.createElement("div"); st.className = "status";
+      const on = r.config_enabled && r.toggle && !r.auto_disabled;
+      const why = !r.config_enabled ? " 설정에서 꺼짐" : r.auto_disabled ? ` 자동 정지 (최근 성적 음수)` : !r.toggle ? " 꺼짐" : " 켜짐";
+      pillStatus(st, why, on ? "good" : r.auto_disabled ? "serious" : "idle");
+      card.appendChild(st);
+      const btn = document.createElement("button"); btn.textContent = r.toggle ? "끄기" : "켜기"; btn.style.marginTop = "8px";
+      btn.disabled = !r.config_enabled;
+      btn.onclick = () => control({ strategy: r.strategy, enabled: !r.toggle });
+      card.appendChild(btn);
+      el.appendChild(card);
+    });
+  };
+  cards(box); cards($("live-strats"));
+  const n = $("live-strat-n");
+  if (n) n.textContent = `${rows.filter(r => r.config_enabled && r.toggle && !r.auto_disabled).length}/${rows.length} 켜짐`;
 }
 
 async function loadTables() {
@@ -2605,7 +2616,7 @@ try { const t = localStorage.getItem("theme"); if (t) document.documentElement.d
 const TAB_JOBS = {
   home: () => [loadPick(), loadReasons(), loadBrief(), loadDet(), loadFeed(), loadVs(), loadPre()],
   symbol: () => [loadShorts()],
-  trade: () => [loadAccount(), loadVTrade()],
+  trade: () => [loadAccount(), loadVTrade(), loadStrategies(), loadTables(), loadEquity()],
   settings: () => [loadSettings()],
   analysis: () => [loadC30(), loadBig(), loadHist(), loadRunners(), loadCollector(), loadResearch(), loadBacktests()],
 };

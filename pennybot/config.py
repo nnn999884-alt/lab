@@ -154,6 +154,9 @@ class TradingConfig:
     entry_reprice_limit: int = 1         # 취소 전에 최우선 매도호가로 한 번 따라가 볼 횟수 (0 = 예전처럼 바로 취소)
     entry_chase_pct: float = 2.0         # 그때 허용하는 추격폭 (처음 지정가 대비 %). 넘으면 체결 포기
     fill_flush_seconds: int = 15
+    chase_guard: bool = True              # 고점 −1% 이내이면서 VWAP +3% 이상(수직 추격)이면 진입 건너뜀
+    chase_guard_high_pct: float = 1.0     # '고점 근처' 기준 (%)
+    chase_guard_vwap_pct: float = 3.0     # 'VWAP 위' 기준 (%)
     signal_alerts: bool = True           # 후보가 잡혀 주문 직전에 텔레그램으로 '수급 신호' 알림
     signal_alert_minutes: int = 10       # 같은 종목·같은 셋업 신호는 이 간격으로만         # 부분 체결 알림을 이 시간만큼 모아 한 줄로 보낸다 (1주씩 체결되면 알림 폭주)
     stop_loss_pct_override: float = 50.0  # 0 이 아니면 셋업 손절 대신 진입가 × (1 − x%) 하드 손절 (50 = −50%)
@@ -161,6 +164,7 @@ class TradingConfig:
     no_rebound_high_pct: float = 3.0     # '반등'으로 인정하는 고점 기준 (진입가 대비 %)
     take_profit_pct_override: float = 0.0  # 0 이 아니면 셋업 목표가 대신 진입가 × (1 + x%)
     trail_from_high_pct: float = 0.0     # 0 이 아니면 고점 대비 이만큼 밀리면 익절 (2 = −2%)
+    trail_min_gain_pct: float = 5.0      # 고점이 진입가보다 이만큼(%, +) 오른 뒤에만 트레일링 익절 (0 = 제한 없음)
     flatten_kst: str = ""                # "08:50" 이면 매일 이 시각(KST) 전량 청산 (빈 값 = morning_flatten_et 사용)
     entry_cutoff_kst: str = ""           # "08:20" 이면 이 시각~flatten 사이 신규 진입 중단
     max_unfilled_entries: int = 0        # 0 = 끔. (예전: 같은 종목 3번 미체결이면 그날 제외 — 사용자 요청으로 삭제)

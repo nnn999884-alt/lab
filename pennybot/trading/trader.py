@@ -714,7 +714,9 @@ class Trader:
         th = getattr(self.tcfg, "trail_from_high_pct", 0) or 0
         if bid > 0 and th and (t.get("entry_price") or 0):
             hw = max(t.get("high_water") or 0, bid)
-            if hw > t["entry_price"] and bid <= hw * (1 - th / 100):
+            min_gain = getattr(self.tcfg, "trail_min_gain_pct", 0) or 0
+            armed = hw >= t["entry_price"] * (1 + min_gain / 100)
+            if armed and bid <= hw * (1 - th / 100):
                 return f"고점 대비 −{th:g}% 익절", False, left
         if bid > 0 and t.get("no_rebound_at") and now >= datetime.fromisoformat(t["no_rebound_at"]):
             entry = t.get("entry_price") or 0
