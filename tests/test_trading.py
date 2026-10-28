@@ -301,7 +301,7 @@ def test_morning_cutoff_flattens_positions_regardless_of_strategy_deadline(env):
     clock[0] = et(9, 1)
     tr.tick()
     t = j.q("SELECT status, exit_reason FROM trades WHERE symbol='FLO'")[0]
-    assert t["status"] == "CLOSED" and t["exit_reason"] == "9시 전 정리"
+    assert t["status"] == "CLOSED" and t["exit_reason"] == "장 마감 전 정리"
 
 
 def test_stop_loss_suppressed_near_session_transition(env):
@@ -981,3 +981,71 @@ def test_partial_fills_merge_into_one_alert(env):
     tr.tick()
     buys = [m for m in sent if "매수" in m]
     assert len(buys) == 1 and "완료" in buys[0]
+
+
+def test_hard_stop_override_50_percent(env):
+    """손절을 −50%로 넓히면 수량도 그만큼 줄고, −50%에서 하드 손절된다."""
+    tr, market, mv, clock, j, ctl, ex = env
+    tr.tcfg.stop_loss_pct_override = 50.0
+    tr.tcfg.flatten_kst = ""
+    tr.tcfg.entry_cutoff_kst = ""
+    market.set("PEN", 1.03, 1.035)
+    tr.tick()
+    t = j.q("SELECT * FROM trades")[0]
+    assert t["stop"] == pytest.approx(1.035 * 0.5)
+    assert t["qty"] == int(100 // (1.035 * 0.5))          # 위험예산 ÷ 50% 손절폭
+    clock[0] = et(5, 0)
+    market.set("PEN", 0.50, 0.51)                          # −50% 아래
+    tr.tick()
+    assert "손절" in j.q("SELECT exit_reason FROM trades")[0]["exit_reason"]
+
+
+def test_flatten_before_korean_open(env):
+    """08:20 KST(19:20 ET)부터 전량 청산 — 08:50(한국장 전)에는 현금이어야 한다."""
+    tr, market, mv, clock, j, ctl, ex = env
+    tr.tcfg.flatten_kst = "08:20"
+    tr.tcfg.entry_cutoff_kst = "08:10"
+    market.set("PEN", 1.03, 1.035)
+    tr.tick()
+    t0 = j.q("SELECT id FROM trades")[0]["id"]
+    far = (clock[0] + timedelta(days=2)).isoformat()
+    j.db.execute("UPDATE trades SET sell_from=?, deadline=? WHERE id=?", (far, far, t0))
+    j.db.commit()
+    clock[0] = et(19, 19)                                  # 08:19 KST → 아직 보유
+    market.set("PEN", 1.05, 1.06)
+    tr.tick()
+    assert j.q("SELECT status FROM trades")[0]["status"] == "OPEN"
+    clock[0] = et(19, 21)                                  # 08:21 KST → 정리
+    market.set("PEN", 1.05, 1.06)
+    tr.tick()
+    assert j.q("SELECT status FROM trades")[0]["status"] in ("CLOSED", "EXITING")
+
+
+def test_no_rebound_exit_after_3h(env):
+    """체결 3시간 뒤 고점이 +3%를 못 넘고 매집 신호도 없으면 손익 무관하게 청산."""
+    tr, market, mv, clock, j, ctl, ex = env
+    tr.tcfg.flatten_kst = ""
+    tr.tcfg.entry_cutoff_kst = ""
+    tr.tcfg.no_rebound_minutes = 180
+    market.set("PEN", 1.03, 1.035)
+    tr.tick()
+    row = j.q("SELECT no_rebound_at FROM trades")[0]
+    assert row["no_rebound_at"]                                   # 판정 시각이 저장된다 (재시작해도 이어감)
+    clock[0] = et(4, 5)                                           # 3시간 뒤 (프리마켓)
+    market.set("PEN", 1.02, 1.03)
+    tr.tick()
+    assert "반등" in j.q("SELECT exit_reason FROM trades")[0]["exit_reason"]
+
+
+def test_no_rebound_keeps_position_when_accumulating(env):
+    tr, market, mv, clock, j, ctl, ex = env
+    tr.tcfg.flatten_kst = ""
+    tr.tcfg.entry_cutoff_kst = ""
+    tr.tcfg.no_rebound_minutes = 180
+    market.set("PEN", 1.03, 1.035)
+    tr.tick()
+    mv.flow = [{"symbol": "PEN", "kind": "steady", "ts": clock[0].isoformat()}]
+    clock[0] = et(4, 5)
+    market.set("PEN", 1.02, 1.03)
+    tr.tick()
+    assert j.q("SELECT status FROM trades")[0]["status"] == "OPEN"

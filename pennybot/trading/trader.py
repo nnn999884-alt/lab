@@ -344,6 +344,8 @@ class Trader:
         nm = self._name(w.symbol)
         if w.purpose == "entry":
             self.journal.record_entry_fill(w.trade_id, delta, px, session, now, fee=self._fee(delta, px))
+            if self.tcfg.no_rebound_minutes and not (self.journal.trade(w.trade_id) or {}).get("no_rebound_at"):
+                self.journal.set_no_rebound(w.trade_id, now + timedelta(minutes=self.tcfg.no_rebound_minutes))
             self._queue_entry_fill(w, delta, px, session, now)
             return
         t = self.journal.record_exit_fill(w.trade_id, delta, px, session, now, fee=self._fee(delta, px))
@@ -622,13 +624,40 @@ class Trader:
         return None
 
     def _morning_cutoff(self, entry_ts_s: str) -> datetime:
-        """9시 전 전량 정리: 전략별 강제 청산 시각과 상관없이 이 시각부터는 무조건 턴다
-        (깔짝깔짝 단타가 밤새 안 팔리고 남는 걸 막는 안전망). 매수가 그날 9시를 이미 지난 뒤(애프터마켓 등)
-        였으면 지난 9시가 아니라 다음 9시 — 트레이드 날짜가 아니라 실제 매수 시각 기준."""
+        """한국 장 열기 전 전량 정리. flatten_kst(예: 08:50)가 있으면 그 시각(KST)까지, 없으면 예전처럼 ET 9시.
+        매수가 그 시각을 이미 지난 뒤였으면 다음 날 시각 기준 (트레이드 날짜가 아니라 실제 매수 시각 기준)."""
+        entry = datetime.fromisoformat(entry_ts_s)
+        if getattr(self.tcfg, "flatten_kst", ""):
+            h, m = (int(x) for x in self.tcfg.flatten_kst.split(":"))
+            e = entry.astimezone(KST)
+            cutoff = datetime.combine(e.date(), dtime(h, m), tzinfo=KST)
+            return cutoff if cutoff > e else cutoff + timedelta(days=1)
         h, m = (int(x) for x in self.tcfg.morning_flatten_et.split(":"))
-        entry = datetime.fromisoformat(entry_ts_s).astimezone(ET)
-        cutoff = datetime.combine(entry.date(), dtime(h, m), tzinfo=ET)
-        return cutoff if cutoff > entry else cutoff + timedelta(days=1)
+        e = entry.astimezone(ET)
+        cutoff = datetime.combine(e.date(), dtime(h, m), tzinfo=ET)
+        return cutoff if cutoff > e else cutoff + timedelta(days=1)
+
+    def _accumulating(self, symbol: str, now: datetime) -> bool:
+        """최근 60분 안에 그 종목 매집·거래터짐 신호가 있었는지 (3시간 규칙의 '매집' 판정)."""
+        fn = getattr(self.mv, "recent_flow", None)
+        if fn is None:
+            return False
+        try:
+            rows = fn(now - timedelta(minutes=60)) or []
+        except Exception:
+            return False
+        return any((r.get("symbol") or symbol) == symbol for r in rows)
+
+    def _kst_entry_blocked(self, now: datetime) -> bool:
+        """08:20~08:50 KST 처럼 '청산 시간 확보' 구간에는 신규 진입을 막는다."""
+        cut = getattr(self.tcfg, "entry_cutoff_kst", "")
+        end_s = getattr(self.tcfg, "flatten_kst", "") or cut
+        if not cut or not end_s:
+            return False
+        start = dtime(*(int(x) for x in cut.split(":")))
+        end = dtime(*(int(x) for x in end_s.split(":")))
+        t = now.astimezone(KST).time()
+        return start <= t < end
 
     def _near_session_transition(self, now: datetime, trade_date_s: str) -> bool:
         """세션 전환 전후 몇 분은 토스 장통합(세션 간 데이터 전환) 때문에 호가가 순간적으로 튈 수 있다 —
@@ -682,6 +711,16 @@ class Trader:
         scaled, trail = bool(t.get("scaled")), t.get("trail_pct") or 0
         if bid > 0 and bid <= t["stop"] and not self._near_session_transition(now, t["trade_date"]):
             return ("본전 손절" if scaled else "손절"), True, left
+        th = getattr(self.tcfg, "trail_from_high_pct", 0) or 0
+        if bid > 0 and th and (t.get("entry_price") or 0):
+            hw = max(t.get("high_water") or 0, bid)
+            if hw > t["entry_price"] and bid <= hw * (1 - th / 100):
+                return f"고점 대비 −{th:g}% 익절", False, left
+        if bid > 0 and t.get("no_rebound_at") and now >= datetime.fromisoformat(t["no_rebound_at"]):
+            entry = t.get("entry_price") or 0
+            hw = max(t.get("high_water") or 0, bid)
+            if entry and hw < entry * (1 + self.tcfg.no_rebound_high_pct / 100) and not self._accumulating(t["symbol"], now):
+                return "반등·매집 없음 (3시간)", False, left
         hw = max(t.get("high_water") or 0, bid)
         if scaled and trail and bid > 0 and bid <= hw * (1 - trail / 100):
             return f"트레일링 스톱 (고점 ${hw:.4f} −{trail:g}%)", True, left
@@ -701,7 +740,7 @@ class Trader:
             if now >= datetime.fromisoformat(t["sell_from"]):
                 return "매도 구간", False, left
             if now >= self._morning_cutoff(t["entry_ts"]):
-                return "9시 전 정리", False, left   # 전략 자체 매도 시작 시각이 9시보다 늦게 잡혀도 9시엔 무조건 정리
+                return "장 마감 전 정리", False, left   # 전략 매도 시각이 늦게 잡혀도 이 시각엔 무조건 정리
         return None
 
     def manage_exits(self, now: datetime, session: str, force_reason: str | None = None) -> None:
@@ -789,6 +828,9 @@ class Trader:
         return total
 
     def scan_and_enter(self, now: datetime, trade_date, session: str) -> None:
+        if self._kst_entry_blocked(now):
+            self.status["last_scan"] = now.isoformat(timespec="seconds")
+            return
         day = self.cal.bounds(trade_date, DAY)
         if day and now < day[0] + timedelta(minutes=self.tcfg.day_open_wait_minutes):
             return    # 데이마켓 개장 직후는 호가가 얇다
@@ -841,6 +883,13 @@ class Trader:
         acct = self.account()
         unrealized = self._unrealized(open_trades) if any(p.ok for p in plans) else 0.0
         for p in sorted((p for p in plans if p.ok), key=lambda p: p.score, reverse=True):
+            sp = self.tcfg.strategies.get(p.strategy) or {}
+            sl = sp.get("stop_loss_pct_override") or getattr(self.tcfg, "stop_loss_pct_override", 0)
+            tp = sp.get("take_profit_pct_override") or getattr(self.tcfg, "take_profit_pct_override", 0)
+            if sl:
+                p.stop = p.price * (1 - sl / 100)
+            if tp:
+                p.target = p.price * (1 + tp / 100)
             block = self.risk.can_enter(p.strategy, p.symbol, str(trade_date), open_trades, unrealized, now) \
                 or self._warning(p.symbol)
             qty = 0 if block else self.risk.size(p.strategy, p.price, p.stop, acct)
@@ -855,6 +904,10 @@ class Trader:
             if block or qty <= 0:
                 rows.append(row(p, False, f"리스크: {block or '수량 0 (호가 잔량 부족 등)'}"))
                 continue
+            if getattr(self.tcfg, "signal_alerts", True):
+                self.notifier.send(msg.signal(p.strategy, p.symbol, p.price, p.reason, session, p.score,
+                                              name=self._name(p.symbol)),
+                                   key=f"sig-{p.strategy}-{p.symbol}", every=self.tcfg.signal_alert_minutes * 60)
             tid = self.journal.open_trade(strategy=p.strategy, symbol=p.symbol, trade_date=str(trade_date),
                                           planned_qty=qty, stop=p.stop, target=p.target, session=session,
                                           sell_from=p.sell_from, deadline=p.deadline, reason=p.reason, now=now,

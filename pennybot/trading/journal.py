@@ -57,7 +57,7 @@ class Journal:
         for col, typ in (("scale_out", "REAL DEFAULT 1.0"), ("trail_pct", "REAL DEFAULT 0"),
                          ("high_water", "REAL"), ("scaled", "INTEGER DEFAULT 0"), ("backstop_id", "TEXT"),
                          ("backstop_qty", "INTEGER"), ("backstop_trigger", "REAL"), ("fees", "REAL DEFAULT 0"),
-                         ("attempt_session", "TEXT"), ("context", "TEXT")):
+                         ("attempt_session", "TEXT"), ("context", "TEXT"), ("no_rebound_at", "TEXT")):
             if col not in have:        # 예전 DB 이전
                 self.db.execute(f"ALTER TABLE trades ADD COLUMN {col} {typ}")
         self.mode = mode
@@ -117,6 +117,11 @@ class Journal:
     def update_high(self, trade_id: int, price: float) -> None:
         self._x("UPDATE trades SET high_water=? WHERE id=? AND (high_water IS NULL OR high_water < ?)",
                 (price, trade_id, price))
+
+    def set_no_rebound(self, trade_id: int, ts: datetime) -> None:
+        """3시간 규칙 판정 시각 (체결 시각 + no_rebound_minutes). 이미 있으면 그대로 둔다."""
+        self._x("UPDATE trades SET no_rebound_at=? WHERE id=? AND no_rebound_at IS NULL",
+                (now_iso(ts), trade_id))
 
     def set_scaled(self, trade_id: int, scaled: bool, stop: float | None = None) -> None:
         """분할 익절 표시. 나머지 물량의 손절가는 본전 이상으로 올린다."""

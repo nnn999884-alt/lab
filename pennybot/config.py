@@ -152,7 +152,16 @@ class TradingConfig:
     entry_ttl_seconds: int = 180         # 매수 지정가 미체결 시 취소
     entry_reprice_limit: int = 1         # 취소 전에 최우선 매도호가로 한 번 따라가 볼 횟수 (0 = 예전처럼 바로 취소)
     entry_chase_pct: float = 2.0         # 그때 허용하는 추격폭 (처음 지정가 대비 %). 넘으면 체결 포기
-    fill_flush_seconds: int = 15         # 부분 체결 알림을 이 시간만큼 모아 한 줄로 보낸다 (1주씩 체결되면 알림 폭주)
+    fill_flush_seconds: int = 15
+    signal_alerts: bool = True           # 후보가 잡혀 주문 직전에 텔레그램으로 '수급 신호' 알림
+    signal_alert_minutes: int = 10       # 같은 종목·같은 셋업 신호는 이 간격으로만         # 부분 체결 알림을 이 시간만큼 모아 한 줄로 보낸다 (1주씩 체결되면 알림 폭주)
+    stop_loss_pct_override: float = 0.0  # 0 이 아니면 셋업 손절 대신 진입가 × (1 − x%) 하드 손절 (50 = −50%)
+    no_rebound_minutes: int = 0          # 0 = 끔. 체결 후 이 시간이 지나도 반등·매집이 없으면 시간 손절
+    no_rebound_high_pct: float = 3.0     # '반등'으로 인정하는 고점 기준 (진입가 대비 %)
+    take_profit_pct_override: float = 0.0  # 0 이 아니면 셋업 목표가 대신 진입가 × (1 + x%)
+    trail_from_high_pct: float = 0.0     # 0 이 아니면 고점 대비 이만큼 밀리면 익절 (2 = −2%)
+    flatten_kst: str = ""                # "08:50" 이면 매일 이 시각(KST) 전량 청산 (빈 값 = morning_flatten_et 사용)
+    entry_cutoff_kst: str = ""           # "08:20" 이면 이 시각~flatten 사이 신규 진입 중단
     max_unfilled_entries: int = 3        # 같은 종목이 오늘 이만큼 연속 미체결(취소)되면 그날은 더 안 건다 (호가가 얇아 체결이 안 붙는 종목)
     exit_reprice_seconds: int = 60       # 매도 지정가 재호가 주기
     exit_slippage_pct: float = 1.0       # 강제 청산 매도가 = bid × (1 − x%)
@@ -231,7 +240,8 @@ class TradingConfig:
         # 숫자 전부 백테스트 전 초안 — 다른 전략들과 달리 세션 전환을 기다리지 않고 자주 돌 수 있어서 예산을 작게 잡음.
         "scalp": {"enabled": True, "budget_pct": 0.15, "max_positions": 3,
                  "signal_window_minutes": 3, "entry_discount_pct": 1.0, "max_hold_minutes": 120,
-                 "take_profit_pct": 8.0, "stop_loss_pct": 6.0, "gap_risk_pct": 20.0},
+                 "take_profit_pct": 8.0, "stop_loss_pct": 6.0, "gap_risk_pct": 20.0,
+                 "stop_loss_pct_override": 10.0, "take_profit_pct_override": 10.0},
         # scalp 과 같은 '세션 안 가리는' 전략이지만 반응하는 신호가 다르다 — poll_steady_flow 가 잡는 '매집'
         # (한 번에 안 터지고 꾸준히 붙는 수급) 신호에 반응해서 목표가·손절가 안 걸리면 다음 데이마켓 시작
         # 직전까지 길게 들고 간다. 숫자 전부 백테스트 전 초안.

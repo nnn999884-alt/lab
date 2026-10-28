@@ -61,10 +61,14 @@ def test_info_block_readable():
              "filings": {"dilution_score": 28, "motives": [{"label": "ATM 진행 중"}, {"label": "상폐 기한 D-40"}]},
              "events": [{"ts": "2026-10-21T13:00:00+00:00", "summary": "$2.0M · 주당 $0.8000"}], "halts": []}
     L = msg.info_block(stats, brief, "30일 −45%, 데이마켓 전날 종가 근처")
-    assert len(L) <= 3                     # 위험 → 오늘 성과 → 왜 샀는지, 3줄까지
-    assert L[0] == "희석 28 · 공매도 52% · 대차 45% · SSR"
-    assert L[1].startswith("📊 +3.1% · $3.9M · 평소 4.1배")
-    assert L[2].startswith("30일 −45%")
+    text = "\n".join(L)
+    assert L[0] == ""                                        # 본문과 구분되는 빈 줄
+    assert "📊 오늘 +3.1% · 3.2M주 · $3.9M · 평소 4.1배" in text   # 한 줄 = 한 주제, 필요한 정보는 다 남긴다
+    assert "📉 30일 −45.0% · 60일 고점 대비 −70.0% · 변동폭 16%" in text
+    assert "🩳 공매도 52% · 대차 45% (15K주) · SSR" in text
+    assert "💧 희석 28점 · 동기: ATM 진행 중, 상폐 기한 D-40" in text
+    assert "📰 10-21 $2.0M · 주당 $0.8000" in text
+    assert text.rstrip().endswith("30일 −45%, 데이마켓 전날 종가 근처")
     assert msg.info_block() == []
     full = msg.buy_filled(T, 120, 1.2345, "DAY", L)
     assert full.split("\n")[0].startswith("🟢 매수 완료 PENX · 120주") and "총 $148.14" in full

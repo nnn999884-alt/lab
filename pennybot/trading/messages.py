@@ -69,42 +69,52 @@ def _held(t: dict) -> str | None:
 
 
 def info_block(stats: dict | None = None, brief: dict | None = None, reason: str | None = None) -> list[str]:
-    """알림에 붙는 종목 정보. 휴대폰에서 한눈에 읽히게 **최대 3줄**: 위험 → 오늘 성과 → 왜 샀는지."""
+    """알림에 붙는 종목 정보. 한 줄 = 한 주제로 나눠서, 필요한 건 다 보이게 (휴대폰에서도 라벨만 보고 읽힌다).
+    stats: MarketView.day_stats, brief: brief.brief(+with_filings)."""
     s, b, L = stats or {}, brief or {}, []
+    if s:
+        part = [x for x in (
+            pct(s["change_pct"]) if s.get("change_pct") is not None else None,
+            f"{qty_s(s.get('volume'))}주" if s.get("volume") else None,
+            money_s(s.get("dollar")) if s.get("dollar") else None,
+            f"평소 {s['vol_ratio']:.1f}배" if s.get("vol_ratio") else None) if x]
+        if part:
+            L.append("📊 오늘 " + " · ".join(part))
+        chart = [x for x in (
+            f"30일 {pct(s['ret_30'])}" if s.get("ret_30") is not None else None,
+            f"60일 고점 대비 {pct(s['dd_60'])}" if s.get("dd_60") is not None else None,
+            f"변동폭 {s['range_30']:.0f}%" if s.get("range_30") is not None else None) if x]
+        if chart:
+            L.append("📉 " + " · ".join(chart))
     sh, bo = b.get("short") or {}, b.get("borrow")
-    risk = []
-    f = b.get("filings") or {}
-    if f.get("dilution_score") is not None:
-        risk.append(f"희석 {f['dilution_score']:.0f}")
+    part = []
     if sh.get("ratio") is not None:
-        risk.append(f"공매도 {sh['ratio'] * 100:.0f}%")
+        part.append(f"공매도 {sh['ratio'] * 100:.0f}%")
     if bo:
-        risk.append(f"대차 {bo['fee_rate']:.0f}%")
+        part.append(f"대차 {bo['fee_rate']:.0f}%" + (f" ({qty_s(bo['available'])}주)" if bo.get("available") else ""))
     if b.get("ssr"):
-        risk.append("SSR")
+        part.append("SSR")
     if b.get("reg_sho"):
-        risk.append("RegSHO")
-    if risk:
-        L.append(" · ".join(risk))
-    perf = []
-    if s.get("change_pct") is not None:
-        perf.append(pct(s["change_pct"]))
-    if s.get("dollar"):
-        perf.append(money_s(s["dollar"]))
-    if s.get("vol_ratio"):
-        perf.append(f"평소 {s['vol_ratio']:.1f}배")
-    if s.get("ret_30") is not None:
-        perf.append(f"30일 {pct(s['ret_30'])}")
-    if perf:
-        L.append("📊 " + " · ".join(perf[:4]))
-    ev = next((e for e in b.get("events") or [] if e.get("summary") or e.get("title")), None)
-    tail = reason or (("📰 " + (ev.get("summary") or ev.get("title") or "")[:70]) if ev else None)
+        part.append("RegSHO")
+    if part:
+        L.append("🩳 " + " · ".join(part))
+    f = b.get("filings") or {}
+    part = []
+    if f.get("dilution_score") is not None:
+        part.append(f"희석 {f['dilution_score']:.0f}점")
+    if f.get("motives"):
+        part.append("동기: " + ", ".join(m["label"] for m in f["motives"][:3]))
+    if part:
+        L.append("💧 " + " · ".join(part))
+    evs = [e for e in b.get("events") or [] if e.get("summary") or e.get("title")][:2]
+    for ev in evs:
+        L.append(f"📰 {ev['ts'][5:10]} " + (ev.get("summary") or ev.get("title") or "")[:120])
     if b.get("halts"):
         h = b["halts"][0]
-        tail = (tail + " · " if tail else "") + f"⏸ {h['halt_ts'][5:10]} {h['reason_ko']}"
-    if tail:
-        L.append(tail[:110])
-    return L
+        L.append(f"⏸ 정지 {h['halt_ts'][5:16].replace('T', ' ')} ET {h['reason_ko']}")
+    if reason:
+        L.append(f"💬 {reason[:140]}")
+    return ([""] + L) if L else []
 
 
 def buy_filled(t: dict, qty: int, price: float, session: str, info: list[str] | None = None, name: str | None = None,
@@ -166,3 +176,12 @@ def started(mode: str, link: str | None = None) -> str:
 
 def with_link(text: str, link: str | None) -> str:
     return f"{text}\n\n📊 대시보드: {link}" if link else text
+
+def signal(strategy: str, symbol: str, price: float, reason: str, session: str, score: float | None = None,
+           name: str | None = None) -> str:
+    """수급 신호 알림 — 주문 직전에 '지금 이 종목이 잡혔다'를 실시간으로 보낸다."""
+    head = f"⚡ 수급 신호 {sym_s(symbol, name)} · {px(price)} · {_strat({'strategy': strategy})}/{_sess(session)}"
+    lines = [head, (reason or '')[:120]]
+    if score is not None:
+        lines.append(f"점수 {score:.0f}")
+    return "\n".join(x for x in lines if x)
