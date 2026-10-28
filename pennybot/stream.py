@@ -162,9 +162,6 @@ class TossStream:
                 self._session()
             except Exception as e:
                 self.last_error = str(e)
-                status = getattr(e, "status_code", None)
-                if status == 401:
-                    self._force_token = True
                 log.warning("토스 웹소켓 끊김 (%s) → %.0f초 뒤 재연결, 그동안 REST 사용", e, backoff)
             self.connected = False
             if self.clock() - started > 60:
