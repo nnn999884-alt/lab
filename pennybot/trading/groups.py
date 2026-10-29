@@ -29,7 +29,6 @@ class Group(Strategy):
                     continue
                 cur = best.get(p.symbol)
                 if cur is None or p.score > cur.score:
-                    p.reason = f"[{cls.name}] {p.reason}"
                     p.context = {**p.context, "source": cls.name}
                     best[p.symbol] = p
         out = sorted(best.values(), key=lambda p: p.score, reverse=True)[:int(self.p.get("max_candidates", 3))]

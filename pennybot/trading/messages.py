@@ -157,7 +157,8 @@ def closed(t: dict, info: list[str] | None = None, name: str | None = None) -> s
     lines = [head,
              f"💵 {usd(pnl, sign=True)} ({pct(t.get('pnl_pct'))}) · {qty}주" + (f" · {held} 보유" if held else ""),
              f"{px(t.get('entry_price'))} → {px(t.get('exit_price'))}" + (f" · 최고 {pct(peak)}" if peak is not None else ""),
-             f"🧭 {_strat(t)} · {_sess(t.get('entry_session'))} → {_sess(t.get('exit_session'))}"]
+             f"🧭 {_strat(t)} · {_sess(t.get('entry_session'))} → {_sess(t.get('exit_session'))}",
+             f"📋 매수 이유: {(t.get('reason') or '-')[:70]}"]
     return "\n".join(lines + (info or []))
 
 

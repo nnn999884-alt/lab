@@ -92,6 +92,37 @@ class Ctx:
         return self.bound(REGULAR)[0]
 
 
+FLOW_KO = {"burst": "거래 터짐", "steady": "꾸준한 거래 유입", "after_move": "애프터 누적 상승",
+           "bottom_bounce": "바닥 재반등", "early20": "정규장 전 +20% 돌파", "flow2": "2차 거래대금 재유입"}
+
+
+def day_context(sym: str, ctx: Ctx) -> dict | None:
+    q = getattr(ctx.mv, "q", None)
+    if q is None:
+        return None
+    rows = q("SELECT high, low, close, volume FROM bars_1m WHERE symbol=? AND trade_date=? AND ts<=? ORDER BY ts",
+             (sym, ctx.trade_date.isoformat(), ctx.mv._asof()))
+    if len(rows) < 5:
+        return None
+    vol = sum(r[3] for r in rows) or 1.0
+    return {"high": max(r[0] for r in rows), "low30": min(r[1] for r in rows[-30:]),
+            "vwap": sum(r[2] * r[3] for r in rows) / vol}
+
+
+def flow_reason(kind: str | None, text: str | None, chg: float | None, action: str = "눌림 매수",
+                dc: dict | None = None, price: float | None = None) -> str:
+    import re
+    bits = []
+    if dc and price:
+        bits.append(f"고점 대비 {(price / dc['high'] - 1) * 100:+.0f}% 눌림")
+        bits.append("VWAP 아래" if price < dc["vwap"] else "VWAP 위")
+    bits.append(FLOW_KO.get(kind or "", "수급 신호") + (f" {chg:+.0f}%" if chg is not None else ""))
+    m = re.search(r"\(([^)]+)\)", text or "")
+    if m:
+        bits.append(m.group(1))
+    return f"{' · '.join(bits)} → {action}"
+
+
 def events_of(f: dict) -> set[str]:
     return set((f.get("events") or "").split(",")) - {""}
 
@@ -471,7 +502,7 @@ class Scalp(Strategy):
             price = self._entry_price(b)
             # 애프터마켓 중이라고 거기서 끊지 않는다 — max_hold_minutes 가 세션을 넘겨도 다음 데이마켓 시작 직전까지만 캡.
             deadline = min(ctx.now + timedelta(minutes=self.p["max_hold_minutes"]), next_day_open(ctx.now))
-            out.append(Plan(self.name, sym, True, f"수급 신호({ev['kind']}): {ev['text']}, {note}",
+            out.append(Plan(self.name, sym, True, flow_reason(ev.get("kind"), ev.get("text"), ev.get("chg"), dc=day_context(sym, ctx), price=b.mid),
                             score=abs(ev.get("chg") or 0), price=price,
                             stop=price * (1 - self.p["stop_loss_pct"] / 100),
                             target=price * (1 + self.p["take_profit_pct"] / 100),
@@ -512,7 +543,7 @@ class SteadyTrend(Strategy):
                 continue
             price = self._entry_price(b)
             deadline = next_day_open(ctx.now)
-            out.append(Plan(self.name, sym, True, f"매집 신호: {ev['text']}, {note}",
+            out.append(Plan(self.name, sym, True, flow_reason("steady", ev.get("text"), ev.get("chg"), "매집 매수", dc=day_context(sym, ctx), price=b.mid),
                             score=abs(ev.get("chg") or 0), price=price,
                             stop=price * (1 - self.p["stop_loss_pct"] / 100),
                             target=price * (1 + self.p["take_profit_pct"] / 100),
