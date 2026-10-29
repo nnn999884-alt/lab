@@ -157,6 +157,11 @@ class TradingConfig:
     chase_guard: bool = True              # 고점 −1% 이내이면서 VWAP +3% 이상(수직 추격)이면 진입 건너뜀
     chase_guard_high_pct: float = 1.0     # '고점 근처' 기준 (%)
     chase_guard_vwap_pct: float = 3.0     # 'VWAP 위' 기준 (%)
+    add_on: bool = True                   # 보유 종목이 이익 중일 때 수급 신호가 또 오면 추가매수
+    add_on_min_gain_pct: float = 3.0      # 추가매수 최소 평가이익 (%)
+    add_on_max_per_symbol: int = 1        # 종목당 추가매수 횟수
+    add_on_window_minutes: int = 10       # 최근 이 시간 안 수급 신호만
+    add_on_qty_ratio: float = 0.5         # 기존 수량의 이 비율만큼 추가
     signal_alerts: bool = True           # 후보가 잡혀 주문 직전에 텔레그램으로 '수급 신호' 알림
     signal_alert_minutes: int = 10       # 같은 종목·같은 셋업 신호는 이 간격으로만         # 부분 체결 알림을 이 시간만큼 모아 한 줄로 보낸다 (1주씩 체결되면 알림 폭주)
     stop_loss_pct_override: float = 50.0  # 0 이 아니면 셋업 손절 대신 진입가 × (1 − x%) 하드 손절 (50 = −50%)
@@ -273,6 +278,9 @@ class TradingConfig:
         "reversal": {"enabled": True, "budget_pct": 0.10, "max_positions": 2, "entry_discount_pct": 1.0,
                      "min_drop_pct": 35.0, "min_dollar": 5e6, "recover_pct": 15.0,
                      "take_profit_pct": 12.0, "stop_loss_pct": 50.0, "gap_risk_pct": 25.0},
+        "combined": {"enabled": False, "budget_pct": 0.90, "max_positions": 5, "max_candidates": 5,
+                     "entry_discount_pct": 0.5, "take_profit_pct": 20.0, "stop_loss_pct": 50.0,
+                     "gap_risk_pct": 25.0},
     })
 
     def spread_cap(self, session: str) -> float:

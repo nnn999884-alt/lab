@@ -832,6 +832,13 @@ table.ca-tbl tr.off .ca-fill { opacity: .35; }
       <div class="card"><h2>최근 주문</h2><p class="sub long">매수·매도 주문과 체결 상태</p>
         <div class="tablewrap" style="max-height:50vh"><table id="orders"></table></div></div>
       <div class="card"><h2>최근 청산</h2><p class="sub long">끝난 매매 (취소 포함)</p>
+        <div class="filters" style="margin:6px 0;flex-wrap:wrap">
+          <select id="tr-range" style="padding:4px 8px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--text)">
+            <option value="0">전체 기간</option><option value="1">오늘</option><option value="7">7일</option><option value="30">30일</option></select>
+          <select id="tr-strat" style="padding:4px 8px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--text)"><option value="">전략 전체</option></select>
+          <select id="tr-reason" style="padding:4px 8px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--text)"><option value="">사유 전체</option></select>
+          <input id="tr-sym" placeholder="종목" style="width:86px;padding:4px 8px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--text);text-transform:uppercase">
+        </div>
         <div class="tablewrap" style="max-height:50vh"><table id="trades"></table></div></div>
     </section>
 
@@ -1289,9 +1296,11 @@ async function loadStrategies() {
 }
 
 async function loadTables() {
-  const [pos, orders, trades, sigs] = await Promise.all([api("/api/positions"), api("/api/orders?limit=60"), api("/api/trades?limit=60"), api("/api/signals?limit=300")]);
+  const [pos, orders, trades, sigs] = await Promise.all([api("/api/positions"), api("/api/orders?limit=60"), api("/api/trades?limit=300"), api("/api/signals?limit=300")]);
   const sigStrat = $("sig-strat") ? $("sig-strat").value : "";
-  if (unchanged("tables", [pos, orders, trades, sigs, $("only-ok").checked, sigStrat])) return;
+  const trKey = [$("tr-range") ? $("tr-range").value : "", $("tr-strat") ? $("tr-strat").value : "",
+    $("tr-reason") ? $("tr-reason").value : "", $("tr-sym") ? $("tr-sym").value : ""];
+  if (unchanged("tables", [pos, orders, trades, sigs, $("only-ok").checked, sigStrat, ...trKey])) return;
   table($("positions"), [
     { h: "종목", f: r => r.name ? `${r.symbol} ${r.name}` : r.symbol }, { h: "전략", f: r => r.strategy_name || STRAT[r.strategy] || r.strategy }, { h: "상태", f: r => ({ PENDING: "매수 주문 중", OPEN: "보유", EXITING: "매도 주문 중" })[r.status] || r.status },
     { h: "수량", num: 1, f: r => r.remaining || r.planned_qty }, { h: "매수가", num: 1, f: r => fmtPx(r.entry_price) }, { h: "현재가", num: 1, f: r => fmtPx(r.last) },
@@ -1304,11 +1313,21 @@ async function loadTables() {
     { h: "수량", num: 1, f: r => r.qty }, { h: "가격", num: 1, f: r => fmtPx(r.price) }, { h: "체결", num: 1, f: r => `${r.filled || 0}/${r.qty}` },
     { h: "상태", f: r => ({ OPEN: "대기", FILLED: "체결", CANCELED: "취소", REJECTED: "거부", REPLACED: "정정됨" })[r.status] || r.status }, { h: "세션", minor: 1, f: r => SESS[r.session] || r.session }, { h: "메모", minor: 1, f: r => r.note },
   ], orders);
+  const trRange = +($("tr-range") ? $("tr-range").value : 0), trStrat = $("tr-strat") ? $("tr-strat").value : "";
+  const trReason = $("tr-reason") ? $("tr-reason").value : "", trSym = ($("tr-sym") ? $("tr-sym").value : "").trim().toUpperCase();
+  const rsel = $("tr-reason");
+  if (rsel) { const reasons = [...new Set(trades.map(r => r.exit_reason).filter(Boolean))].sort();
+    if (rsel.options.length - 1 !== reasons.length) { const cur = rsel.value; rsel.length = 1;
+      reasons.forEach(x => { const o = document.createElement("option"); o.value = x; o.textContent = x; rsel.appendChild(o); });
+      rsel.value = reasons.includes(cur) ? cur : ""; } }
+  const sinceTr = trRange ? Date.now() - trRange * 864e5 : 0;
+  const trs = trades.filter(r => (!trStrat || r.strategy === trStrat) && (!trReason || (r.exit_reason || "") === trReason)
+    && (!trSym || r.symbol.includes(trSym)) && (!sinceTr || Date.parse(r.exit_ts || r.created) >= sinceTr));
   table($("trades"), [
     { h: "종목", f: r => r.name ? `${r.symbol} ${r.name}` : r.symbol }, { h: "전략", f: r => r.strategy_name || STRAT[r.strategy] || r.strategy }, { h: "청산", f: r => r.status === "CANCELED" ? "매수 미체결" : r.exit_reason },
     { h: "손익", num: 1, f: r => fmtUsd(r.pnl, true), tone: r => tone(r.pnl) }, { h: "수익률", num: 1, f: r => fmtPct(r.pnl_pct), tone: r => tone(r.pnl_pct) },
-    { h: "세션", minor: 1, f: r => r.entry_session ? `${SESS[r.entry_session] || r.entry_session} → ${SESS[r.exit_session] || r.exit_session || "-"}` : r.attempt_session ? `${SESS[r.attempt_session] || r.attempt_session} (미체결)` : "-" }, { h: "영업일", minor: 1, f: r => r.trade_date },
-  ], trades);
+    { h: "세션", minor: 1, f: r => r.entry_session ? `${SESS[r.entry_session] || r.entry_session} → ${SESS[r.exit_session] || r.exit_session || "-"}` : r.attempt_session ? `${SESS[r.attempt_session] || r.attempt_session} (미체결)` : "-" }, { h: "영업일", f: r => r.trade_date },
+  ], trs, "조건에 맞는 매매 없음");
   const onlyOk = $("only-ok").checked;
   const latest = sigs.length ? sigs[0].ts : null;
   table($("signals"), [
@@ -2612,6 +2631,11 @@ $("only-ok").onchange = () => { delete _seen.tables; loadTables(); };
 if ($("sig-strat")) {
   Object.keys(STRAT).forEach(k => { const o = document.createElement("option"); o.value = k; o.textContent = STRAT[k]; $("sig-strat").appendChild(o); });
   $("sig-strat").onchange = () => { delete _seen.tables; loadTables(); };
+}
+if ($("tr-strat")) {
+  Object.keys(STRAT).forEach(k => { const o = document.createElement("option"); o.value = k; o.textContent = STRAT[k]; $("tr-strat").appendChild(o); });
+  ["tr-strat", "tr-reason", "tr-range"].forEach(id => { const el = $(id); if (el) el.onchange = () => { delete _seen.tables; loadTables(); }; });
+  if ($("tr-sym")) $("tr-sym").oninput = () => { delete _seen.tables; loadTables(); };
 }
 document.querySelectorAll("#range button").forEach(b => b.onclick = () => {
   days = +b.dataset.days;

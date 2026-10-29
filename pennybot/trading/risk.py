@@ -67,7 +67,8 @@ class Risk:
         if not ok:
             return why
         # 실현 손실 + 보유 종목 평가 손실 (이익은 아직 내 돈이 아니므로 더하지 않는다)
-        if self.j.realized_pnl(trade_date) + min(unrealized, 0.0) <= -self.t.max_daily_loss_usd:
+        if self.t.max_daily_loss_usd and self.j.realized_pnl(trade_date) + min(unrealized, 0.0) \
+                <= -self.t.max_daily_loss_usd:
             return "영업일 손실 한도 도달 (평가 손실 포함)"
         cd = self.cooldown(now)
         if cd:
@@ -76,8 +77,8 @@ class Risk:
             return "전체 동시 보유 한도"
         if sum(1 for t in open_trades if t["strategy"] == strategy) >= self.t.strategies[strategy]["max_positions"]:
             return "전략 동시 보유 한도"
-        if any(t["symbol"] == symbol for t in open_trades) or self.j.traded_today(symbol, trade_date):
-            return "이미 보유/오늘 매매한 종목"
+        if any(t["symbol"] == symbol for t in open_trades):
+            return "이미 보유 중인 종목"
         other = self.j.strategies_today(symbol, trade_date) - {strategy}
         if other:
             return f"오늘 다른 전략({', '.join(sorted(other))})이 이 종목 매매"
@@ -91,6 +92,8 @@ class Risk:
         # 1주당 위험 = 손절폭과 '밤사이 최악의 갭' 중 큰 쪽. 급등주는 손절가를 건너뛰어 열리기 때문
         risk = max(price - stop, price * p.get("gap_risk_pct", 0) / 100)
         if risk > 0:
-            max_loss = min(acct.equity * self.t.risk_per_trade_pct, self.t.max_daily_loss_usd)
+            max_loss = acct.equity * self.t.risk_per_trade_pct
+            if self.t.max_daily_loss_usd:
+                max_loss = min(max_loss, self.t.max_daily_loss_usd)
             qty = min(qty, int(max_loss // risk))
         return max(qty, 0)

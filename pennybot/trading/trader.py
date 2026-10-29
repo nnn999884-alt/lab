@@ -830,6 +830,60 @@ class Trader:
                 total += min((px - t["entry_price"]) * t["remaining"], 0.0)   # 다른 종목 이익으로 손실을 가리지 않게
         return total
 
+    def _add_ons(self, now: datetime, trade_date, session: str) -> None:
+        if not getattr(self.tcfg, "add_on", False):
+            return
+        ctl = self.control.load()
+        if ctl["kill"] or ctl["flatten"]:
+            return
+        window = int(getattr(self.tcfg, "add_on_window_minutes", 10))
+        hot = {e["symbol"] for e in self.mv.recent_flow(now - timedelta(minutes=window))}
+        if not hot:
+            return
+        acct = self.account()
+        trades = self.journal.open_trades()
+        counts: dict[str, int] = {}
+        for t in trades:
+            counts[t["symbol"]] = counts.get(t["symbol"], 0) + 1
+        for t in trades:
+            sym = t["symbol"]
+            if t["status"] != "OPEN" or (t["remaining"] or 0) <= 0 or sym not in hot:
+                continue
+            if counts.get(sym, 0) > int(getattr(self.tcfg, "add_on_max_per_symbol", 1)):
+                continue
+            if sym in (ctl.get("blocked_symbols") or []):
+                continue
+            ok, _ = self.risk.strategy_enabled(t["strategy"])
+            if not ok:
+                continue
+            try:
+                b = self.ex.book(sym)
+            except Exception:
+                continue
+            if not b.has_quote or not t["entry_price"]:
+                continue
+            gain = (b.mid / t["entry_price"] - 1) * 100
+            if gain < self.tcfg.add_on_min_gain_pct:
+                continue
+            price = b.ask if b.spread_pct <= 1.0 else min(b.ask, b.mid * 1.002)
+            qty = int((t["qty"] or 0) * self.tcfg.add_on_qty_ratio)
+            if price > 0:
+                qty = min(qty, int(acct.cash // price))
+            if qty <= 0:
+                continue
+            sl = getattr(self.tcfg, "stop_loss_pct_override", 0) or 50.0
+            tp = getattr(self.tcfg, "take_profit_pct_override", 0) or 20.0
+            reason = f"추가매수 (기존 +{gain:.1f}%)"
+            tid = self.journal.open_trade(strategy=t["strategy"], symbol=sym, trade_date=str(trade_date),
+                                          planned_qty=qty, stop=price * (1 - sl / 100), target=price * (1 + tp / 100),
+                                          sell_from=datetime.fromisoformat(t["sell_from"]),
+                                          deadline=datetime.fromisoformat(t["deadline"]), reason=reason, now=now,
+                                          scale_out=t.get("scale_out") or 1.0, trail_pct=t.get("trail_pct") or 0.0,
+                                          session=session, context={"add_on_of": t["id"]})
+            self._submit(tid, sym, "BUY", qty, price, "entry", session, now, reason)
+            acct.cash -= qty * price
+            counts[sym] = counts.get(sym, 0) + 1
+
     def scan_and_enter(self, now: datetime, trade_date, session: str) -> None:
         if self._kst_entry_blocked(now):
             self.status["last_scan"] = now.isoformat(timespec="seconds")
@@ -888,6 +942,7 @@ class Trader:
                     if id(p) in losers else row(p, p.ok, p.reason) for p in plans]
             plans = [p for p in plans if id(p) not in losers]
         if not any(p.ok for p in plans):
+            self._add_ons(now, trade_date, session)
             self.journal.log_signals(rows)
             self.status["last_scan"] = now.isoformat(timespec="seconds")
             self.status["candidates"] = sum(1 for p in plans if p.ok)
@@ -928,6 +983,7 @@ class Trader:
             self._submit(tid, p.symbol, "BUY", qty, p.price, "entry", session, now, p.reason)
             open_trades = self.journal.open_trades()
             acct.cash -= qty * p.price
+        self._add_ons(now, trade_date, session)
         self.journal.log_signals(rows)
         self.status["last_scan"] = now.isoformat(timespec="seconds")
         self.status["candidates"] = sum(1 for p in plans if p.ok)

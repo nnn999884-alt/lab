@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from pennybot.collector import Store
 from pennybot.collector.runner import Collector
 from pennybot.config import CollectorConfig
+from pennybot.vstrat import STRATEGIES
 from pennybot.precursor import daily_list_text
 
 
@@ -59,7 +60,8 @@ def only(col, *keys):
     return col
 
 
-def test_virtual_limit_order_fill_and_take_profit(tmp_path):
+def test_virtual_limit_order_fill_and_take_profit(tmp_path, monkeypatch):
+    monkeypatch.setitem(STRATEGIES["S1"], "tp", 10)
     col, st, sent = make(tmp_path)
     only(col, "S1")
     px = [0.9] * 3 + [1.0, 1.10]
@@ -85,7 +87,8 @@ def test_virtual_limit_order_fill_and_take_profit(tmp_path):
     assert st.query("SELECT COUNT(*) FROM vsignals")[0][0] == 1
 
 
-def test_strategies_trade_independently(tmp_path):
+def test_strategies_trade_independently(tmp_path, monkeypatch):
+    monkeypatch.setitem(STRATEGIES["S1"], "tp", 10)
     col, st, sent = make(tmp_path)                                        # 넷 다 켜짐 (기본)
     px = [0.9] * 3 + [1.0, 1.10, 0.95, 0.85]
     col._vtrade(T0, "2026-10-22", "PENX", 9, 0.9, bars_of(px[:5]), None, "PRE")
@@ -501,7 +504,8 @@ def test_stale_positions_closed_on_restart(tmp_path):
     assert st.query("SELECT status, exit_reason FROM vsignals")[0] == ("CLOSED", "애프터장 마감 정리")
 
 
-def test_realtime_fill_and_exits(tmp_path):
+def test_realtime_fill_and_exits(tmp_path, monkeypatch):
+    monkeypatch.setitem(STRATEGIES["S1"], "tp", 10)
     col, st, sent = make(tmp_path)
     only(col, "S1")
 

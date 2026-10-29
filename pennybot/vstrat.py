@@ -16,7 +16,7 @@ from .precursor import MAX_TURNOVER
 
 # 덩어리별 1건당 % (앞 ⅓ / 가운데 ⅓ / 뒤 ⅓), 뒤 ⅓ 승률
 STRATEGIES = {
-    "S1": {"name": "전략1 VWAP 눌림", "entry": "vwap", "dip": 10, "minutes": 60, "hours": "pre", "tp": 10, "sl": 35,
+    "S1": {"name": "전략1 VWAP 눌림", "entry": "vwap", "dip": 10, "minutes": 60, "hours": "pre", "tp": 20, "sl": 50,
            "why": "VWAP 아래로 털린 자리에 체결됐습니다. 익절은 짧게, 손절은 넓게.",
            "test": "+3.5 / +4.1 / +4.8%, 승률 89%"},
     "S2": {"name": "전략2 프리 추격", "entry": "now", "hours": "06-09", "tp": 20, "sl": 35,
@@ -28,7 +28,7 @@ STRATEGIES = {
     "S4": {"name": "전략4 신호가 눌림", "entry": "signal", "dip": 15, "minutes": 30, "hours": "pre", "tp": 15, "sl": 35,
            "why": "신호가에서 −15% 눌린 자리에 체결됐습니다.",
            "test": "+4.8 / +1.7 / +9.3%, 승률 88%"},
-    "S5": {"name": "전략5 5분 눌림", "entry": "hold", "wait": 5, "dip": 10, "keep": 0.5, "hours": "pre", "tp": 15, "sl": 35,
+    "S5": {"name": "전략5 5분 눌림", "entry": "hold", "wait": 5, "dip": 10, "keep": 0.5, "hours": "pre", "tp": 15, "sl": 50,
            "why": "급등 5분 뒤 고점에서 −10% 넘게 눌렸는데 거래대금이 유지되고 있습니다 (눌림목).",
            "test": "+5.9 / +1.8 / +4.5%, 승률 68%"},
     "S6": {"name": "전략6 3분반 눌림", "entry": "hold_lim", "wait": 4, "dip": 10, "keep": 0.5, "minutes": 7, "hours": "pre",

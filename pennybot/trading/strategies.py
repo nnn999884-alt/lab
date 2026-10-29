@@ -37,6 +37,7 @@ STRATEGY_KO = {
     "session_gap": "데이-프리 가격차",
     "accumulation": "매집 포착",
     "reversal": "역추세 반등",
+    "combined": "눌림+촉매 통합",
 }
 SESSION_KO = {"DAY": "데이마켓", "PRE": "프리마켓", "REGULAR": "정규장", "AFTER": "애프터마켓", "CLOSED": "휴장"}
 LABEL = {"ATM_TERMINATED": "ATM 종료", "REGISTRATION_WITHDRAWN": "증자 등록 철회",
@@ -520,3 +521,7 @@ ALL = {cls.name: cls for cls in (RunnerOvernight, DilutionCatalyst, DayIgnition,
 from .setups import ALL as SETUP_ALL   # noqa: E402  (setups 가 이 모듈의 Strategy·Plan 을 쓰므로 뒤에서 합친다)
 
 ALL.update(SETUP_ALL)
+
+from .combined import Combined   # noqa: E402  (setups 를 합친 뒤 마지막에)
+
+ALL["combined"] = Combined
