@@ -2326,7 +2326,7 @@ $("set-va").onsubmit = e => { e.preventDefault();
 /* ---------- 급등 전조 목록 ---------- */
 let preData = null, preFilter = "all", preShown = 40;
 async function loadPre() {
-  const fresh = await api("/api/precursor?limit=200");
+  const fresh = await api("/api/precursor?limit=30");
   if (unchanged("pre", fresh)) return;
   preData = fresh;
   const r = preData;
@@ -2335,7 +2335,7 @@ async function loadPre() {
   $("k-picks").textContent = r.d0 ? `★★★ ${t3} · ★★ ${t2}` : "-";
   $("pt-pre").textContent = (r.rows || []).filter(x => x.tier).length || "";
   $("k-picks-n").textContent = r.d0 ? `${r.d0} 종가 기준 · 전체 ${r.n}종목` : "";
-  $("pre-sub").textContent = r.d0 ? `${r.d0} 종가 기준 · ${r.n}종목 · 지금 움직임 ${live} · 장중 1분 갱신` : "아직 없음 — 수집기가 장 마감 뒤 전 종목을 계산합니다";
+  $("pre-sub").textContent = r.d0 ? `${r.d0} 종가 기준 · ${r.n}종목 · 지금 움직임 ${live} · 3초 갱신` : "아직 없음 — 수집기가 장 마감 뒤 전 종목을 계산합니다";
   drawPre();
 }
 const SESS_SHORT = { DAY: "데이", PRE: "프리", REGULAR: "정규", AFTER: "애프터", CLOSED: "휴장" };

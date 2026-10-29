@@ -89,6 +89,8 @@ class Collector:
         self._rb_levels: dict = {}                # 며칠 전 급등주 → 그 뒤 최고가 (넘기 전에 접근·임박 알림)
         self._rb_sent: set = set()                # 오늘 보낸 (종목, 단계)
         self._rt_last: dict = {}                  # 종목 → 직전 체결가 (선을 아래에서 위로 넘는 순간만)
+        self._rt_px: dict = {}
+        self._rt_flush = 0.0
         self._rt_dmin: dict = {}
         self._rt_wave: dict = {}
         self._keep_today: set = set()
@@ -1317,6 +1319,7 @@ class Collector:
             if not v.get("_closing") and self._vexit(v, price, hi, self.clock()) not in (None, "애프터장 마감 정리"):
                 v["_closing"] = True
                 self._rt_q.put(("vclose", v["id"], price))
+        self._rt_px[sym] = (datetime.fromtimestamp(t, timezone.utc).isoformat(), price)
         w = self._rt_win.setdefault(sym, deque())
         w.append((t, price, vol))
         while w and t - w[0][0] > 60:
@@ -1386,6 +1389,13 @@ class Collector:
         self._rt_shares = dict(store.query("SELECT symbol, shares FROM stock_info WHERE shares > 0"))
         last_refresh = 0.0
         while True:
+            if self._rt_px and time.time() - self._rt_flush >= 3:
+                try:
+                    store.put_live_ticks([{"symbol": k, "ts": v[0], "last": v[1]} for k, v in list(self._rt_px.items())])
+                except Exception:
+                    pass
+                self._rt_px.clear()
+                self._rt_flush = time.time()
             if time.time() - last_refresh >= 5:          # 보유 중 가상 포지션 목록 (실시간 정리용) + 그 종목 구독
                 self._vopen_refresh(store)
                 last_refresh = time.time()

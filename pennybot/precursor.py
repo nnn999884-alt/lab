@@ -418,7 +418,7 @@ def alert_buttons(sym: str, dashboard: str | None) -> list:
     return [row]
 
 
-def ranked(db_path: str, limit: int = 50) -> dict:
+def ranked(db_path: str, limit: int = 50, only_active: bool = True) -> dict:
     """최신 기준일의 전조 목록 (일봉 점수 + 장중 증상), 장중 증상 켜진 것 → 점수 순."""
     import json
     import sqlite3
@@ -475,6 +475,8 @@ def ranked(db_path: str, limit: int = 50) -> dict:
         r["early20"] = r["symbol"] in early20
         if r["early20"]:
             r["tier"] = max(r["tier"], 1)
+    if only_active:
+        rows = [r for r in rows if r["live"] or r["tier"] >= 2 or r["reaccel_n"] or r["early20"]]
     # '거래 급증'(wake)은 방향을 안 본다 — 폭락하면서도 거래량이 터지면 뜬다. 지금 내려가는 중인데
     # '거래 급증·매수세 유입'으로 맨 위에 뜨는 걸 막으려고, 지금 오르고 있을 때만(live_m.chg > 0) 그 우선순위를 준다.
     rows.sort(key=lambda r: (-(len(set(r["live"]) & {"wake", "creep"}) if (r["live_m"].get("chg") or 0) > 0 else 0),
@@ -485,7 +487,14 @@ def ranked(db_path: str, limit: int = 50) -> dict:
     try:
         for r in rows:                             # 실시간 가격(수집기 1분 현재가)·세션, 발행주식·회전율, 공시 태그
             px = con.execute("SELECT last, session, ts FROM prices WHERE symbol=? ORDER BY ts DESC LIMIT 1", (r["symbol"],)).fetchone()
-            if px:
+            try:
+                live = con.execute("SELECT last, ts FROM live_tick WHERE symbol=?", (r["symbol"],)).fetchone()
+            except sqlite3.OperationalError:
+                live = None
+            if live and (not px or (live[1] or "") >= (px[2] or "")):
+                r["now"] = {"price": live[0], "session": px[1] if px else None, "ts": live[1],
+                            "chg": (live[0] / r["close"] - 1) * 100 if r["close"] else None}
+            elif px:
                 r["now"] = {"price": px[0], "session": px[1], "ts": px[2], "chg": (px[0] / r["close"] - 1) * 100 if r["close"] else None}
             try:
                 info = con.execute("SELECT shares, list_date FROM stock_info WHERE symbol=?", (r["symbol"],)).fetchone()
@@ -540,7 +549,7 @@ def top_text(db_path: str, limit: int = 15, dashboard: str | None = None) -> str
 def daily_list_text(db_path: str, n: int = 10, dashboard: str | None = None) -> str:
     """장 마감 뒤 '오늘 급등 전 감시 목록' 알림."""
     from .trading.messages import pct, px
-    r = ranked(db_path, 400)
+    r = ranked(db_path, 400, only_active=False)
     picks = [x for x in r["rows"] if x.get("tier")]
     rows = sorted(r["rows"], key=lambda x: (-x.get("tier", 0), -x["score"], -(x["metrics"].get("vol_ratio") or 0)))[:min(max(n, len(picks)), 20)]          # 텔레그램 4096자 제한
     if not rows:

@@ -65,6 +65,9 @@ CREATE TABLE IF NOT EXISTS stock_tags (
     d0 TEXT, symbol TEXT, tags TEXT, info TEXT, PRIMARY KEY (d0, symbol));
 CREATE TABLE IF NOT EXISTS daily_bars (
     symbol TEXT, d TEXT, open REAL, high REAL, low REAL, close REAL, volume REAL, PRIMARY KEY (symbol, d));
+CREATE TABLE IF NOT EXISTS live_tick (
+    symbol TEXT PRIMARY KEY, ts TEXT, last REAL);
+
 CREATE TABLE IF NOT EXISTS events (
     ts TEXT, symbol TEXT, kind TEXT, text TEXT, value REAL, PRIMARY KEY (ts, symbol, kind));
 CREATE INDEX IF NOT EXISTS ix_events_ts ON events (ts);
@@ -124,6 +127,7 @@ class Store:
 
     def put_universe(self, rows): return self._put("universe", rows)
     def put_prices(self, rows): return self._put("prices", rows)
+    def put_live_ticks(self, rows): return self._put("live_tick", rows)
     def put_quotes(self, rows): return self._put("quotes", rows)
     def put_bars(self, rows): return self._put("bars_1m", rows)
     def put_rankings(self, rows): return self._put("rankings", rows)
