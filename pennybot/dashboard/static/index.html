@@ -2326,7 +2326,7 @@ $("set-va").onsubmit = e => { e.preventDefault();
 /* ---------- 급등 전조 목록 ---------- */
 let preData = null, preFilter = "all", preShown = 40;
 async function loadPre() {
-  const fresh = await api("/api/precursor?limit=30");
+  const fresh = await api("/api/precursor?limit=15");
   if (unchanged("pre", fresh)) return;
   preData = fresh;
   const r = preData;
