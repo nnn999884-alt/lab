@@ -637,6 +637,24 @@ class Trader:
         cutoff = datetime.combine(e.date(), dtime(h, m), tzinfo=ET)
         return cutoff if cutoff > e else cutoff + timedelta(days=1)
 
+    def _volume_climax(self, t: dict, bid: float) -> bool:
+        entry = t.get("entry_price") or 0
+        if not bid or not entry or (bid / entry - 1) * 100 < 5:
+            return False
+        q = getattr(self.mv, "q", None)
+        if q is None:
+            return False
+        try:
+            rows = q("SELECT volume FROM bars_1m WHERE symbol=? AND trade_date=? AND ts<=? ORDER BY ts DESC LIMIT 21",
+                     (t["symbol"], t["trade_date"], self.mv._asof()))
+        except Exception:
+            return False
+        if len(rows) < 21:
+            return False
+        last = rows[0][0] or 0
+        avg = sum(r[0] or 0 for r in rows[1:]) / 20
+        return bool(avg) and last >= 10 * avg
+
     def _accumulating(self, symbol: str, now: datetime) -> bool:
         """최근 60분 안에 그 종목 매집·거래터짐 신호가 있었는지 (3시간 규칙의 '매집' 판정)."""
         fn = getattr(self.mv, "recent_flow", None)
@@ -719,6 +737,8 @@ class Trader:
             if armed and bid <= hw * (1 - th / 100):
                 return f"고점 대비 −{th:g}% 익절", False, left
         skip_day = getattr(self.tcfg, "no_rebound_skip_day", False) and t.get("entry_session") == DAY
+        if self._volume_climax(t, bid):
+            return "거래량 클라이맥스", False, left
         if bid > 0 and t.get("no_rebound_at") and now >= datetime.fromisoformat(t["no_rebound_at"]) and not skip_day:
             entry = t.get("entry_price") or 0
             hw = max(t.get("high_water") or 0, bid)

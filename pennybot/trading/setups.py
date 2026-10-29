@@ -298,4 +298,51 @@ class Reversal(Strategy):
         return out
 
 
-ALL = {cls.name: cls for cls in (Squeeze, News, SessionGap, Accumulation, Reversal)}
+class Pump(Strategy):
+    name = "pump"
+    SESSIONS = ALL_SESSIONS
+
+    def scan(self, ctx: Ctx) -> list[Plan]:
+        p = self.p
+        day_open = ctx.bound(DAY)
+        if ctx.session == DAY and day_open and ctx.now < day_open[0] + timedelta(minutes=p["min_session_minutes"]):
+            return []
+        rows = ctx.mv.q("SELECT symbol, SUM(close*volume) AS dollar, SUM(volume) AS vol FROM bars_1m "
+                        "WHERE trade_date=? AND ts<=? GROUP BY symbol HAVING SUM(close*volume) >= ?",
+                        (ctx.trade_date.isoformat(), ctx.mv._asof(), p["min_dollar"]))
+        out = []
+        for sym, dollar, vol in rows:
+            if sym in ctx.held:
+                continue
+            pc = ctx.mv.prev_close(sym, ctx.trade_date, allow_api=False)
+            if not pc:
+                continue
+            hist = ctx.mv.q("SELECT AVG(volume) FROM (SELECT volume FROM daily_bars WHERE symbol=? AND d<? "
+                            "ORDER BY d DESC LIMIT 20)", (sym, ctx.trade_date.isoformat()))
+            avg = hist[0][0] if hist else None
+            if not avg or vol / avg < p["min_vol_ratio"]:
+                continue
+            path = ctx.mv.q("SELECT high, low FROM bars_1m WHERE symbol=? AND trade_date=? AND ts<=? ORDER BY ts",
+                            (sym, ctx.trade_date.isoformat(), ctx.mv._asof()))
+            if len(path) < 10:
+                continue
+            day_high = max(r[0] for r in path)
+            low30 = min(r[1] for r in path[-30:])
+            b = _book(ctx, sym)
+            if not b or not b.has_quote or b.spread_pct > 3:
+                continue
+            chg = (b.mid / pc - 1) * 100
+            if chg < p["min_day_change"]:
+                continue
+            pullback = (b.mid / day_high - 1) * 100
+            if pullback > -p["pullback_pct"] or b.mid < low30 * 1.01:
+                continue
+            if not _dilution_ok(ctx, sym, b.mid):
+                continue
+            score = min(100.0, 50 + chg * 0.5 - pullback * 2)
+            out.append(_plan(ctx, self, sym, self._entry_price(b),
+                             f"당일 {chg:+.0f}% 급등 · 고점 대비 {pullback:+.0f}% 눌림 · 저점 방어 · 거래량 {vol/avg:.1f}배", score))
+        return out
+
+
+ALL = {cls.name: cls for cls in (Squeeze, News, SessionGap, Accumulation, Reversal, Pump)}

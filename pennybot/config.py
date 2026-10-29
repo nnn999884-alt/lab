@@ -289,6 +289,11 @@ class TradingConfig:
         "surge": {"enabled": False, "budget_pct": 0.30, "max_positions": 2, "max_candidates": 2,
                   "take_profit_pct": 20.0, "stop_loss_pct": 50.0, "scale_out_pct": 0.5, "trail_pct": 5.0,
                   "gap_risk_pct": 25.0},
+        "pump": {"enabled": False, "budget_pct": 0.20, "max_positions": 2, "max_candidates": 2,
+                 "entry_discount_pct": 0.5, "min_day_change": 50.0, "min_dollar": 1e6, "min_vol_ratio": 5.0,
+                 "pullback_pct": 5.0, "min_session_minutes": 30,
+                 "take_profit_pct": 20.0, "stop_loss_pct": 50.0, "scale_out_pct": 0.5, "trail_pct": 5.0,
+                 "gap_risk_pct": 25.0},
     })
 
     def spread_cap(self, session: str) -> float:

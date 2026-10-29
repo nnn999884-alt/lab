@@ -75,7 +75,7 @@ def scan(name, mv):
 
 
 def test_registry_and_names():
-    assert set(setups.ALL) == {"squeeze", "news", "session_gap", "accumulation", "reversal"}
+    assert set(setups.ALL) == {"squeeze", "news", "session_gap", "accumulation", "reversal", "pump"}
     for name in setups.ALL:
         assert name in STRATEGY_KO
 
