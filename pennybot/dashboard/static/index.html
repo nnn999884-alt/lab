@@ -1611,7 +1611,9 @@ async function lookup(sym) {
   const cD = scard(page, 0, "최근 5일", "sc-1", "일봉 · 종가/등락/거래량");
   if (daily.length >= 2) {
     const rows = daily.slice(-6);
-    table2(cD, [["날짜"], ["종가", 1], ["등락", 1], ["거래량", 1]],
+    const t5 = mk("table", "scr"), w5 = mk("div", "scr-wrap");
+    w5.appendChild(t5); cD.appendChild(w5);
+    table2(t5, [["날짜"], ["종가", 1], ["등락", 1], ["거래량", 1]],
       rows.slice(1).map((r, i) => { const p0 = rows[i][4], c = r[4];
         return [[r[0].slice(5)], [fmtPx(c), "num"], [fmtPct((c / p0 - 1) * 100), "num " + (tone(c - p0) || "")], [fmtQty(r[5]), "num"]]; }).reverse(), "");
   } else cD.appendChild(mk("div", "empty", "일봉 기록 없음"));
