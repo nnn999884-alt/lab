@@ -278,9 +278,14 @@ class TradingConfig:
         "reversal": {"enabled": True, "budget_pct": 0.10, "max_positions": 2, "entry_discount_pct": 1.0,
                      "min_drop_pct": 35.0, "min_dollar": 5e6, "recover_pct": 15.0,
                      "take_profit_pct": 12.0, "stop_loss_pct": 50.0, "gap_risk_pct": 25.0},
-        "combined": {"enabled": False, "budget_pct": 0.90, "max_positions": 5, "max_candidates": 5,
-                     "entry_discount_pct": 0.5, "take_profit_pct": 20.0, "stop_loss_pct": 50.0,
+        "pullback": {"enabled": False, "budget_pct": 0.40, "max_positions": 3, "max_candidates": 3,
+                     "take_profit_pct": 10.0, "stop_loss_pct": 50.0, "scale_out_pct": 0.5, "trail_pct": 2.0,
                      "gap_risk_pct": 25.0},
+        "rebound": {"enabled": False, "budget_pct": 0.30, "max_positions": 2, "max_candidates": 2,
+                    "take_profit_pct": 12.0, "stop_loss_pct": 50.0, "gap_risk_pct": 25.0},
+        "surge": {"enabled": False, "budget_pct": 0.30, "max_positions": 2, "max_candidates": 2,
+                  "take_profit_pct": 20.0, "stop_loss_pct": 50.0, "scale_out_pct": 0.5, "trail_pct": 5.0,
+                  "gap_risk_pct": 25.0},
     })
 
     def spread_cap(self, session: str) -> float:
