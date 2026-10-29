@@ -89,6 +89,8 @@ class Collector:
         self._rb_levels: dict = {}                # 며칠 전 급등주 → 그 뒤 최고가 (넘기 전에 접근·임박 알림)
         self._rb_sent: set = set()                # 오늘 보낸 (종목, 단계)
         self._rt_last: dict = {}                  # 종목 → 직전 체결가 (선을 아래에서 위로 넘는 순간만)
+        self._rt_dmin: dict = {}
+        self._rt_wave: dict = {}
         self._keep_today: set = set()
         self._vopen: dict = {}                    # 종목 → [가상 포지션] (실시간 체결로 익절·손절·목표 근처 밀림 확인)
         self._vhi: dict = {}                      # 가상 포지션 id → 실시간 고점
@@ -1322,6 +1324,11 @@ class Collector:
         mins = self._rt_min.setdefault(sym, {})
         m = int(t // 60)
         mins[m] = mins.get(m, 0.0) + vol
+        dmin = self._rt_dmin.setdefault(sym, {})
+        dmin[m] = dmin.get(m, 0.0) + price * vol
+        if len(dmin) > 12:
+            for k in sorted(dmin)[:-10]:
+                dmin.pop(k, None)
         if len(mins) > 45:
             for k in sorted(mins)[:-40]:
                 mins.pop(k, None)
@@ -1356,8 +1363,22 @@ class Collector:
                 return
         elif d60 < self.cfg.rt_min_dollar * 3:
             return
+        d3 = sum(v for k, v in dmin.items() if m - 2 <= k <= m)
+        if d3 < getattr(self.cfg, "rt_min_dollar_3m", 0):
+            return
+        kind = "burst"
+        first = self._rt_wave.get(sym)
+        if first and t - first[0] >= getattr(self.cfg, "second_wave_min_minutes", 5) * 60:
+            move = (price / first[1] - 1) * 100 if first[1] else 0
+            if -getattr(self.cfg, "second_wave_max_drop_pct", 8.0) <= move <= 2.0:
+                kind = "flow2"
+                self._rt_wave.pop(sym, None)
+            else:
+                self._rt_wave[sym] = (t, price)
+        elif not first:
+            self._rt_wave[sym] = (t, price)
         self._rt_fired[sym] = t
-        self._rt_q.put(("alert", sym, d60, v60, price))
+        self._rt_q.put(("alert", sym, d60, v60, price, kind))
 
     def _rt_worker(self) -> None:
         import queue
@@ -1436,7 +1457,7 @@ class Collector:
             k = int((end - 30) // 60)
             mins[k] = max(mins.get(k, 0.0), float(cd["volume"]))
 
-    def _rt_alert(self, store, sym: str, d60: float, v60: float, price: float) -> None:
+    def _rt_alert(self, store, sym: str, d60: float, v60: float, price: float, kind: str = "burst") -> None:
         from ..trading.messages import money_s
         now = self.clock()
         trade_date, session = self.cal.classify(now)
@@ -1455,6 +1476,9 @@ class Collector:
         tag = f"⚡ 실시간 1분 {money_s(d60)}" + (f" · 회전율 {turn:.2f}%" if turn is not None and turn < 1 else
                                                 f" · 회전율 {turn:.1f}%" if turn is not None else "")
         log.info("실시간 거래 터짐 %s 60초 $%.0f 회전율 %s", sym, d60, f"{turn:.2f}%" if turn is not None else "-")
+        if kind == "flow2":
+            tag = f"🔁 2차 거래대금 재유입 · {tag}"
+            self._event(now, sym, "flow2", f"🔁 {sym} 2차 거래대금 재유입 (앞선 파동 뒤 다시 붙음)", d60)
         self._fast_confirm(now, trade_date, session, store, d0, sym, pc, check=False, tags=[tag])
 
     def _watch_now(self, symbols, store=None) -> None:

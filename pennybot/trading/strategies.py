@@ -112,13 +112,16 @@ def chase_guard(sym: str, price: float, ctx: Ctx) -> str | None:
     q = getattr(ctx.mv, "q", None)
     if q is None or price <= 0:
         return None
-    rows = q("SELECT high, close, volume FROM bars_1m WHERE symbol=? AND trade_date=? AND ts<=? ORDER BY ts",
+    rows = q("SELECT high, close, low, volume FROM bars_1m WHERE symbol=? AND trade_date=? AND ts<=? ORDER BY ts",
              (sym, ctx.trade_date.isoformat(), ctx.mv._asof()))
     if len(rows) < 10:
         return None
-    vol = sum(v for _, _, v in rows) or 1.0
-    vwap = sum(c * v for _, c, v in rows) / vol
-    day_high = max(h for h, _, _ in rows)
+    vol = sum(v for _, _, _, v in rows) or 1.0
+    vwap = sum(c * v for _, c, _, v in rows) / vol
+    day_high = max(h for h, _, _, _ in rows)
+    low30 = min(r[2] for r in rows[-30:])
+    if price < vwap and price < low30 * 1.01:
+        return f"VWAP 아래 + 저점 이탈 (최근 저점 {low30:.4f})"
     up = 0
     for k in range(len(rows) - 1, 0, -1):
         if rows[k][1] > rows[k - 1][1]:

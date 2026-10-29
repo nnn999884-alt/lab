@@ -176,7 +176,7 @@ class MarketView:
                 "direction")
         return [dict(zip(keys, r)) for r in rows]
 
-    def recent_flow(self, since: datetime, kinds=("burst", "after_move", "bottom_bounce", "early20", "steady")) -> list[dict]:
+    def recent_flow(self, since: datetime, kinds=("burst", "flow2", "after_move", "bottom_bounce", "early20", "steady")) -> list[dict]:
         """수집기가 실시간 체결로 잡아낸 '수급 붙음' 신호 (거래 터짐·애프터 누적·바닥 재반등·+20% 돌파) —
         장중 눌림 없는 단타용 진입 트리거. 최신 것 먼저."""
         q = ",".join("?" * len(kinds))
