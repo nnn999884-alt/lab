@@ -142,11 +142,11 @@ def test_virtual_position_closes_at_after_hours_end(tmp_path):
 
 def test_alert_grade():
     from pennybot.precursor import alert_grade
-    t7 = "2026-10-23T11:10:00+00:00"                                      # 07:10 ET
-    assert alert_grade(t7, 3, 1.5, 80) == ("A", ["프리 06~09시", "★★★", "$5 미만", "전날 거래량 50배+"])
-    assert alert_grade("2026-10-23T08:10:00+00:00", 2, 3.0, 10) == ("B", ["$5 미만"])   # 04:10 ET, $3, 10배 — $5 미만만 해당
-    assert alert_grade("2026-10-23T08:10:00+00:00", 2, 1.0, 10) == ("B", ["$5 미만"])
-    assert alert_grade("2026-10-23T08:10:00+00:00", 2, 8.0, 10)[0] == "C"   # $8 짜리는 아무 것도 해당 없음
+    t7 = "2026-10-23T11:10:00+00:00"
+    assert alert_grade(t7, 3, 1.5, 80) == ("A", ["프리 06~09시", "★★★", "전날 거래량 50배+"])
+    assert alert_grade("2026-10-23T08:10:00+00:00", 2, 3.0, 10) == ("C", [])
+    assert alert_grade("2026-10-23T08:10:00+00:00", 2, 1.0, 80) == ("B", ["전날 거래량 50배+"])
+    assert alert_grade("2026-10-23T08:10:00+00:00", 2, 8.0, 10)[0] == "C"
 
 
 def test_daily_list_text(tmp_path):

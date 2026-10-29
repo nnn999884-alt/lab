@@ -198,7 +198,8 @@ def presurge(ts: str, tier_: int, price: float | None, vol_ratio: float | None, 
     원래는 동부 06~09시 터짐만 쳤는데($2 미만 포함 조합 +30% 먼저 약 50%) — RENT 사례(그 시간대 밖에서 터져서
     급등 전조를 못 받음)를 계기로 '정규장만 아니면 됨'으로 풀었다. 새 조건의 적중률은 아직 재검증 전이라 지켜봐야 한다."""
     from .sessions import AFTER, REGULAR
-    why = [w for ok, w in (((vol_ratio or 0) >= 50, "전날 거래량 50배+"), (tier_ == 3, "★★★")) if ok]
+    why = [w for ok, w in ((price and price < 5, "$5 미만"), ((vol_ratio or 0) >= 50, "전날 거래량 50배+"),
+                           (tier_ == 3, "★★★")) if ok]
     ok = session not in (REGULAR, AFTER) and (chg or 0) >= 5 and bool(why)
     return ok, why
 
