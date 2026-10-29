@@ -468,7 +468,7 @@ def test_runner_filters(env):
     sig = {r["symbol"]: r["reason"] for r in j.q("SELECT symbol, reason FROM signals")}
     assert "밀려 마감" in sig["FADE"]
     assert "회전" in sig["THIN"]
-    assert "희석 75점" in sig["DILU"]              # 희석 점수는 더는 안 거르고 참고로만 붙는다
+    assert "희석" not in sig["DILU"]              # 희석은 매수 이유에 넣지 않는다
     assert "펌프 위험" in sig["PUMP"]
     assert "증자 공시" in sig["OFFR"]
     assert set(t["symbol"] for t in j.q("SELECT symbol FROM trades")) == {"PEN", "DILU"}

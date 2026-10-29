@@ -90,21 +90,6 @@ def _recent_halt(mv, symbol: str, now: datetime) -> bool:
     return bool(r)
 
 
-def _dilution_ok(ctx, symbol: str, price: float, days: int = 30) -> bool:
-    if ctx.fund is not None and price > 0:
-        try:
-            prof = ctx.fund.profile(symbol, price, ctx.trade_date)
-        except Exception:
-            prof = None
-        if prof is not None and getattr(prof, "score", 0) >= 60:
-            return False
-    since = (ctx.now - timedelta(days=days)).astimezone(timezone.utc).isoformat()
-    for f in ctx.mv.filings_for(symbol, days, ctx.now):
-        if events_of(f) & FINANCING_WORDS and f.get("accepted", "") >= since:
-            return False
-    return True
-
-
 def _book(ctx, symbol: str):
     try:
         return ctx.mv.book(symbol)
@@ -164,7 +149,7 @@ class Squeeze(Strategy):
             if not b or not b.has_quote or b.spread_pct > p["max_spread_pct"]:
                 continue
             dollar = _dollar(ctx.mv, sym, ctx.trade_date)
-            if dollar < p["min_dollar"] or not _dilution_ok(ctx, sym, b.mid):
+            if dollar < p["min_dollar"]:
                 continue
             score = min(100.0, 40 + ratio * 50 + min(fee, 100) * 0.2 + (10 if dollar >= 5e6 else 0))
             out.append(_plan(ctx, self, sym, self._entry_price(b),
@@ -256,7 +241,7 @@ class Accumulation(Strategy):
             b = _book(ctx, sym)
             if not b or not b.has_quote:
                 continue
-            if last < box_top * (1 - p["box_pct"] / 100) or not _dilution_ok(ctx, sym, b.mid):
+            if last < box_top * (1 - p["box_pct"] / 100):
                 continue
             out.append(_plan(ctx, self, sym, self._entry_price(b),
                              f"20일 박스 상단 {box_top:.2f} 근처, ATR비 {atr10/atr60:.2f}, 거래량 {vol10/vol60:.1f}배",
@@ -287,7 +272,7 @@ class Reversal(Strategy):
             low = float(day_low[0][0]) if day_low and day_low[0][0] else 0.0
             if not low or b.mid < low * (1 + p["recover_pct"] / 100):
                 continue
-            if _recent_halt(ctx.mv, sym, ctx.now) or not _dilution_ok(ctx, sym, b.mid, days=2):
+            if _recent_halt(ctx.mv, sym, ctx.now):
                 continue
             dollar = _dollar(ctx.mv, sym, ctx.trade_date)
             if dollar < p["min_dollar"]:
@@ -336,8 +321,6 @@ class Pump(Strategy):
                 continue
             pullback = (b.mid / day_high - 1) * 100
             if pullback > -p["pullback_pct"] or b.mid < low30 * 1.01:
-                continue
-            if not _dilution_ok(ctx, sym, b.mid):
                 continue
             score = min(100.0, 50 + chg * 0.5 - pullback * 2)
             out.append(_plan(ctx, self, sym, self._entry_price(b),

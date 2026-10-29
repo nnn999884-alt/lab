@@ -278,7 +278,7 @@ class RunnerOvernight(Strategy):
                 continue
             out.append(self._plan(ctx, sym, self._entry_price(b),
                                   f"전날 +{r['change_pct']:.0f}%" + (f", 회전 {rot:.1f}회" if rot else "")
-                                  + f", 데이마켓 {chg:+.1f}%, {note}",
+                                  + f", 데이마켓 {chg:+.1f}%",
                                   score=r["change_pct"] / 10 + (rot or 0), sell_from=self._sell_from(ctx),
                                   context={"prev_change_pct": r["change_pct"], "prev_close_loc": r.get("close_loc"),
                                           "rotation": rot, "day_change_pct": chg, "ask": b.ask, "bid": b.bid,
@@ -317,7 +317,7 @@ class DilutionCatalyst(Strategy):
                 continue
             out.append(self._plan(ctx, sym, self._entry_price(b),
                                   f"{', '.join(LABEL[h] for h in sorted(hits))} "
-                                  f"({SESSION_KO.get(f['session'], f['session'])} 공개), 반영 {run:+.1f}%, {note}",
+                                  f"({SESSION_KO.get(f['session'], f['session'])} 공개), 반영 {run:+.1f}%",
                                   score=20 + (10 if "ATM_TERMINATED" in hits else 0) - run,
                                   sell_from=self._sell_from(ctx),
                                   context={"filing_events": sorted(hits), "filing_session": f["session"],
@@ -362,7 +362,7 @@ class DayIgnition(Strategy):
             if why:
                 out.append(self._reject(sym, why, b.mid))
                 continue
-            out.append(self._plan(ctx, sym, self._entry_price(b), f"{cat}, 데이마켓 {move:+.1f}%, {note}",
+            out.append(self._plan(ctx, sym, self._entry_price(b), f"{cat}, 데이마켓 {move:+.1f}%",
                                   score=move + (10 if news else 0), sell_from=self._sell_from(ctx),
                                   context={"catalyst": cat, "prev_close": pc, "day_high": hi, "move_pct": move,
                                           "ask": b.ask, "bid": b.bid, "spread_pct": b.spread_pct,
@@ -403,7 +403,7 @@ class DayDip(Strategy):
                 continue
             price = min(b.ask, b.bid * 1.003)
             pre = ctx.bound(PRE)
-            plan = self._plan(ctx, sym, price, f"공시 없이 {drop:.1f}% 급락 후 하락 멈춤, {note}", -drop,
+            plan = self._plan(ctx, sym, price, f"공시 없이 {drop:.1f}% 급락 후 하락 멈춤", -drop,
                               sell_from=pre[0] if pre else ctx.regular_open)
             plan.target = price + (pc - price) * self.p["retrace"]
             plan.deadline = min(plan.deadline, ctx.regular_open)
@@ -461,7 +461,7 @@ class RegularMomentum(Strategy):
             price = self._entry_price(b)
             # 정규장 끝(애프터 시작)이라고 거기서 끊지 않는다 — 다음 데이마켓 시작 직전까지는 들고 갈 수 있게.
             deadline = min(ctx.now + timedelta(minutes=self.p["max_hold_minutes"]), next_day_open(ctx.now))
-            out.append(Plan(self.name, sym, True, f"{cat}, 정규장 중 {move:+.1f}%, {note}", score=move, price=price,
+            out.append(Plan(self.name, sym, True, f"{cat}, 정규장 중 {move:+.1f}%", score=move, price=price,
                             stop=price * (1 - self.p["stop_loss_pct"] / 100),
                             target=price * (1 + self.p["take_profit_pct"] / 100),
                             sell_from=deadline, deadline=deadline, scale_out=1.0, trail_pct=0.0,

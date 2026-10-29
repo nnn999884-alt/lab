@@ -151,7 +151,7 @@ def test_accumulation_requires_tight_box():
                                        books={"PEN": Book("PEN", bars[-1][4], bars[-1][4] + 0.01, 100, 100, bars[-1][4])})) == []
 
 
-def test_reversal_skips_dilution_filing():
+def test_reversal_ignores_dilution_filing():
     sql = [
         ("MIN(low) FROM bars_1m", [(1.00,)]),
         ("FROM bars_1m WHERE symbol=? AND trade_date=? AND ts<=?", [(6_000_000.0,)]),
@@ -165,4 +165,4 @@ def test_reversal_skips_dilution_filing():
     dilution = FakeMV(books=book, sql=sql, closes={"PEN": 2.00}, attention=[("PEN", 2)],
                       recent={"PEN": [{"form": "S-1", "items": "", "accepted": NOW.isoformat(),
                                        "events": "PUBLIC_OFFERING"}]})
-    assert scan("reversal", dilution) == []
+    assert [p.symbol for p in scan("reversal", dilution)] == ["PEN"]
