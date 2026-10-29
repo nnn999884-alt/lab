@@ -1357,14 +1357,20 @@ class Collector:
         d60 = sum(p * v for _, p, v in w)
         v60 = sum(v for _, _, v in w)
         sh = self._rt_shares.get(sym)
-        if not (d60 >= self.cfg.rt_min_dollar or (sh and d60 >= self.cfg.rt_min_turn_dollar
-                                                    and self.cfg.rt_min_turnover <= v60 / sh * 100 <= 1000)):
+        try:
+            after = self.cal.classify(self.clock())[1] == "AFTER"
+        except Exception:
+            after = False
+        min_d = getattr(self.cfg, "rt_min_dollar_after", 2e4) if after else self.cfg.rt_min_dollar
+        if not (d60 >= min_d or (sh and d60 >= self.cfg.rt_min_turn_dollar
+                                 and self.cfg.rt_min_turnover <= v60 / sh * 100 <= 1000)):
             return
         base = sum(v for k, v in mins.items() if m - 31 <= k <= m - 2) / 30   # 직전 30분 분당 평균 (지금 분·직전 분 제외)
+        surge = getattr(self.cfg, "rt_surge_after", 2.5) if after else self.cfg.rt_surge
         if sym in self._rt_seeded:
-            if v60 < self.cfg.rt_surge * max(base, 1.0):
+            if v60 < surge * max(base, 1.0):
                 return
-        elif d60 < self.cfg.rt_min_dollar * 3:
+        elif d60 < min_d * 3:
             return
         d3 = sum(v for k, v in dmin.items() if m - 2 <= k <= m)
         if d3 < getattr(self.cfg, "rt_min_dollar_3m", 0):

@@ -203,7 +203,7 @@ def presurge(ts: str, tier_: int, price: float | None, vol_ratio: float | None, 
     from .sessions import AFTER, REGULAR
     why = [w for ok, w in ((price and price < 5, "$5 미만"), ((vol_ratio or 0) >= 50, "전날 거래량 50배+"),
                            (tier_ == 3, "★★★")) if ok]
-    ok = session != AFTER and (chg or 0) >= 5 and bool(why)
+    ok = (chg or 0) >= 5 and bool(why)
     return ok, why
 
 

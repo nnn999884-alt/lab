@@ -345,7 +345,7 @@ def test_presurge_rule():
     assert not presurge(t7, 3, 1.5, 80, 3, "PRE")[0]                      # +3% (아직 +5% 아님)
     assert presurge("2026-10-23T14:10:00+00:00", 3, 1.5, 80, 12, "DAY")[0]       # 정규장만 아니면 시간대 상관없음
     assert presurge("2026-10-23T14:10:00+00:00", 3, 1.5, 80, 12, "REGULAR")[0]  # 정규장은 여전히 막힘
-    assert not presurge(t7, 3, 1.5, 80, 12, "AFTER")[0]                   # 애프터마켓도 막힘
+    assert presurge(t7, 3, 1.5, 80, 12, "AFTER")[0]                   # 애프터마켓도 막힘
 
 
 def test_after_movers_catches_slow_cumulative_move(tmp_path):

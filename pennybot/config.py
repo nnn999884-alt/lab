@@ -99,6 +99,8 @@ class CollectorConfig:
     realtime_alerts: bool = True     # 웹소켓 체결로 실시간 알림 (계정당 연결 2개 중 1개 사용, 끊기면 1분 확인으로 대체)
     halt_alerts: bool = True         # 뉴스 대기 거래정지가 뜨면 바로 알림 + 실시간 구독 (재개 순간 거래 터짐을 잡게)
     pre_open_watch: bool = True      # 03:55 ET: 데이마켓에서 움직인 종목을 '프리 개장 주목' 으로 다시 알리고 실시간 구독 고정
+    rt_min_dollar_after: float = 2e4
+    rt_surge_after: float = 2.5
     rt_min_dollar_3m: float = 0.0
     second_wave_min_minutes: int = 5
     second_wave_max_drop_pct: float = 8.0
