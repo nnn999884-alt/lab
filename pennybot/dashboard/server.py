@@ -320,6 +320,8 @@ class Data:
         return [[r["d"], r["open"], r["high"], r["low"], r["close"], r["volume"]] for r in reversed(rows)]
 
     def equity(self, days: int) -> list[dict]:
+        if not days or days <= 0:
+            return self.t("SELECT ts, equity, cash, day_pnl FROM equity ORDER BY ts")
         since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec="seconds")
         return self.t("SELECT ts, equity, cash, day_pnl FROM equity WHERE ts >= ? ORDER BY ts", (since,))
 
@@ -329,6 +331,11 @@ class Data:
                          AVG(pnl) AS expectancy, AVG(pnl_pct) AS avg_pct
                          FROM trades WHERE status='CLOSED' GROUP BY strategy""")
         by = {r["strategy"]: r for r in rows}
+        today = self.t("SELECT MAX(trade_date) AS d FROM trades WHERE status='CLOSED'")
+        today = today[0]["d"] if today else None
+        today_rows = {r["strategy"]: r for r in self.t(
+            "SELECT strategy, COUNT(*) AS trades, SUM(pnl) AS pnl FROM trades WHERE status='CLOSED' AND trade_date=? "
+            "GROUP BY strategy", (today,))} if today else {}
         n = self.cfg.trading.auto_disable_trades
         out = []
         for name, params in self.cfg.trading.strategies.items():
@@ -341,6 +348,8 @@ class Data:
                         "toggle": ctl.get(name, True), "auto_disabled": auto_off,
                         "trades": r.get("trades", 0), "win_rate": (r["wins"] / r["trades"]) if r.get("trades") else None,
                         "pnl": r.get("pnl") or 0.0, "expectancy": r.get("expectancy"), "avg_pct": r.get("avg_pct"),
+                        "today_trades": (today_rows.get(name) or {}).get("trades", 0),
+                        "today_pnl": (today_rows.get(name) or {}).get("pnl", 0.0) or 0.0,
                         "open": self.t("SELECT COUNT(*) AS n FROM trades WHERE strategy=? AND status IN "
                                        "('PENDING','OPEN','EXITING')", (name,))[0]["n"]
                         if Path(self.trading_db).exists() else 0})

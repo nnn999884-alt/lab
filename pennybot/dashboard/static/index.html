@@ -815,6 +815,7 @@ table.ca-tbl tr.off .ca-fill { opacity: .35; }
           <button data-days="1" aria-pressed="false">1일</button>
           <button data-days="7" aria-pressed="true">7일</button>
           <button data-days="30" aria-pressed="false">30일</button>
+          <button data-days="0" aria-pressed="false">전체</button>
         </div>
       </div>
       <h2>계좌 평가액</h2>
@@ -837,7 +838,7 @@ table.ca-tbl tr.off .ca-fill { opacity: .35; }
     <section class="card">
       <h2>전략 후보</h2>
       <p class="sub long">최근 스캔에서 검토한 종목과 통과·탈락 사유</p>
-      <div class="filters"><label><input type="checkbox" id="only-ok" checked> 통과한 후보만</label></div>
+      <div class="filters"><label><input type="checkbox" id="only-ok" checked> 통과한 후보만</label><select id="sig-strat" style="margin-left:10px;padding:4px 8px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--text)"><option value="">전략 전체</option></select></div>
       <div class="tablewrap" style="max-height:60vh"><table id="signals"></table></div>
     </section>
 
@@ -1266,7 +1267,7 @@ async function loadStrategies() {
       const h = document.createElement("h3"); const sw = document.createElement("span"); sw.className = "swatch"; sw.style.background = css(STRAT_COLOR[r.strategy]);
       h.appendChild(sw); h.appendChild(document.createTextNode(r.strategy_name || STRAT[r.strategy] || r.strategy)); card.appendChild(h);
       const kv = document.createElement("div"); kv.className = "kv";
-      [["거래", r.trades + "회"], ["승률", r.win_rate == null ? "-" : Math.round(r.win_rate * 100) + "%"], ["평균 손익", fmtUsd(r.expectancy, true)], ["평균 수익률", fmtPct(r.avg_pct)], ["보유 중", r.open + "건"]]
+      [["거래", r.trades + "회"], ["오늘", `${r.today_trades || 0}회 · ${fmtUsd(r.today_pnl, true)}`], ["승률", r.win_rate == null ? "-" : Math.round(r.win_rate * 100) + "%"], ["평균 손익", fmtUsd(r.expectancy, true)], ["평균 수익률", fmtPct(r.avg_pct)], ["보유 중", r.open + "건"]]
         .forEach(([k, v]) => { const a = document.createElement("span"); a.textContent = k; const b = document.createElement("span"); b.textContent = v; kv.appendChild(a); kv.appendChild(b); });
       card.appendChild(kv);
       const st = document.createElement("div"); st.className = "status";
@@ -1288,7 +1289,8 @@ async function loadStrategies() {
 
 async function loadTables() {
   const [pos, orders, trades, sigs] = await Promise.all([api("/api/positions"), api("/api/orders?limit=60"), api("/api/trades?limit=60"), api("/api/signals?limit=300")]);
-  if (unchanged("tables", [pos, orders, trades, sigs, $("only-ok").checked])) return;
+  const sigStrat = $("sig-strat") ? $("sig-strat").value : "";
+  if (unchanged("tables", [pos, orders, trades, sigs, $("only-ok").checked, sigStrat])) return;
   table($("positions"), [
     { h: "종목", f: r => r.name ? `${r.symbol} ${r.name}` : r.symbol }, { h: "전략", f: r => r.strategy_name || STRAT[r.strategy] || r.strategy }, { h: "상태", f: r => ({ PENDING: "매수 주문 중", OPEN: "보유", EXITING: "매도 주문 중" })[r.status] || r.status },
     { h: "수량", num: 1, f: r => r.remaining || r.planned_qty }, { h: "매수가", num: 1, f: r => fmtPx(r.entry_price) }, { h: "현재가", num: 1, f: r => fmtPx(r.last) },
@@ -1311,7 +1313,7 @@ async function loadTables() {
   table($("signals"), [
     { h: "종목", f: r => `${r.symbol}${r.name ? " " + r.name : ""} · ${r.ok ? "통과" : "탈락"}`, tone: r => r.ok ? "pos" : null }, { h: "전략", f: r => r.strategy_name || STRAT[r.strategy] || r.strategy },
     { h: "시각", minor: 1, f: r => kst(r.ts) }, { h: "가격", num: 1, f: r => fmtPx(r.price) }, { h: "사유", wide: 1, f: r => r.reason },
-  ], sigs.filter(r => (!onlyOk || r.ok) && (!latest || r.ts >= new Date(new Date(latest) - 3600e3).toISOString().slice(0, 19))), "후보 없음 (데이마켓 시간에 스캔합니다)");
+  ], sigs.filter(r => (!onlyOk || r.ok) && (!sigStrat || r.strategy === sigStrat) && (!latest || r.ts >= new Date(new Date(latest) - 3600e3).toISOString().slice(0, 19))), "후보 없음 (데이마켓 시간에 스캔합니다)");
 }
 
 async function loadCollector() {
@@ -2594,6 +2596,10 @@ $("set-block").onsubmit = e => {
   if (sym) control({ block_symbol: sym }).then(() => { $("set-block-sym").value = ""; });
 };
 $("only-ok").onchange = () => { delete _seen.tables; loadTables(); };
+if ($("sig-strat")) {
+  Object.keys(STRAT).forEach(k => { const o = document.createElement("option"); o.value = k; o.textContent = STRAT[k]; $("sig-strat").appendChild(o); });
+  $("sig-strat").onchange = () => { delete _seen.tables; loadTables(); };
+}
 document.querySelectorAll("#range button").forEach(b => b.onclick = () => {
   days = +b.dataset.days;
   document.querySelectorAll("#range button").forEach(x => x.setAttribute("aria-pressed", x === b));

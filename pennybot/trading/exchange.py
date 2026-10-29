@@ -72,13 +72,21 @@ class TossMarket:
         self.c = client
 
     def book(self, symbol: str) -> Book:
-        ob = self.c.orderbook(symbol)
+        try:
+            ob = self.c.orderbook(symbol)
+        except Exception as e:
+            log.debug("호가 조회 실패 %s: %s", symbol, e)
+            return Book(symbol, 0, 0, 0, 0, 0)
         bids, asks = ob.get("bids") or [], ob.get("asks") or []
-        last = self.c.prices([symbol])
+        try:
+            last = self.c.prices([symbol])
+            last_px = float(last[0]["lastPrice"]) if last else 0.0
+        except Exception:
+            last_px = 0.0
         return Book(symbol,
                     float(bids[0]["price"]) if bids else 0.0, float(asks[0]["price"]) if asks else 0.0,
                     float(bids[0]["volume"]) if bids else 0.0, float(asks[0]["volume"]) if asks else 0.0,
-                    float(last[0]["lastPrice"]) if last else 0.0)
+                    last_px)
 
 
 _LIVE_STATUS = {"PENDING": "OPEN", "PENDING_CANCEL": "OPEN", "PENDING_REPLACE": "OPEN",

@@ -6,6 +6,11 @@ set PYTHONUTF8=1
 title pennybot %1
 :loop
 .venv\Scripts\python -m pennybot %*
+if errorlevel 3 (
+  echo [%date% %time%] 이미 다른 인스턴스가 실행 중 - 이 창은 종료합니다.
+  timeout /t 15 /nobreak >nul
+  exit /b 0
+)
 echo.
 echo [%date% %time%] pennybot %1 종료됨 - 30초 뒤 다시 시작 (그만두려면 이 창을 닫으세요)
 timeout /t 30 /nobreak >nul

@@ -105,6 +105,13 @@ def _dilution_ok(ctx, symbol: str, price: float, days: int = 30) -> bool:
     return True
 
 
+def _book(ctx, symbol: str):
+    try:
+        return ctx.mv.book(symbol)
+    except Exception:
+        return None
+
+
 def _candidates(ctx, limit: int = 120) -> list[str]:
     out: list[str] = []
     prev = ctx.mv.prev_trade_date(ctx.trade_date)
@@ -153,8 +160,8 @@ class Squeeze(Strategy):
             fee = _borrow_fee(ctx.mv, sym)
             if fee is None or fee < p["min_borrow_fee"] or not _ssr_or_regsho(ctx.mv, sym, ctx.trade_date):
                 continue
-            b = ctx.mv.book(sym)
-            if not b.has_quote or b.spread_pct > p["max_spread_pct"]:
+            b = _book(ctx, sym)
+            if not b or not b.has_quote or b.spread_pct > p["max_spread_pct"]:
                 continue
             dollar = _dollar(ctx.mv, sym, ctx.trade_date)
             if dollar < p["min_dollar"] or not _dilution_ok(ctx, sym, b.mid):
@@ -182,8 +189,8 @@ class News(Strategy):
             if not (events & POSITIVE_NEWS) or (f.get("direction") or 0) < 0:
                 continue
             seen.add(sym)
-            b = ctx.mv.book(sym)
-            if not b.has_quote or b.spread_pct > p["max_spread_pct"]:
+            b = _book(ctx, sym)
+            if not b or not b.has_quote or b.spread_pct > p["max_spread_pct"]:
                 continue
             if _dollar(ctx.mv, sym, ctx.trade_date, minutes=3) < p["min_dollar_3m"]:
                 continue
@@ -214,8 +221,8 @@ class SessionGap(Strategy):
             discount = (last / pc - 1) * 100
             if discount > -p["discount_pct"]:
                 continue
-            b = ctx.mv.book(sym)
-            if not b.has_quote or b.spread_pct > p["max_spread_pct"]:
+            b = _book(ctx, sym)
+            if not b or not b.has_quote or b.spread_pct > p["max_spread_pct"]:
                 continue
             dollar = _dollar(ctx.mv, sym, ctx.trade_date)
             if dollar < p["min_dollar"]:
@@ -246,8 +253,8 @@ class Accumulation(Strategy):
             if not vol60 or vol10 / vol60 <= p["min_vol_ratio"] or not _obv_rising(bars, 20):
                 continue
             last = bars[-1][4]
-            b = ctx.mv.book(sym)
-            if not b.has_quote:
+            b = _book(ctx, sym)
+            if not b or not b.has_quote:
                 continue
             if last < box_top * (1 - p["box_pct"] / 100) or not _dilution_ok(ctx, sym, b.mid):
                 continue
@@ -272,8 +279,8 @@ class Reversal(Strategy):
             drop = (last / pc - 1) * 100
             if drop > -p["min_drop_pct"]:
                 continue
-            b = ctx.mv.book(sym)
-            if not b.has_quote:
+            b = _book(ctx, sym)
+            if not b or not b.has_quote:
                 continue
             day_low = ctx.mv.q("SELECT MIN(low) FROM bars_1m WHERE symbol=? AND trade_date=? AND ts<=?",
                                (sym, ctx.trade_date.isoformat(), ctx.mv._asof()))

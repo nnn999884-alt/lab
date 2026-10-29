@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
+from pathlib import Path
 
 log = logging.getLogger(__name__)
 import sys
@@ -414,6 +416,55 @@ def cmd_run(cfg: Config, once: bool) -> None:
         engine.run()
 
 
+LOCK_COMMANDS = {"collect", "trade", "dashboard"}
+
+
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        import ctypes
+        handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)
+        if not handle:
+            return False
+        code = ctypes.c_ulong()
+        ok = ctypes.windll.kernel32.GetExitCodeProcess(handle, ctypes.byref(code))
+        ctypes.windll.kernel32.CloseHandle(handle)
+        return bool(ok) and code.value == 259
+    except Exception:
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
+
+
+def _single_instance(cfg: Config, command: str):
+    if command not in LOCK_COMMANDS:
+        return None
+    path = Path(cfg.state_dir) / f"{command}.pid"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        pid = int(path.read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        pid = 0
+    if pid and pid != os.getpid() and _pid_alive(pid):
+        print(f"[{command}] 이미 실행 중입니다 (PID {pid}) — 이 창은 종료합니다.")
+        raise SystemExit(3)
+    path.write_text(str(os.getpid()), encoding="utf-8")
+    return path
+
+
+def _release_lock(path) -> None:
+    if not path:
+        return
+    try:
+        if path.read_text(encoding="utf-8").strip() == str(os.getpid()):
+            path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="미국 페니주 자동매매 (토스증권)")
     ap.add_argument("command", nargs="?", default="collect",
@@ -455,6 +506,10 @@ def main() -> None:
                         format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     logging.getLogger("urllib3").setLevel(logging.WARNING)
     cfg = load_config(args.config)
+    lock = _single_instance(cfg, args.command)
+    if lock:
+        import atexit
+        atexit.register(_release_lock, lock)
     try:
         _dispatch(cfg, args)
     except KeyboardInterrupt:

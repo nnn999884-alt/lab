@@ -164,7 +164,7 @@ class TradingConfig:
     no_rebound_high_pct: float = 3.0     # '반등'으로 인정하는 고점 기준 (진입가 대비 %)
     take_profit_pct_override: float = 0.0  # 0 이 아니면 셋업 목표가 대신 진입가 × (1 + x%)
     trail_from_high_pct: float = 0.0     # 0 이 아니면 고점 대비 이만큼 밀리면 익절 (2 = −2%)
-    trail_min_gain_pct: float = 5.0      # 고점이 진입가보다 이만큼(%, +) 오른 뒤에만 트레일링 익절 (0 = 제한 없음)
+    trail_min_gain_pct: float = 10.0      # 고점이 진입가보다 이만큼(%, +) 오른 뒤에만 트레일링 익절 (0 = 제한 없음)
     flatten_kst: str = ""                # "08:50" 이면 매일 이 시각(KST) 전량 청산 (빈 값 = morning_flatten_et 사용)
     entry_cutoff_kst: str = ""           # "08:20" 이면 이 시각~flatten 사이 신규 진입 중단
     max_unfilled_entries: int = 0        # 0 = 끔. (예전: 같은 종목 3번 미체결이면 그날 제외 — 사용자 요청으로 삭제)
