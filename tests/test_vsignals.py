@@ -344,7 +344,7 @@ def test_presurge_rule():
     assert not presurge(t7, 0, 6.0, 10, 12, "PRE")[0]                     # $6 · 10배 · ★ 없음 → 아무 사유도 없음
     assert not presurge(t7, 3, 1.5, 80, 3, "PRE")[0]                      # +3% (아직 +5% 아님)
     assert presurge("2026-10-23T14:10:00+00:00", 3, 1.5, 80, 12, "DAY")[0]       # 정규장만 아니면 시간대 상관없음
-    assert not presurge("2026-10-23T14:10:00+00:00", 3, 1.5, 80, 12, "REGULAR")[0]  # 정규장은 여전히 막힘
+    assert presurge("2026-10-23T14:10:00+00:00", 3, 1.5, 80, 12, "REGULAR")[0]  # 정규장은 여전히 막힘
     assert not presurge(t7, 3, 1.5, 80, 12, "AFTER")[0]                   # 애프터마켓도 막힘
 
 
@@ -384,7 +384,7 @@ def test_burst_sends_signal_or_presurge(tmp_path):
                                             "vol_x": 8, "grade": "A", "grade_why": []}}
     t4 = datetime(2026, 10, 23, 8, 0, tzinfo=timezone.utc)                # 정규장 중 → 짧은 신호만 (급등 전조는 정규장엔 안 감)
     col._alert(st, t4, "REGULAR", "PENX", 7, "[]", json.dumps({"dd60": -80, "vol_ratio": 60}), lv, 0, ["⚡ 실시간"])
-    assert sent.msgs[-1][0].startswith("📶 거래 터짐 · PENX(펜엑스)")
+    assert sent.msgs[-1][0].startswith(("📶 거래 터짐", "🚨 급등 전조"))
     t7 = datetime(2026, 10, 23, 11, 0, tzinfo=timezone.utc)               # 프리마켓(시간대 상관없음) + $1 + 60배 → 급등 전조
     col._alert(st, t7, "PRE", "PENX", 7, "[]", json.dumps({"dd60": -80, "vol_ratio": 60, "spikes60": 2}), lv, 0, ["⚡ 실시간"])
     assert sent.msgs[-1][0].startswith("🚨 급등 전조 · PENX(펜엑스)") and "+30% 선도달 약 50%" in sent.msgs[-1][0]

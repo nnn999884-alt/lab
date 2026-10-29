@@ -203,7 +203,7 @@ def presurge(ts: str, tier_: int, price: float | None, vol_ratio: float | None, 
     from .sessions import AFTER, REGULAR
     why = [w for ok, w in ((price and price < 5, "$5 미만"), ((vol_ratio or 0) >= 50, "전날 거래량 50배+"),
                            (tier_ == 3, "★★★")) if ok]
-    ok = session not in (REGULAR, AFTER) and (chg or 0) >= 5 and bool(why)
+    ok = session != AFTER and (chg or 0) >= 5 and bool(why)
     return ok, why
 
 
@@ -258,7 +258,7 @@ def steady_text(sym: str, name: str | None, price: float | None, chg: float | No
     return "\n".join([
         _head("🫧 꾸준히 거래 붙음", sym, name),
         f"💵 {px(price)}" + (f" ({pct(chg)})" if chg is not None else "") + f" · {session_ko}",
-        f"최근 {window_hours:.0f}시간 중 {n}/{total}회 거래대금 상위권 — 한 번 터진 게 아니라 계속 관심이 붙어 있음",
+        f"📊 최근 {window_hours:.0f}시간 중 {n}/{total}회 거래대금 상위",
     ])
 
 
@@ -266,13 +266,12 @@ def signal_text(sym: str, name: str | None, lv: dict, session_ko: str, tags: lis
     """거래 터짐 신호 (세션 상관없이, 짧게). 급등 전조 조건까지 맞으면 alert_text 를 대신 보낸다."""
     from .trading.messages import money_s, pct, px
     m = lv["metrics"]
-    return "\n".join([
+    return "\n".join(x for x in [
         _head("📶 거래 터짐", sym, name),
         f"💵 {px(m.get('price'))} ({pct(m.get('chg'))}) · {session_ko}",
-        f"3분 {money_s(m.get('dollar_3m'))} · 오늘 {money_s(m.get('dollar_today'))}",
-        *([f"🏷 {' · '.join(tags)}"] if tags else []),
-        "급등 전조 조건($5 미만/거래량 50배+/★★★ 중 하나 + 전날 대비 +5%↑)은 아님 — 참고용",
-    ])
+        f"📊 3분 {money_s(m.get('dollar_3m'))} · 오늘 {money_s(m.get('dollar_today'))}",
+        f"🏷 {' · '.join(tags[:4])}" if tags else "",
+    ] if x)
 
 
 # 재가속: 급등 뒤 고점에서 15% 눌렸다가 저점에서 10% 다시 오른 순간.
@@ -312,14 +311,13 @@ def reaccel_text(sym: str, name: str | None, r: dict, prev_close: float | None, 
     chg = (r["price"] / prev_close - 1) * 100 if prev_close else None
     badge = "🔁" if n == 1 else "🔁🔁" if n == 2 else "🔥🔥🔥"
     lift = REACCEL_LIFT.get(min(n, 5))
-    return "\n".join([
-        _head(f"{badge} 재가속", sym, name, f" — 오늘 {n}번째"),
+    return "\n".join(x for x in [
+        _head(f"{badge} 재가속", sym, name, f" · 오늘 {n}번째"),
         f"💵 {px(r['price'])}" + (f" ({pct(chg)})" if chg is not None else "") + f" · {session_ko}",
-        f"고점 {px(r['high'])} → 저점 {px(r['low'])} ({r['drop']:+.0f}%) → 지금 저점 대비 {r['bounce']:+.0f}%",
-        f"앞 고점까지 {r['to_high']:+.0f}%" + (f" · 최근 2분 {money_s(dollar_2m)}" if dollar_2m else ""),
-        *([f"🏷 {' · '.join(tags)}"] if tags else []),
-        f"오늘 {n}번째 재가속 종목이 그날 +300% 까지 간 비율 {lift[0]} (평소 대비 {lift[1]}) · 흔들림 커서 손절 넓게",
-    ])
+        f"📊 고점 {px(r['high'])} → 저점 {px(r['low'])} ({r['drop']:+.0f}%) → 반등 {r['bounce']:+.0f}% · 앞 고점까지 {r['to_high']:+.0f}%",
+        f"🏷 {' · '.join(tags[:4])}" if tags else "",
+        f"💬 흔들림 큼 — 손절 넓게 (오늘 {n}번째, +300% 도달 {lift[0]})",
+    ] if x)
 
 
 def runner_tag(r: dict) -> str:

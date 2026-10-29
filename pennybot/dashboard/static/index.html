@@ -551,6 +551,9 @@ table.ca-tbl tr.off .ca-fill { opacity: .35; }
 /* 종목 상세 탭 */
 .sym-tabs { margin: 6px 0 -15px; }
 .sym-page > .sc:not([data-g="top"]) { border-top-left-radius: 0; }
+.vt-wrap { padding: 0; }
+.vt-wrap > summary { cursor: pointer; padding: 12px 16px; font-weight: 600; color: var(--text); }
+.vt-body { display: grid; gap: 14px; padding: 0 16px 16px; }
 @media (min-width: 901px) {
   .sym-page { align-items: stretch; grid-auto-flow: dense; }
   .sym-page > .sc { padding: 16px 18px; }
@@ -2132,7 +2135,8 @@ async function loadPick() {
     const it = mk("div", "pick-it" + (tone_ ? " " + tone_ : ""));
     it.append(mk("div", "pick-sym", r.symbol + (r.name ? ` · ${r.name}` : "")),
              mk("div", "pick-r", `${STRAT[r.strategy] || r.strategy} · ${fmtPx(r.price)}`),
-             mk("div", "pick-why", r.reason));
+             mk("div", "pick-why", (r.reason || "").split("리스크:")[0].trim()),
+             ...((r.reason || "").includes("리스크:") ? [mk("div", "pick-why neg", "리스크: " + r.reason.split("리스크:")[1].trim())] : []));
     it.onclick = () => { lookup(r.symbol); showTab("symbol"); };
     return it;
   };
@@ -2302,6 +2306,17 @@ async function loadVTrade() {
 document.querySelectorAll("#vt-range button").forEach(b => b.onclick = () => {
   vtRange = +b.dataset.r; document.querySelectorAll("#vt-range button").forEach(x => x.setAttribute("aria-pressed", x === b)); loadVTrade(); });
 $("bot-wrap").addEventListener("toggle", () => { if ($("bot-wrap").open) { delete _seen.tables; redrawAll(); } });
+{ const t = document.querySelector('.tab[data-tab="trade"]');
+  const vt = [...t.children].filter(c => c.matches("section") && (c.classList.contains("vacct") || c.classList.contains("kpis")
+    || c.querySelector("#vt-strats, #vt-open, #vt-hist")));
+  if (vt.length) {
+    const det = document.createElement("details"); det.className = "card vt-wrap";
+    const sum = document.createElement("summary"); sum.textContent = "가상 매매 (S1·S5 실험 · 실제 주문 없음)";
+    const body = document.createElement("div"); body.className = "vt-body";
+    det.append(sum, body); t.appendChild(det);
+    vt.forEach(x => body.appendChild(x));
+    det.addEventListener("toggle", () => { if (det.open) { delete _seen.vt; loadVTrade(); } });
+  } }
 { const t = document.querySelector('.tab[data-tab="trade"]'); const bot = $("bot-wrap"); const racct = $("racct");
   if (t && bot && racct && racct.parentElement === t) t.insertBefore(bot, racct.nextSibling);
   if (bot) bot.open = true; }
@@ -2366,8 +2381,8 @@ async function loadPre() {
   const t3 = (r.rows || []).filter(x => x.tier === 3).length, t2 = (r.rows || []).filter(x => x.tier === 2).length;
   $("k-picks").textContent = r.d0 ? `★★★ ${t3} · ★★ ${t2}` : "-";
   $("pt-pre").textContent = (r.rows || []).filter(x => x.tier).length || "";
-  $("k-picks-n").textContent = r.d0 ? `${r.d0} 종가 기준 · 전체 ${r.n}종목` : "";
-  $("pre-sub").textContent = r.d0 ? `${r.d0} 종가 기준 · ${r.n}종목 · 지금 움직임 ${live} · 3초 갱신` : "아직 없음 — 수집기가 장 마감 뒤 전 종목을 계산합니다";
+  $("k-picks-n").textContent = r.d0 ? `${r.d0} 기준 · 표시 ${(r.rows || []).length} / 전체 ${r.n}종목` : "";
+  $("pre-sub").textContent = r.d0 ? `${r.d0} 기준 · 표시 ${(r.rows || []).length} / 전체 ${r.n}종목 · 지금 움직임 ${live} · 3초 갱신` : "아직 없음 — 수집기가 장 마감 뒤 전 종목을 계산합니다";
   drawPre();
 }
 const SESS_SHORT = { DAY: "데이", PRE: "프리", REGULAR: "정규", AFTER: "애프터", CLOSED: "휴장" };

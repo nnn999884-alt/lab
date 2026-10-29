@@ -140,7 +140,7 @@ def test_realtime_reaccel_after_alert(tmp_path):
     path += [(1.1, 2.0, 1.9), (1.9, 1.9, 1.7), (1.7, 1.7, 1.6), (1.6, 1.62, 1.62), (1.62, 1.8, 1.8)]
     col.clock = lambda: T0 + td(minutes=9)
     col._rt_alert(st, "PENX", 90000.0, 80000.0, 1.8)
-    assert len(alerts()) == 2 and alerts()[-1].startswith("🔁 재가속 · PENX(펜엑스) — 오늘 1번째")
+    assert len(alerts()) == 2 and alerts()[-1].startswith("🔁 재가속 · PENX(펜엑스) · 오늘 1번째")
     assert st.query("SELECT COUNT(*) FROM events WHERE kind='reaccel'")[0][0] == 1
     col.clock = lambda: T0 + td(minutes=12)
     col._rt_alert(st, "PENX", 90000.0, 80000.0, 1.85)          # 20분 안 → 또 안 보냄
