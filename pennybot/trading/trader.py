@@ -722,7 +722,7 @@ class Trader:
             entry = t.get("entry_price") or 0
             hw = max(t.get("high_water") or 0, bid)
             if entry and hw < entry * (1 + self.tcfg.no_rebound_high_pct / 100) and not self._accumulating(t["symbol"], now):
-                return "반등·매집 없음 (3시간)", False, left
+                return f"반등·매집 없음 ({(self.tcfg.no_rebound_minutes or 0) / 60:g}시간)", False, left
         hw = max(t.get("high_water") or 0, bid)
         if scaled and trail and bid > 0 and bid <= hw * (1 - trail / 100):
             return f"트레일링 스톱 (고점 ${hw:.4f} −{trail:g}%)", True, left
