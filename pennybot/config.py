@@ -161,6 +161,7 @@ class TradingConfig:
     signal_alert_minutes: int = 10       # 같은 종목·같은 셋업 신호는 이 간격으로만         # 부분 체결 알림을 이 시간만큼 모아 한 줄로 보낸다 (1주씩 체결되면 알림 폭주)
     stop_loss_pct_override: float = 50.0  # 0 이 아니면 셋업 손절 대신 진입가 × (1 − x%) 하드 손절 (50 = −50%)
     no_rebound_minutes: int = 0          # 0 = 끔. 체결 후 이 시간이 지나도 반등·매집이 없으면 시간 손절
+    no_rebound_skip_day: bool = False    # 데이마켓 진입 건은 '반등·매집 없음' 규칙을 적용하지 않음 (낮에는 수급 신호가 없어서)
     no_rebound_high_pct: float = 3.0     # '반등'으로 인정하는 고점 기준 (진입가 대비 %)
     take_profit_pct_override: float = 0.0  # 0 이 아니면 셋업 목표가 대신 진입가 × (1 + x%)
     trail_from_high_pct: float = 0.0     # 0 이 아니면 고점 대비 이만큼 밀리면 익절 (2 = −2%)

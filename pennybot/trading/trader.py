@@ -718,7 +718,8 @@ class Trader:
             armed = hw >= t["entry_price"] * (1 + min_gain / 100)
             if armed and bid <= hw * (1 - th / 100):
                 return f"고점 대비 −{th:g}% 익절", False, left
-        if bid > 0 and t.get("no_rebound_at") and now >= datetime.fromisoformat(t["no_rebound_at"]):
+        skip_day = getattr(self.tcfg, "no_rebound_skip_day", False) and t.get("entry_session") == DAY
+        if bid > 0 and t.get("no_rebound_at") and now >= datetime.fromisoformat(t["no_rebound_at"]) and not skip_day:
             entry = t.get("entry_price") or 0
             hw = max(t.get("high_water") or 0, bid)
             if entry and hw < entry * (1 + self.tcfg.no_rebound_high_pct / 100) and not self._accumulating(t["symbol"], now):
