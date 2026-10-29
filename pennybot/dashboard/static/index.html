@@ -1258,11 +1258,12 @@ async function loadStrategies() {
   barChart($("strat-chart"), rows.map(r => ({ label: STRAT[r.strategy] || r.strategy, v: r.trades ? r.pnl : null, color: STRAT_COLOR[r.strategy],
     tip: [["", fmtUsd(r.pnl, true), css(STRAT_COLOR[r.strategy])], ["", STRAT[r.strategy]], ["거래", `${r.trades}회`], ["승률", r.win_rate == null ? "-" : Math.round(r.win_rate * 100) + "%"]] })),
     { valueFmt: v => fmtUsd(v, true), empty: "아직 청산된 매매가 없습니다." });
+  const live = rows.filter(r => r.config_enabled);
   const box = $("strats"); 
   const cards = el => {
     if (!el) return;
     el.replaceChildren();
-    rows.forEach(r => {
+    live.forEach(r => {
       const card = document.createElement("div"); card.className = "strat";
       const h = document.createElement("h3"); const sw = document.createElement("span"); sw.className = "swatch"; sw.style.background = css(STRAT_COLOR[r.strategy]);
       h.appendChild(sw); h.appendChild(document.createTextNode(r.strategy_name || STRAT[r.strategy] || r.strategy)); card.appendChild(h);
@@ -1284,7 +1285,7 @@ async function loadStrategies() {
   };
   cards(box); cards($("live-strats"));
   const n = $("live-strat-n");
-  if (n) n.textContent = `${rows.filter(r => r.config_enabled && r.toggle && !r.auto_disabled).length}/${rows.length} 켜짐`;
+  if (n) n.textContent = `${live.filter(r => r.toggle && !r.auto_disabled).length}/${live.length} 켜짐`;
 }
 
 async function loadTables() {
@@ -1489,7 +1490,7 @@ async function lookup(sym) {
   $("lookup-sym").value = sym;
   const page = $("sym-page"); page.replaceChildren(mk("div", "card empty", `${sym} 불러오는 중…`));
   const [b, x, p, daily] = await Promise.all([api("/api/symbol?s=" + encodeURIComponent(sym)), api("/api/symbol_extra?s=" + encodeURIComponent(sym)).catch(() => ({})),
-    api("/api/profile?s=" + encodeURIComponent(sym)).catch(() => ({})), api("/api/daily?s=" + encodeURIComponent(sym) + "&n=90").catch(() => [])]);
+    api("/api/profile?s=" + encodeURIComponent(sym)).catch(() => ({})), api("/api/daily?s=" + encodeURIComponent(sym) + "&n=260").catch(() => [])]);
   page.replaceChildren();
   try { localStorage.setItem("lookup", sym); } catch (e) {}
   if (!b.found && !x.daily) { page.appendChild(mk("div", "card empty", `${sym}: 수집 기록이 없습니다 (유니버스 $0.2~$10 밖이거나 아직 수집 전)`)); return; }
@@ -1570,13 +1571,16 @@ async function lookup(sym) {
   if (motives.length) { c3.appendChild(mk("div", "mini-cap", "부양 동기")); const ul = mk("ul", "blist mot"); motives.forEach(m => { const li = mk("li"); li.append(mk("b", "", m.label), mk("span", "", " — " + m.detail)); ul.appendChild(li); }); c3.appendChild(ul); }
   else if ((ti.motives || []).length) { c3.appendChild(mk("div", "mini-cap", "부양 동기")); const ul = mk("ul", "blist"); ti.motives.forEach(m => ul.appendChild(mk("li", "", m))); c3.appendChild(ul); }
   if (ti.reverse_split) c3.appendChild(mk("div", "sub", "최근 액면병합 " + ti.reverse_split));
-  if (ds == null && !reasons.length && !motives.length) c3.appendChild(mk("div", "empty", "희석·부양 판정 기록 없음"));
+  if (ds == null && !reasons.length && !motives.length && !(ti.motives || []).length && !ti.reverse_split) c3.hidden = true;
   // ---- 4 가격 레벨 (현재가 기준 사다리)
   const c4 = scard(page, 4, "가격 레벨", "sc-1", "현재가 기준 거리");
   const r60 = x.range60 || {};
   const lv4 = [["60일 고점", r60.high], ["오늘 고가", t.high], ["VWAP", t.vwap], ["오늘 시가", t.open], ["전일 종가", b.prev_close || d.close], ["오늘 저가", t.low], ["60일 저점", r60.low]]
     .filter(r => r[1]);
   if (price && price < 1) lv4.push(["$1 상장유지선", 1]);
+  if (daily.length >= 60) { const hi = Math.max(...daily.map(r => r[2])), lo = Math.min(...daily.map(r => r[3]));
+    const lbl = Math.min(daily.length, 250) + "일";
+    lv4.push([lbl + " 고점", hi], [lbl + " 저점", lo]); }
   lv4.push(["▶ 현재가", price]);
   lv4.sort((p1, p2) => p2[1] - p1[1]);
   const lad = mk("div", "ladder");
@@ -1585,10 +1589,17 @@ async function lookup(sym) {
     r.append(mk("span", "k", k), mk("span", "v mono", fmtPx(v)), mk("span", "d mono " + (tone(dist) || ""), dist == null ? "" : fmtPct(dist))); lad.appendChild(r); });
   c4.appendChild(lad);
   if (r60.low && price) c4.appendChild(mk("div", "sub", `60일 저점 대비 ${(price / r60.low).toFixed(2)}배 · 60일 고점 대비 ${fmtPct((price / r60.high - 1) * 100, 0)}`));
+  const cD = scard(page, 0, "최근 5일", "sc-1", "일봉 · 종가/등락/거래량");
+  if (daily.length >= 2) {
+    const rows = daily.slice(-6);
+    table2(cD, [["날짜"], ["종가", 1], ["등락", 1], ["거래량", 1]],
+      rows.slice(1).map((r, i) => { const p0 = rows[i][4], c = r[4];
+        return [[r[0].slice(5)], [fmtPx(c), "num"], [fmtPct((c / p0 - 1) * 100), "num " + (tone(c - p0) || "")], [fmtQty(r[5]), "num"]]; }).reverse(), "");
+  } else cD.appendChild(mk("div", "empty", "일봉 기록 없음"));
   // ---- 차트 분석: 켜진 신호 + 그 신호의 과거 적중 배수 (pennybot/chartlib.py)
   const ca = x.chart;
   const cA = scard(page, 0, "차트 분석", "sc-2", ca ? `${ca.d} 종가 기준 · 일봉 신호별 다음 날 급등 확률` : "");
-  if (!ca) cA.appendChild(mk("div", "empty", "일봉 기록이 부족함"));
+  if (!ca) cA.hidden = true;
   else {
     kvGrid(cA, [["추세", ca.trend, /정배열|위/.test(ca.trend) ? "pos" : /역배열|아래/.test(ca.trend) ? "neg" : ""],
       ["RSI 14", ca.rsi != null ? ca.rsi.toFixed(0) : null, ca.rsi != null && ca.rsi < 30 ? "neg" : ca.rsi > 70 ? "pos" : ""],
@@ -1621,7 +1632,7 @@ async function lookup(sym) {
   // ---- 물린 물량 (최근 60일 매물대)
   const oh = x.overhead;
   const cO = scard(page, 0, "물린 물량", "sc-wide", oh ? `최근 ${oh.days}일 거래량 · 가격대별` : "");
-  if (!oh) cO.appendChild(mk("div", "empty", "일봉 기록이 부족함"));
+  if (!oh) cO.hidden = true;
   else {
     const heavy = oh.near_pct >= 25, light = oh.near_pct < 10;
     const vb2 = mk("div", "verdict " + (heavy ? "v-dn" : light ? "v-up" : "v-mid"));
@@ -1686,25 +1697,27 @@ async function lookup(sym) {
       if (e.headline) it.appendChild(mk("div", "fil-x", e.headline));
       ul.appendChild(it); });
     return ul; };
-  c6.appendChild(key.length ? filRows(key.slice(0, 10)) : mk("div", "empty", "중요 공시 없음"));
+  if (key.length) c6.appendChild(filRows(key.slice(0, 10)));
+  if (!key.length && !rest.length) c6.hidden = true;
   if (rest.length) { const dd = mk("details", "sub"); dd.appendChild(mk("summary", "", `일상 공시 ${rest.length}건 (내부자 거래·정기보고서 등)`)); dd.appendChild(filRows(rest)); c6.appendChild(dd); }
   const c7 = scard(page, 7, "뉴스", "sc-1", `${news.length}건`);
   if (news.length) { const ul = mk("div", "news-list");
     news.slice(0, 8).forEach(e => { const it = mk("div", "news-i"); it.append(mk("div", "news-d mono", kst(e.ts) + (e.direction > 0 ? " · ▲ 호재" : e.direction < 0 ? " · ▼ 악재" : "")), mk("div", "news-t", e.title || e.headline || "")); ul.appendChild(it); });
-    c7.appendChild(ul); } else c7.appendChild(mk("div", "empty", "수집된 보도자료 없음"));
+    c7.appendChild(ul); } else c7.hidden = true;
   // ---- 8 신호 기록 (공시 제외)
   const c8 = scard(page, 8, "신호 기록", "sc-1", "급등·거래 터짐·정지·랭킹");
   if ((x.events || []).length) { const ul = mk("ul", "feed sym-feed");
     x.events.forEach(e => { const li = mk("li", "ev"); const [kl, kc] = KIND(e.kind);
       li.append(mk("span", "lg-t", kst(e.ts)), kindCell(kl, kc, e.value), mk("span", "lg-x", e.text.replace(/^[^\p{L}\p{N}$]+/u, "").replace(new RegExp("^" + sym + "\\s*"), ""))); ul.appendChild(li); });
-    c8.appendChild(ul); } else c8.appendChild(mk("div", "empty", "신호 기록 없음"));
+    c8.appendChild(ul); } else c8.hidden = true;
   // ---- 9 가상 매매
   const c9 = scard(page, 9, "가상 매매", "sc-1");
   if ((x.vsignals || []).length) { const t9 = mk("table", "scr"); table2(t9, [["전략"], ["상태"], ["매수가", 1], ["수익", 1], ["사유"]],
       x.vsignals.map(v => { const px = v.status === "CLOSED" ? v.exit_price : v.last, r = px && v.entry ? (px / v.entry - 1) * 100 : null;
         return [[(STRAT_NAME[v.strat] || v.strat || "-").split(" ")[0]], [{ OPEN: "보유", ORDER: "대기", CLOSED: "끝", EXPIRED: "취소" }[v.status] || v.status],
                 [fmtPx(v.entry), "num"], [r == null ? "-" : fmtPct(r), "num " + (tone(r) || "")], [v.exit_reason || "", "scr-tags"]]; }), "");
-    const w = mk("div", "scr-wrap"); w.appendChild(t9); c9.appendChild(w); } else c9.appendChild(mk("div", "empty", "이 종목 가상 매매 없음"));
+    const w = mk("div", "scr-wrap"); w.appendChild(t9); c9.appendChild(w);
+  } else c9.appendChild(mk("div", "sub", "이 종목 가상 매매 신호 없음 (지금은 S1 VWAP 눌림 · S5 5분 눌림만 가동)"));
   // ---- 10 시세·공매도
   const c10 = scard(page, 10, "시세 · 공매도", "sc-1");
   const q = b.quote, sh = b.short || {}, bo = b.borrow;
