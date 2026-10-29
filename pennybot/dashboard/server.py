@@ -681,7 +681,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-cache")   # 휴대폰 브라우저가 옛 버전을 계속 보여주지 않게
+            self.send_header("Cache-Control", "no-store")   # 항상 새 파일 (수정 직후 브라우저 캐시 방지)
             self.end_headers()
             return self.wfile.write(body)
         self._json({"error": "not found"}, 404)

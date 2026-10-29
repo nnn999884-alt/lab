@@ -119,17 +119,20 @@ def info_block(stats: dict | None = None, brief: dict | None = None, reason: str
 
 def buy_filled(t: dict, qty: int, price: float, session: str, info: list[str] | None = None, name: str | None = None,
                filled: int | None = None, planned: int | None = None) -> str:
-    """매수 체결 알림. filled/planned 를 주면 부분 체결과 완료를 구분해 보여준다 (토스·모의 모두 최우선 잔량까지만 체결)."""
+    """매수 체결 알림. 모든 알림 공통: 아이콘·사건·종목 / 숫자 / 맥락 순."""
     total = filled if filled is not None else qty
     planned = planned if planned is not None else total
-    head = f"🟢 매수 {'중' if total < planned else '완료'} {sym_s(t['symbol'], name)} · {total}/{planned}주 · {px(price)}" \
-        if total < planned else \
-        f"🟢 매수 완료 {sym_s(t['symbol'], name)} · {total}주 · {px(price)}"
-    lines = [f"{head} · {_strat(t)}/{_sess(session)}", f"총 {usd(total * price)}"]
-    if t.get("stop") or t.get("target"):
-        tp = (t["target"] / price - 1) * 100 if t.get("target") and price else None
-        sl = (t["stop"] / price - 1) * 100 if t.get("stop") and price else None
-        lines[1] += f" · 익절 {px(t.get('target'))} ({pct(tp)}) · 손절 {px(t.get('stop'))} ({pct(sl)})"
+    head = f"🟢 매수 {'중' if total < planned else '완료'} · {sym_s(t['symbol'], name)}"
+    if total < planned:
+        head += f" · {total}/{planned}주"
+    lines = [head, f"💵 {px(price)} · {total}주 · 총 {usd(total * price)}"]
+    bits = []
+    if t.get("target") and price:
+        bits.append(f"🎯 익절 {px(t['target'])} ({pct((t['target'] / price - 1) * 100)})")
+    if t.get("stop") and price:
+        bits.append(f"🛑 손절 {px(t['stop'])} ({pct((t['stop'] / price - 1) * 100)})")
+    bits.append(f"{_strat(t)}/{_sess(session)}")
+    lines.append(" · ".join(bits))
     return "\n".join(lines + (info or []))
 
 
@@ -137,8 +140,8 @@ def scaled_out(t: dict, qty: int, price: float, info: list[str] | None = None, n
     gain = (price / t["entry_price"] - 1) * 100 if t.get("entry_price") else None
     return "\n".join([
         f"🟡 분할 익절 · {sym_s(t['symbol'], name)}",
-        f"{qty}주 × {px(price)} ({pct(gain)})",
-        f"나머지 {t['remaining']}주: 손절을 본전 {px(t.get('entry_price'))}로, 고점 대비 −{t.get('trail_pct') or 0:g}% 트레일링",
+        f"💵 {qty}주 × {px(price)} ({pct(gain)}) · 남은 {t['remaining']}주",
+        f"🛡 손절을 본전 {px(t.get('entry_price'))}로 · 고점 대비 −{t.get('trail_pct') or 0:g}% 트레일링",
     ] + (info or []))
 
 
@@ -147,19 +150,21 @@ def closed(t: dict, info: list[str] | None = None, name: str | None = None) -> s
     icon = "🔵" if pnl >= 0 else "🔴"
     held = _held(t)
     peak = (t["high_water"] / t["entry_price"] - 1) * 100 if t.get("high_water") and t.get("entry_price") else None
-    lines = [f"{icon} 청산 {sym_s(t['symbol'], name)} · {t.get('exit_reason') or '-'}",
-             f"{usd(pnl, sign=True)} ({pct(t.get('pnl_pct'))}) · {t.get('exited_qty') or t.get('qty') or 0}주"
-             + (f" · {held} 보유" if held else ""),
-             f"{px(t.get('entry_price'))} → {px(t.get('exit_price'))}"
-             + (f" · 최고 {pct(peak)}" if peak is not None else "")
-             + f" · {_strat(t)}/{_sess(t.get('entry_session'))}→{_sess(t.get('exit_session'))}"]
+    qty = t.get("exited_qty") or t.get("qty") or 0
+    head = f"{icon} 청산 · {sym_s(t['symbol'], name)}"
+    if t.get("exit_reason"):
+        head += f" · {t['exit_reason']}"
+    lines = [head,
+             f"💵 {usd(pnl, sign=True)} ({pct(t.get('pnl_pct'))}) · {qty}주" + (f" · {held} 보유" if held else ""),
+             f"{px(t.get('entry_price'))} → {px(t.get('exit_price'))}" + (f" · 최고 {pct(peak)}" if peak is not None else ""),
+             f"🧭 {_strat(t)} · {_sess(t.get('entry_session'))} → {_sess(t.get('exit_session'))}"]
     return "\n".join(lines + (info or []))
 
 
 def backstop_fired(t: dict, name: str | None = None) -> str:
-    return "\n".join([f"🛑 서버 손절 안전망 발동 · {sym_s(t['symbol'], name)}",
-                      f"{t.get('remaining') or 0}주, 발동가 {px(t.get('backstop_trigger'))}",
-                      "토스 서버가 손절 주문을 냈습니다. 봇이 이어서 체결을 추적합니다"])
+    return "\n".join([f"🛑 서버 손절 안전망 · {sym_s(t['symbol'], name)}",
+                      f"💵 남은 {t.get('remaining') or 0}주 · 발동가 {px(t.get('backstop_trigger'))}",
+                      "→ 토스 서버가 손절 주문을 냈습니다. 봇이 이어서 체결을 추적합니다"])
 
 
 def warn(title: str, detail: str = "", action: str = "") -> str:
