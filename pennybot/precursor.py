@@ -386,23 +386,31 @@ def alert_text(sym: str, name: str | None, day: dict, lv: dict, session_ko: str,
     on_d = [lab for k, lab in DAILY_LABELS.items() if k in on]
     g = m.get("grade")
     turn = m.get("vol_today", 0) / shares * 100 if shares else None
-    return "\n".join([
+    turn3 = m.get("vol_3m", 0) / shares * 100 if shares else None
+    risk_tags = [t for t in (tags or []) if any(k in t for k in ("공모", "액면병합", "전환사채", "상폐", "희석", "증자", "워런트"))]
+    good_tags = [t for t in (tags or []) if t not in risk_tags]
+    quote_bits = []
+    if turn is not None and turn <= MAX_TURNOVER:
+        quote_bits.append(f"회전 {turn:.2f}%" if turn < 1 else f"회전 {turn:.1f}%")
+        if turn3 is not None:
+            quote_bits[-1] += f" (3분 {turn3:.0f}%)"
+    if m.get("ask10") is not None:
+        thin = m["ask10"] < (m.get("dollar_3m") or 0)
+        quote_bits.append(f"호가 +10%안 {money_s(m['ask10'])} ({'얇음 ✅' if thin else '두꺼움'})")
+    tip = {"🔴 추격 주의": "과열 — 추격 금지", "🟠 진행 중": "눌림 뒤 재상승 확인",
+           "🟡 움직이기 시작": "거래량 지속 확인", "🟢 아직 조용": "지켜보기"}.get(j["state"], "")
+    return "\n".join(x for x in [
         _head("🚨 급등 전조", sym, name, f" [{g}등급]" if g else ""),
-        f"💵 {px(m['price'])} ({pct(m['chg'])}) · {session_ko}",
-        f"{j['state']} · 거래 {j['flow']}",
-        f"1시간 {m.get('vol_x', 0):.1f}배 · 오늘 {money_s(m.get('dollar_today'))}",
-        f"3분 {money_s(m.get('dollar_3m'))} · {m.get('vol_3m', 0):,.0f}주",
-        *([f"회전율 오늘 {turn:{'.2f' if turn < 1 else '.1f'}}%"
-           f" · 3분 {m.get('vol_3m', 0) / shares * 100:.2f}%"] if turn is not None and turn <= MAX_TURNOVER else []),
-        *([f"호가 +10%안 {money_s(m['ask10'])}"
-           + (f" · {'얇음 ✅' if m['ask10'] < (m.get('dollar_3m') or 0) else '두꺼움'}")]
-          if m.get("ask10") is not None else []),
-        f"📉 전조 {day['score']}점: " + " · ".join(on_d),
-        f"60일 고점대비 {pct(dm.get('dd60'))} · 전날거래량 {times(dm.get('vol_ratio'))}",
-        *([f"🏷 {' · '.join(tags)}"] if tags else []),
-        f"💬 {j['verdict']}",
-        f"변동성 {j['risk']} · 변동폭 {dm.get('range30') or 0:.0f}%",
-    ])
+        f"💵 {px(m['price'])} ({pct(m['chg'])}) · {session_ko} · {j['state']}",
+        f"📊 거래 {j['flow']} · 1시간 {m.get('vol_x', 0):.1f}배 · 오늘 {money_s(m.get('dollar_today'))}",
+        f"3분 {money_s(m.get('dollar_3m'))}" + (f" · {' · '.join(quote_bits)}" if quote_bits else ""),
+        f"📉 전조 {day['score']}점" + (f" — {' · '.join(on_d[:5])}" if on_d else ""),
+        f"⚠️ 희석: {' · '.join(risk_tags[:4])}" if risk_tags else "",
+        f"🏷 {' · '.join(good_tags[:4])}" if good_tags else "",
+        f"60일 고점 {pct(dm.get('dd60'))} · 전날 거래량 {times(dm.get('vol_ratio'))}"
+        f" · 변동폭 {dm.get('range30') or 0:.0f}% (위험 {j['risk']})",
+        f"💬 {tip}" if tip else "",
+    ] if x)
 
 
 def alert_buttons(sym: str, dashboard: str | None) -> list:

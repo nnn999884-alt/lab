@@ -180,8 +180,10 @@ def with_link(text: str, link: str | None) -> str:
 def signal(strategy: str, symbol: str, price: float, reason: str, session: str, score: float | None = None,
            name: str | None = None) -> str:
     """수급 신호 알림 — 주문 직전에 '지금 이 종목이 잡혔다'를 실시간으로 보낸다."""
-    head = f"⚡ 수급 신호 {sym_s(symbol, name)} · {px(price)} · {_strat({'strategy': strategy})}/{_sess(session)}"
-    lines = [head, (reason or '')[:120]]
+    lines = [f"⚡ 수급 신호 · {sym_s(symbol, name)}",
+             f"💵 {px(price)} · {_sess(session)} · {_strat({'strategy': strategy})}"]
+    if reason:
+        lines.append(f"💬 {reason[:140]}")
     if score is not None:
         lines.append(f"점수 {score:.0f}")
-    return "\n".join(x for x in lines if x)
+    return "\n".join(lines)
