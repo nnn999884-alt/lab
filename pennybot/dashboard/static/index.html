@@ -551,6 +551,12 @@ table.ca-tbl tr.off .ca-fill { opacity: .35; }
 /* 종목 상세 탭 */
 .sym-tabs { margin: 6px 0 -15px; }
 .sym-page > .sc:not([data-g="top"]) { border-top-left-radius: 0; }
+.sym-page .sc .tablewrap, .sym-page .sc .scr-wrap { max-height: 340px; overflow: auto; }
+.sym-page .sc table.scr { width: 100%; font-size: 12px; }
+.sym-page .sc table.scr th { position: sticky; top: 0; z-index: 1; background: var(--panel); }
+.sym-page .sc table.scr th, .sym-page .sc table.scr td { padding: 6px 8px; }
+.sym-page .sc table.scr tbody tr:nth-child(even) { background: var(--panel-2); }
+.sym-page .sc table.scr td.num, .sym-page .sc table.scr th.num { text-align: right; }
 .sc-num { display: none; }
 @media (max-width: 1100px) {
   #main-tabs { order: 1; } .det-wrap, .pre-wrap { order: 2; } #side-tabs { order: 3; margin-top: 14px; } .feed-wrap, .fil-wrap, .vs-wrap { order: 4; }
@@ -1485,7 +1491,7 @@ function kvBox(title, pairs) {
 const mk = (tag, cls, text) => { const x = document.createElement(tag); if (cls) x.className = cls; if (text != null) x.textContent = text; return x; };
 // 카드 묶음: 위 3장(회사·지금 상황·희석)은 늘 보이고, 나머지는 탭으로
 const SC_GROUP = { "회사": "top", "지금 상황": "top", "희석 · 부양 동기": "top", "가격 레벨": "ana", "차트 분석": "ana", "물린 물량": "ana",
-  "차트": "chart", "공시": "news", "뉴스": "news", "신호 기록": "log", "가상 매매": "log", "시세 · 공매도": "log" };
+  "차트": "chart", "최근 5일": "chart", "공시": "news", "뉴스": "news", "신호 기록": "log", "가상 매매": "log", "시세 · 공매도": "log" };
 const SC_TABS = [["ana", "분석", "layers"], ["chart", "차트", "candle"], ["news", "공시 · 뉴스", "doc"], ["log", "기록 · 시세", "clock"]];
 let symDraw = null;
 function scard(page, num, title, cls, sub) {

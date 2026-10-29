@@ -1609,8 +1609,7 @@ class Collector:
                        float(cd["highPrice"]), float(cd["lowPrice"]), float(cd["closePrice"]), float(cd["volume"])) for cd in cs)
         day_start = self.cal.bounds(trade_date, DAY)
         start = iso(day_start[0]) if day_start else iso(now - timedelta(hours=12))
-        closed = iso(now - timedelta(seconds=60))
-        today = [b for b in bars if start <= b[0] <= closed]
+        today = [b for b in bars if b[0] >= start]
         if len(today) < 2:
             return False
         sh = store.query("SELECT shares FROM stock_info WHERE symbol=?", (sym,))
