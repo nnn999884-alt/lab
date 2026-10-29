@@ -1621,7 +1621,7 @@ async function lookup(sym) {
   if (r60.low && price) c4.appendChild(mk("div", "sub", `60일 저점 대비 ${(price / r60.low).toFixed(2)}배 · 60일 고점 대비 ${fmtPct((price / r60.high - 1) * 100, 0)}`));
   const cD = scard(page, 0, "최근 5일", "sc-1", "일봉 · 종가/등락/거래량");
   if (daily.length >= 2) {
-    const rows = daily.slice(-6);
+    const rows = daily.slice(-11);
     const t5 = mk("table", "scr"), w5 = mk("div", "scr-wrap");
     w5.appendChild(t5); cD.appendChild(w5);
     table2(t5, [["날짜"], ["종가", 1], ["등락", 1], ["거래량", 1]],
@@ -1650,6 +1650,8 @@ async function lookup(sym) {
     ];
     const t = mk("table", "scr"), w = mk("div", "scr-wrap"); w.appendChild(t); cAc.appendChild(w);
     table2(t, [["지표"], ["값", 1], ["신호"]], rows, "");
+    const pos = rows.filter(r => r[1][1] === "pos").length, neg = rows.filter(r => r[1][1] === "neg").length;
+    cAc.appendChild(mk("div", "sub", `매집 신호 ${pos} · 반대 ${neg} — 참고용, 매수 판단은 전략이 합니다`));
     cAc.appendChild(mk("div", "sub", "체결 방향·다크풀·13D/13F는 아직 수집 안 함"));
   }
   // ---- 차트 분석: 켜진 신호 + 그 신호의 과거 적중 배수 (pennybot/chartlib.py)
@@ -1957,6 +1959,7 @@ async function loadBrief() {
 const usd2 = v => v == null || isNaN(v) ? "-" : (v < 0 ? "−" : "") + "$" + Math.abs(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const sgn2 = v => v == null || isNaN(v) ? "-" : (v > 0 ? "+" : "") + usd2(v);
 async function loadAccount() {
+  if (ov && ov.mode !== "live") { $("racct").hidden = true; return; }
   const a = await api("/api/account");
   if (unchanged("acct", a)) return;
   const h = a.holdings || {}, num = v => v == null ? null : +v;
@@ -2221,7 +2224,7 @@ function table2(t, heads, rows, empty) {
 }
 const dur = (a, b) => { if (!a || !b) return "-"; const m = Math.max(0, Math.round((new Date(b) - new Date(a)) / 60000)); return m >= 60 ? `${Math.floor(m / 60)}시간 ${m % 60}분` : `${m}분`; };
 async function loadVTrade() {
-  const [rows, sets] = await Promise.all([api("/api/vsignals?limit=2000"), api("/api/settings")]);
+  const [rows, sets] = await Promise.all([api("/api/vsignals?limit=500"), api("/api/settings")]);
   vtSettings = sets;
   if (unchanged("vt", [rows, vtStrat, vtRange, sets])) return;
   vtRows = rows;
@@ -2288,7 +2291,7 @@ async function loadVTrade() {
   }
   const since = vtRange ? Date.now() - vtRange * 86400000 : 0;
   const hist = rows.filter(r => r.status === "CLOSED" && (vtStrat === "all" ? !!r.strat : (r.strat || "이전") === vtStrat) && new Date(r.closed) >= since)
-    .sort((a, b) => (b.closed > a.closed ? 1 : -1));
+    .sort((a, b) => (b.closed > a.closed ? 1 : -1)).slice(0, 100);
   table2($("vt-hist"), [["매도 시각"], ["종목"], ["전략"], ["매수가", 1, 1], ["매도가", 1, 1], ["수익", 1], ["최고 (도달)", 1, 1], ["보유", 0, 1], ["사유"]],
     hist.map(r => { const v = vret(r); const hi = r.high && r.entry ? (r.high / r.entry - 1) * 100 : null;
       return [[kst(r.closed)], [r.name ? `${r.symbol} ${r.name}` : r.symbol, "scr-sym-c"], [(STRAT_NAME[r.strat] || "이전").split(" ")[0]], [fmtPx(r.entry), "num"], [fmtPx(r.exit_price), "num"],
