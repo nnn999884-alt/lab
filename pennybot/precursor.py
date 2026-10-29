@@ -27,6 +27,9 @@ DAILY_LABELS = {
 }
 PATTERN_LABELS = {"compress": "응축", "accum": "매집 의심", "base": "바닥 다지기"}
 MAX_TURNOVER = 1000.0        # 하루 회전율이 이보다 크면 발행주식 수가 틀린 것으로 본다 (%)
+ACTIVE_MIN_DOLLAR_3M = 1e5      # 최근 3분 거래대금이 이 이상이면 '지금 움직임' 후보로 남긴다
+ACTIVE_MIN_VOL_X = 5.0          # 1시간 거래량이 평소의 이 배 이상
+ACTIVE_MIN_DAY_VOL_RATIO = 50.0 # 전날 거래량 대비 이 배 이상
 
 
 def times(v: float | None) -> str:
@@ -476,11 +479,14 @@ def ranked(db_path: str, limit: int = 50, only_active: bool = True) -> dict:
         if r["early20"]:
             r["tier"] = max(r["tier"], 1)
     if only_active:
-        rows = [r for r in rows if r["live"] or r["tier"] >= 2 or r["reaccel_n"] or r["early20"]]
+        rows = [r for r in rows if r["live"]
+                or (r["live_m"].get("dollar_3m") or 0) >= ACTIVE_MIN_DOLLAR_3M
+                or (r["live_m"].get("vol_x") or 0) >= ACTIVE_MIN_VOL_X
+                or (r["metrics"].get("vol_ratio") or 0) >= ACTIVE_MIN_DAY_VOL_RATIO]
     # '거래 급증'(wake)은 방향을 안 본다 — 폭락하면서도 거래량이 터지면 뜬다. 지금 내려가는 중인데
     # '거래 급증·매수세 유입'으로 맨 위에 뜨는 걸 막으려고, 지금 오르고 있을 때만(live_m.chg > 0) 그 우선순위를 준다.
     rows.sort(key=lambda r: (-(len(set(r["live"]) & {"wake", "creep"}) if (r["live_m"].get("chg") or 0) > 0 else 0),
-                             -r["tier"], -r["score"], -(r["metrics"].get("vol_ratio") or 0)))
+                             -(r["live_m"].get("dollar_3m") or 0), -(r["metrics"].get("vol_ratio") or 0), -r["score"]))
     total = len(rows)
     rows = rows[:limit]
     con = sqlite3.connect(ro_uri(db_path), uri=True)

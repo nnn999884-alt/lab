@@ -319,6 +319,25 @@ class Data:
                            "SELECT d, open, high, low, close, volume FROM daily_bars WHERE symbol=? ORDER BY d DESC LIMIT ?", (sym, n))
         return [[r["d"], r["open"], r["high"], r["low"], r["close"], r["volume"]] for r in reversed(rows)]
 
+    def accum(self, sym: str) -> dict:
+        sym = sym.upper()
+        from ..accum import compute
+        res = compute([(b[0], b[1], b[2], b[3], b[4], b[5]) for b in self.daily(sym, 260)])
+        try:
+            sh = self.m("SELECT short_volume, total_volume FROM short_volume WHERE symbol=? ORDER BY trade_date DESC LIMIT 6", (sym,))
+        except Exception:
+            sh = []
+        ratios = [r["short_volume"] / r["total_volume"] for r in sh if r["total_volume"]]
+        res["short_ratio"] = ratios[0] if ratios else None
+        res["short_5d"] = sum(ratios) / len(ratios) if ratios else None
+        try:
+            ins = self.m("SELECT COALESCE(SUM(insider_buy_usd),0) AS s FROM filings WHERE symbol=? AND form='4' AND accepted>=?",
+                         (sym, (datetime.now(timezone.utc) - timedelta(days=180)).isoformat()))
+        except Exception:
+            ins = []
+        res["insider_180d"] = ins[0]["s"] if ins else 0
+        return res
+
     def equity(self, days: int) -> list[dict]:
         if not days or days <= 0:
             return self.t("SELECT ts, equity, cash, day_pnl FROM equity ORDER BY ts")
@@ -620,6 +639,7 @@ class Handler(BaseHTTPRequestHandler):
         routes = {
             "/api/overview": lambda: {**d.overview(), "readonly": self._readonly()},
             "/api/equity": lambda: d.equity(n("days", 7)),
+            "/api/accum": lambda: d.accum(qs.get("s", "")[:12]),
             "/api/strategies": lambda: d.strategies(),
             "/api/positions": lambda: d.positions(),
             "/api/orders": lambda: d.orders(n("limit", 50)),

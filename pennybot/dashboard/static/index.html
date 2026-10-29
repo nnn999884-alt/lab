@@ -551,6 +551,10 @@ table.ca-tbl tr.off .ca-fill { opacity: .35; }
 /* 종목 상세 탭 */
 .sym-tabs { margin: 6px 0 -15px; }
 .sym-page > .sc:not([data-g="top"]) { border-top-left-radius: 0; }
+@media (min-width: 901px) {
+  .sym-page { align-items: stretch; grid-auto-flow: dense; }
+  .sym-page > .sc { padding: 16px 18px; }
+}
 .sym-page .sc .tablewrap, .sym-page .sc .scr-wrap { max-height: 340px; overflow: auto; }
 .sym-page .sc table.scr { width: 100%; font-size: 12px; }
 .sym-page .sc table.scr th { position: sticky; top: 0; z-index: 1; background: var(--panel); }
@@ -1491,7 +1495,7 @@ function kvBox(title, pairs) {
 const mk = (tag, cls, text) => { const x = document.createElement(tag); if (cls) x.className = cls; if (text != null) x.textContent = text; return x; };
 // 카드 묶음: 위 3장(회사·지금 상황·희석)은 늘 보이고, 나머지는 탭으로
 const SC_GROUP = { "회사": "top", "지금 상황": "top", "희석 · 부양 동기": "top", "가격 레벨": "ana", "차트 분석": "ana", "물린 물량": "ana",
-  "차트": "chart", "최근 5일": "chart", "공시": "news", "뉴스": "news", "신호 기록": "log", "가상 매매": "log", "시세 · 공매도": "log" };
+  "차트": "chart", "최근 5일": "ana", "매집 지표": "ana", "공시": "news", "뉴스": "news", "신호 기록": "log", "가상 매매": "log", "시세 · 공매도": "log" };
 const SC_TABS = [["ana", "분석", "layers"], ["chart", "차트", "candle"], ["news", "공시 · 뉴스", "doc"], ["log", "기록 · 시세", "clock"]];
 let symDraw = null;
 function scard(page, num, title, cls, sub) {
@@ -1514,8 +1518,8 @@ async function lookup(sym) {
   if (!sym) return;
   $("lookup-sym").value = sym;
   const page = $("sym-page"); page.replaceChildren(mk("div", "card empty", `${sym} 불러오는 중…`));
-  const [b, x, p, daily] = await Promise.all([api("/api/symbol?s=" + encodeURIComponent(sym)), api("/api/symbol_extra?s=" + encodeURIComponent(sym)).catch(() => ({})),
-    api("/api/profile?s=" + encodeURIComponent(sym)).catch(() => ({})), api("/api/daily?s=" + encodeURIComponent(sym) + "&n=260").catch(() => [])]);
+  const [b, x, p, daily, acc] = await Promise.all([api("/api/symbol?s=" + encodeURIComponent(sym)), api("/api/symbol_extra?s=" + encodeURIComponent(sym)).catch(() => ({})),
+    api("/api/profile?s=" + encodeURIComponent(sym)).catch(() => ({})), api("/api/daily?s=" + encodeURIComponent(sym) + "&n=260").catch(() => []), api("/api/accum?s=" + encodeURIComponent(sym)).catch(() => ({}))]);
   page.replaceChildren();
   try { localStorage.setItem("lookup", sym); } catch (e) {}
   if (!b.found && !x.daily) { page.appendChild(mk("div", "card empty", `${sym}: 수집 기록이 없습니다 (유니버스 $0.2~$10 밖이거나 아직 수집 전)`)); return; }
@@ -1623,9 +1627,33 @@ async function lookup(sym) {
       rows.slice(1).map((r, i) => { const p0 = rows[i][4], c = r[4];
         return [[r[0].slice(5)], [fmtPx(c), "num"], [fmtPct((c / p0 - 1) * 100), "num " + (tone(c - p0) || "")], [fmtQty(r[5]), "num"]]; }).reverse(), "");
   } else cD.appendChild(mk("div", "empty", "일봉 기록 없음"));
+  const ac = acc || {};
+  const cAc = scard(page, 0, "매집 지표", "sc-1", "일봉 기준 · OBV·CMF·MFI·RVOL");
+  if (!ac.ok) cAc.hidden = true;
+  else {
+    const yn = v => v === true ? "상승" : v === false ? "하락" : "-";
+    const cls = v => v === true ? "pos" : v === false ? "neg" : "";
+    const cmfC = ac.cmf_20 >= 0.1 ? "pos" : ac.cmf_20 <= -0.1 ? "neg" : "";
+    const udC = ac.updown_10 >= 1.5 ? "pos" : ac.updown_10 < 1 ? "neg" : "";
+    const sC = ac.short_ratio != null && ac.short_5d ? (ac.short_ratio < ac.short_5d ? "pos" : "neg") : "";
+    const rows = [
+      [["OBV 20일"], [yn(ac.obv_20_rise), cls(ac.obv_20_rise)], [yn(ac.obv_20_rise), cls(ac.obv_20_rise)]],
+      [["A/D 20일"], [yn(ac.ad_20_rise), cls(ac.ad_20_rise)], [yn(ac.ad_20_rise), cls(ac.ad_20_rise)]],
+      [["CMF 20일"], [ac.cmf_20 == null ? "-" : ac.cmf_20.toFixed(3), cmfC], [ac.cmf_20 >= 0.1 ? "매집" : ac.cmf_20 <= -0.1 ? "분산" : "중립", cmfC]],
+      [["상승/하락 거래량(10일)"], [ac.updown_10 == null ? "-" : ac.updown_10.toFixed(2) + "배", udC], [ac.updown_10 >= 1.5 ? "매집" : ac.updown_10 < 1 ? "분산" : "중립", udC]],
+      [["RVOL"], [ac.rvol == null ? "-" : ac.rvol.toFixed(1) + "배", ac.rvol >= 3 ? "pos" : ""], [ac.rvol >= 3 ? "급증" : "보통", ac.rvol >= 3 ? "pos" : ""]],
+      [["MFI 14"], [ac.mfi_14 == null ? "-" : String(Math.round(ac.mfi_14)), ac.mfi_14 < 20 ? "neg" : ac.mfi_14 > 80 ? "pos" : ""], [ac.mfi_14 < 20 ? "과매도" : ac.mfi_14 > 80 ? "과열" : "중립", ac.mfi_14 < 20 ? "neg" : ac.mfi_14 > 80 ? "pos" : ""]],
+      [["앵커드 VWAP(20일) 대비"], [ac.vwap_gap_pct == null ? "-" : fmtPct(ac.vwap_gap_pct), tone(ac.vwap_gap_pct)], [ac.vwap_gap_pct > 0 ? "위" : "아래", tone(ac.vwap_gap_pct)]],
+      [["공매도 비율"], [ac.short_ratio == null ? "-" : Math.round(ac.short_ratio * 100) + "%", sC], [sC === "pos" ? "감소" : sC === "neg" ? "증가" : "-", sC]],
+      [["내부자 매수(180일)"], [ac.insider_180d ? "$" + fmtQty(ac.insider_180d) : "-", ac.insider_180d ? "pos" : ""], [ac.insider_180d ? "매수" : "-", ac.insider_180d ? "pos" : ""]],
+    ];
+    const t = mk("table", "scr"), w = mk("div", "scr-wrap"); w.appendChild(t); cAc.appendChild(w);
+    table2(t, [["지표"], ["값", 1], ["신호"]], rows, "");
+    cAc.appendChild(mk("div", "sub", "체결 방향·다크풀·13D/13F는 아직 수집 안 함"));
+  }
   // ---- 차트 분석: 켜진 신호 + 그 신호의 과거 적중 배수 (pennybot/chartlib.py)
   const ca = x.chart;
-  const cA = scard(page, 0, "차트 분석", "sc-2", ca ? `${ca.d} 종가 기준 · 일봉 신호별 다음 날 급등 확률` : "");
+  const cA = scard(page, 0, "차트 분석", "sc-wide", ca ? `${ca.d} 종가 기준 · 일봉 신호별 다음 날 급등 확률` : "");
   if (!ca) cA.hidden = true;
   else {
     kvGrid(cA, [["추세", ca.trend, /정배열|위/.test(ca.trend) ? "pos" : /역배열|아래/.test(ca.trend) ? "neg" : ""],
