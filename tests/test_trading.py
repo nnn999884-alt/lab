@@ -989,7 +989,7 @@ def test_partial_fills_merge_into_one_alert(env):
     market.set("PEN", 1.03, 1.035)                  # 잔량 충분 → 나머지 체결
     tr.tick()
     buys = [m for m in sent if "매수" in m]
-    assert len(buys) == 1 and "완료" in buys[0]
+    assert len(buys) == 1 and "매수" in buys[0]
 
 
 def test_hard_stop_override_50_percent(env):

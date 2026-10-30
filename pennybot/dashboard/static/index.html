@@ -885,6 +885,10 @@ table.ca-tbl tr.off .ca-fill { opacity: .35; }
       <div class="set-list" id="set-strats"></div>
     </section>
     <section class="card">
+      <div class="pre-head"><h2><i class="ic ic-sliders" aria-hidden="true"></i>봇 전략</h2><span class="sub" style="margin:0">끄면 그 전략의 신규 매수만 멈춥니다</span></div>
+      <div class="set-list" id="set-bot-strats"></div>
+    </section>
+    <section class="card">
       <div class="pre-head"><h2><i class="ic ic-bell" aria-hidden="true"></i>텔레그램 알림</h2><span class="sub" style="margin:0">종류별로 켜고 끄기 · 대시보드 기록은 계속</span></div>
       <div class="set-list" id="set-alerts"></div>
     </section>
@@ -2670,6 +2674,17 @@ document.querySelectorAll("#hist-exit button").forEach(b => b.onclick = () => {
   delete _seen.hist; loadHist();
 });
 
+
+async function loadBotStrats() {
+  const box = $("set-bot-strats"); if (!box) return;
+  const rows = await api("/api/strategies");
+  box.replaceChildren();
+  rows.filter(r => r.config_enabled).forEach(r => {
+    const desc = r.auto_disabled ? "자동 정지 (최근 성적 음수)" : r.toggle ? "켜짐 · 신규 매수 중" : "꺼짐";
+    toggleRow(box, r.strategy_name || r.strategy, desc, r.toggle, on => control({ strategy: r.strategy, enabled: on }));
+  });
+}
+
 async function control(body) {
   try { await api("/api/control", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }); }
   catch (e) { alert("제어 실패: " + e.message); }
@@ -2728,6 +2743,7 @@ function showTab(t, keepScroll) {
   try { localStorage.setItem("tab", t); } catch (e) {}
   if (location.hash !== "#" + t) history.replaceState(null, "", location.pathname + location.search + "#" + t);
   if (!keepScroll) window.scrollTo(0, 0);
+  if (t === 'settings') loadBotStrats();
   redrawAll();
 }
 document.querySelectorAll("#tabs button").forEach(b => b.onclick = () => showTab(b.dataset.tab));
