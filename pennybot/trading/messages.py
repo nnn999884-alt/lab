@@ -119,20 +119,21 @@ def info_block(stats: dict | None = None, brief: dict | None = None, reason: str
 
 def buy_filled(t: dict, qty: int, price: float, session: str, info: list[str] | None = None, name: str | None = None,
                filled: int | None = None, planned: int | None = None) -> str:
-    """매수 체결 알림. 모든 알림 공통: 아이콘·사건·종목 / 숫자 / 맥락 순."""
     total = filled if filled is not None else qty
     planned = planned if planned is not None else total
-    head = f"🟢 매수 {'중' if total < planned else '완료'} · {sym_s(t['symbol'], name)}"
-    if total < planned:
-        head += f" · {total}/{planned}주"
-    lines = [head, f"💵 {px(price)} · {total}주 · 총 {usd(total * price)}"]
-    bits = []
-    if t.get("target") and price:
-        bits.append(f"🎯 익절 {px(t['target'])} ({pct((t['target'] / price - 1) * 100)})")
-    if t.get("stop") and price:
-        bits.append(f"🛑 손절 {px(t['stop'])} ({pct((t['stop'] / price - 1) * 100)})")
-    bits.append(f"{_strat(t)}/{_sess(session)}")
-    lines.append(" · ".join(bits))
+    head = f"🟢 {sym_s(t['symbol'], name)} 매수" + (" 중" if total < planned else "")
+    lines = [head + (f" · {total}/{planned}주" if total < planned else ""),
+             f"{px(price)} · {total}주 · 총 {usd(total * price)} · {_sess(session)}"]
+    if t.get("target") or t.get("stop"):
+        lines += ["", "🎯 익절·손절"]
+        if t.get("target"):
+            lines.append(f"익절 {px(t['target'])} ({pct((t['target'] / price - 1) * 100)})")
+        if t.get("stop"):
+            lines.append(f"손절 {px(t['stop'])} ({pct((t['stop'] / price - 1) * 100)})")
+    entry = f"{_strat(t)}/{_sess(session)}"
+    if t.get("reason"):
+        entry += f" · {t['reason'][:60]}"
+    lines += ["", "🧭 진입", entry]
     return "\n".join(lines + (info or []))
 
 
