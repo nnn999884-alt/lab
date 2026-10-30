@@ -12,8 +12,8 @@ def test_first_line_names_event_and_symbol():
     assert msg.buy_filled(T, 120, 1.2345, "DAY").split("\n")[0] == "🟢 매수 완료 · PENX"
     assert msg.buy_filled(T, 50, 1.2345, "DAY", filled=50, planned=120).split("\n")[0] == "🟢 매수 중 · PENX · 50/120주"
     assert msg.scaled_out(T, 60, 1.38).split("\n")[0] == "🟡 분할 익절 · PENX"
-    assert msg.closed(T).split("\n")[0] == "🔵 청산 · PENX · 익절"
-    assert msg.closed({**T, "pnl": -5.0, "pnl_pct": -3.0, "exit_reason": "손절"}).startswith("🔴 청산 · PENX · 손절")
+    assert msg.closed(T).split("\n")[0] == "🔵 PENX 청산"
+    assert msg.closed({**T, "pnl": -5.0, "pnl_pct": -3.0, "exit_reason": "손절"}).startswith("🔴 PENX 손절")
     assert msg.backstop_fired(T).startswith("🛑 서버 손절 안전망 · PENX")
 
 
@@ -21,7 +21,7 @@ def test_name_appended_when_known_omitted_when_not():
     assert msg.buy_filled(T, 120, 1.2345, "DAY", name="페닉스").split("\n")[0] == "🟢 매수 완료 · PENX(페닉스)"
     assert msg.buy_filled(T, 120, 1.2345, "DAY").split("\n")[0] == "🟢 매수 완료 · PENX"
     assert msg.scaled_out(T, 60, 1.38, name="페닉스").split("\n")[0] == "🟡 분할 익절 · PENX(페닉스)"
-    assert msg.closed(T, name="페닉스").split("\n")[0] == "🔵 청산 · PENX(페닉스) · 익절"
+    assert msg.closed(T, name="페닉스").split("\n")[0] == "🔵 PENX(페닉스) 청산"
     assert msg.backstop_fired(T, name="페닉스").startswith("🛑 서버 손절 안전망 · PENX(페닉스)")
     assert msg.sym_s("PENX", None) == "PENX" and msg.sym_s("PENX", "페닉스") == "PENX(페닉스)"
 
