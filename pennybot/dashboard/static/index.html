@@ -2329,6 +2329,8 @@ $("bot-wrap").addEventListener("toggle", () => { if ($("bot-wrap").open) { delet
     vt.forEach(x => body.appendChild(x));
     det.addEventListener("toggle", () => { if (det.open) { delete _seen.vt; loadVTrade(); } });
   } }
+{ const t = document.querySelector('.tab[data-tab="trade"]'); const chart = $("strat-chart") && $("strat-chart").closest("section");
+  if (t && chart) t.appendChild(chart); }
 { const t = document.querySelector('.tab[data-tab="trade"]'); const bot = $("bot-wrap"); const racct = $("racct");
   if (t && bot && racct && racct.parentElement === t) t.insertBefore(bot, racct.nextSibling);
   if (bot) bot.open = true; }
