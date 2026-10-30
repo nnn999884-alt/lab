@@ -6,7 +6,8 @@
 from __future__ import annotations
 
 from ..sessions import AFTER, DAY, PRE, REGULAR
-from .strategies import Ctx, Plan, Scalp, SteadyTrend, Strategy
+from .strategies import (Ctx, DayDip, DayIgnition, DilutionCatalyst, Plan, RegularMomentum, RunnerOvernight,
+                         Scalp, SteadyTrend, Strategy)
 from .setups import Accumulation, News, Reversal, SessionGap, Squeeze
 
 
@@ -43,14 +44,14 @@ class Group(Strategy):
 
 class Pullback(Group):
     name = "pullback"
-    SOURCES = (Scalp, SteadyTrend, SessionGap, Accumulation)
+    SOURCES = (Scalp, SteadyTrend, SessionGap, Accumulation, RegularMomentum)
 
 
 class Rebound(Group):
     name = "rebound"
-    SOURCES = (Reversal,)
+    SOURCES = (Reversal, DayDip)
 
 
 class Surge(Group):
     name = "surge"
-    SOURCES = (News, Squeeze)
+    SOURCES = (News, Squeeze, RunnerOvernight, DayIgnition, DilutionCatalyst)
