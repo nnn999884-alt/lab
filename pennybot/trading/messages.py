@@ -109,9 +109,6 @@ def info_block(stats: dict | None = None, brief: dict | None = None, reason: str
     evs = [e for e in b.get("events") or [] if e.get("summary") or e.get("title")][:2]
     for ev in evs:
         L.append(f"📰 {ev['ts'][5:10]} " + (ev.get("summary") or ev.get("title") or "")[:120])
-    if b.get("halts"):
-        h = b["halts"][0]
-        L.append(f"⏸ 정지 {h['halt_ts'][5:16].replace('T', ' ')} ET {h['reason_ko']}")
     if reason:
         L.append(f"💬 {reason[:140]}")
     return ([""] + L) if L else []
