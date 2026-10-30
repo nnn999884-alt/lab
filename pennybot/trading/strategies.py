@@ -93,7 +93,8 @@ class Ctx:
 
 
 FLOW_KO = {"burst": "거래 터짐", "steady": "꾸준한 거래 유입", "after_move": "애프터 누적 상승",
-           "bottom_bounce": "바닥 재반등", "early20": "정규장 전 +20% 돌파", "flow2": "2차 거래대금 재유입"}
+           "bottom_bounce": "바닥 재반등", "early20": "정규장 전 +20% 돌파", "flow2": "2차 거래대금 재유입",
+           "spike_up": "1분봉 급등"}
 
 
 def day_context(sym: str, ctx: Ctx) -> dict | None:

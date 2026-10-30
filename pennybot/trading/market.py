@@ -176,9 +176,14 @@ class MarketView:
                 "direction")
         return [dict(zip(keys, r)) for r in rows]
 
-    def recent_flow(self, since: datetime, kinds=("burst", "flow2", "after_move", "bottom_bounce", "early20", "steady")) -> list[dict]:
-        """수집기가 실시간 체결로 잡아낸 '수급 붙음' 신호 (거래 터짐·애프터 누적·바닥 재반등·+20% 돌파) —
-        장중 눌림 없는 단타용 진입 트리거. 최신 것 먼저."""
+    def recent_flow(self, since: datetime, kinds=("burst", "flow2", "after_move", "bottom_bounce", "early20",
+                                                 "steady", "spike_up")) -> list[dict]:
+        """수집기가 실시간 체결로 잡아낸 '수급 붙음' 신호 (거래 터짐·애프터 누적·바닥 재반등·+20% 돌파·1분봉 급등) —
+        장중 눌림 없는 단타용 진입 트리거. 최신 것 먼저.
+
+        spike_up 은 poll_prices 가 **유니버스 전체**를 60초마다 훑으며 +4% 이상 튄 종목에 붙이는 이벤트다
+        (burst·steady 는 감시 목록 120종목 안에서만 뜬다). 이걸 빼면 유니버스에서 움직이는 종목 대부분을
+        매매 엔진이 아예 못 본다 — 2026-10-30 하루만 봐도 spike_up 291종목 vs 봇이 스캔한 36종목이었다."""
         q = ",".join("?" * len(kinds))
         rows = self.q(f"SELECT symbol, kind, ts, text, value FROM events WHERE kind IN ({q}) AND ts >= ? "
                      "ORDER BY ts DESC", (*kinds, _utc(since)))
