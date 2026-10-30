@@ -2173,7 +2173,15 @@ async function loadReasons() {
 /* ---------- 가상 매매 기록 ---------- */
 const vret = r => { const px = r.status === "CLOSED" ? r.exit_price : r.last; return px && r.entry ? (px / r.entry - 1) * 100 : null; };
 async function loadVs() {                                   // 홈: 요약 + 보유·대기
-  const rows = await api("/api/vsignals?limit=300");
+  const [pos, trs] = await Promise.all([api("/api/positions"), api("/api/trades?limit=60")]);
+  const rows = [
+    ...pos.map(x => ({ id: "p" + x.id, symbol: x.symbol, name: x.name, strat: "모의", status: "OPEN",
+      entry: x.entry_price, last: x.last, high: x.high_water, low: x.entry_price, opened: x.entry_ts,
+      reason: x.reason, tp: x.target, sl: x.stop })),
+    ...trs.filter(x => x.status === "CLOSED").map(x => ({ id: "t" + x.id, symbol: x.symbol, name: x.name, strat: "모의",
+      status: "CLOSED", entry: x.entry_price, exit_price: x.exit_price, exit_reason: x.exit_reason, opened: x.entry_ts,
+      closed: x.exit_ts, high: x.high_water, low: x.entry_price, reason: x.reason })),
+  ];
   if (unchanged("vs", rows)) return;
   const nw = rows.filter(r => r.strat), done = nw.filter(r => r.status === "CLOSED");
   const openN = rows.filter(r => r.status === "OPEN").length, waitN = rows.filter(r => r.status === "ORDER").length;
@@ -2185,7 +2193,7 @@ async function loadVs() {                                   // 홈: 요약 + 보
   drawVs();
 }
 let vsRows = [], vsShown = 6;
-const STRAT_NAME = { S1: "① VWAP 눌림", S2: "② 프리 추격", S3: "③ 깊은 털기", S4: "④ 신호가 눌림", S5: "⑤ 5분 눌림", S6: "⑥ 3분반 눌림", "이전": "이전 규칙" };
+const STRAT_NAME = { "모의": "모의매매", S1: "① VWAP 눌림", S2: "② 프리 추격", S3: "③ 깊은 털기", S4: "④ 신호가 눌림", S5: "⑤ 5분 눌림", S6: "⑥ 3분반 눌림", "이전": "이전 규칙" };
 const untilS = (a, b) => { const m = Math.max(0, Math.round((new Date(b) - new Date(a)) / 60000)); return m >= 60 ? `${Math.floor(m / 60)}시간 ${m % 60}분 뒤` : `${m}분 뒤`; };
 const vsOpen = new Set();
 function drawVs() {
