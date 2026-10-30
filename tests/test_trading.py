@@ -435,15 +435,6 @@ def test_kill_switch_blocks_entries_and_flatten_sells(env):
     assert ctl.load()["flatten"] is False
 
 
-def test_regime_gate(env):
-    tr, market, mv, clock, j, ctl, ex = env
-    market.set("PEN", 1.03, 1.035)
-    market.set("IWM", 196.0, 196.2)           # −2%
-    tr.tick()
-    assert j.q("SELECT COUNT(*) AS n FROM trades")[0]["n"] == 0
-    assert "IWM" in tr.status["regime"]
-
-
 def test_runner_filters(env):
     tr, market, mv, clock, j, ctl, ex = env
     mv.run = [

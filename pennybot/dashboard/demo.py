@@ -80,7 +80,7 @@ def build(state_dir: str | Path = "state_demo", seed: int = 7) -> tuple[str, str
                     "symbol": rnd.choice(syms), "ok": int(i < 3), "reason": reasons_ok[i] if i < 3 else rnd.choice(reasons_no),
                     "score": rnd.uniform(0, 50), "price": rnd.uniform(0.5, 4)} for i in range(18)])
     j.beat("trader", {"session": "DAY", "trade_date": now.date().isoformat(), "mode": "paper", "working": 1,
-                      "regime": "정상", "last_scan": now_iso(now), "candidates": 3, "mismatch": {}}, now)
+                      "last_scan": now_iso(now), "candidates": 3, "mismatch": {}}, now)
 
     # 수집 현황: 세션별 호가 확보율 (데이마켓이 가장 낮게)
     td = now.date().isoformat()

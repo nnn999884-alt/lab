@@ -90,8 +90,6 @@ trading:
   max_open_positions: 8
   max_daily_loss_usd: 150
   auto_disable_trades: 20       # 최근 20회 평균 손익이 음수면 그 전략 자동 정지
-  regime_symbol: IWM
-  regime_drop_pct: 1.5          # 데이마켓 중 IWM −1.5% 이하면 신규 매수 중단
   max_weekly_loss_usd: 400      # 최근 7일 실현 손실 한도
   loss_streak_stop: 4           # 4연속 손실이면
   loss_streak_cooldown_hours: 24  # 24시간 신규 매수 쉼

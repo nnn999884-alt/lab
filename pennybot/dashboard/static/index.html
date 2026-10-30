@@ -813,7 +813,7 @@ table.ca-tbl tr.off .ca-fill { opacity: .35; }
       <div class="card tile"><div class="label">계좌 평가액</div><div class="value" id="t-equity">-</div><div class="note" id="t-cash"></div></div>
       <div class="card tile"><div class="label">오늘 실현 손익</div><div class="value" id="t-daypnl">-</div><div class="note" id="t-date"></div></div>
       <div class="card tile"><div class="label">보유·진행 중</div><div class="value" id="t-open">-</div><div class="note" id="t-working"></div></div>
-      <div class="card tile"><div class="label">시장 상태</div><div class="value" id="t-regime" style="font-size:16px">-</div><div class="note" id="t-scan"></div></div>
+      <div class="card tile"><div class="label">후보·스캔</div><div class="value" id="t-cands">-</div><div class="note" id="t-scan"></div></div>
     </div>
 
     <section class="card">
@@ -1261,8 +1261,8 @@ async function loadOverview() {
   $("t-date").textContent = ov.trade_date ? `영업일 ${ov.trade_date}` : "";
   $("t-open").textContent = ov.open_trades;
   $("t-working").textContent = `걸린 주문 ${ov.working_orders}건`;
-  $("t-regime").textContent = ov.regime || "-";
-  $("t-scan").textContent = ov.trader.info.last_scan ? `마지막 스캔 ${kst(ov.trader.info.last_scan)} · 후보 ${ov.trader.info.candidates ?? 0}` : "데이마켓에서 5분마다 스캔";
+  $("t-cands").textContent = ov.trader.info.candidates ?? 0;
+  $("t-scan").textContent = ov.trader.info.last_scan ? `마지막 스캔 ${kst(ov.trader.info.last_scan)}` : "데이마켓에서 5분마다 스캔";
   if (ov.trader.info.stream) $("t-scan").textContent += ` · 실시간 ${ov.trader.info.stream}`;
   const mm = Object.entries(ov.mismatch || {});
   const box = $("mismatch");

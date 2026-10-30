@@ -80,7 +80,6 @@ class Data:
             [0]["n"] if Path(self.trading_db).exists() else 0,
             "working_orders": info.get("working", 0),
             "mismatch": info.get("mismatch") or {},
-            "regime": info.get("regime"),
         }
 
     def symbol(self, sym: str) -> dict:

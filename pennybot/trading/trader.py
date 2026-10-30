@@ -820,19 +820,6 @@ class Trader:
             self.control.update(flatten=False)
 
     # ---------- 진입 ----------
-    def _regime_ok(self, ctx: Ctx) -> tuple[bool, str]:
-        if (self.tcfg.regime_drop_pct or 0) <= 0:
-            return True, ""
-        sym = self.tcfg.regime_symbol
-        try:
-            pc = self.mv.prev_close(sym, ctx.trade_date)
-            b = self.ex.book(sym)
-        except Exception as e:
-            return True, f"시장 상태 확인 실패({e}) → 통과"
-        if pc and b.mid and (b.mid / pc - 1) * 100 <= -self.tcfg.regime_drop_pct:
-            return False, f"{sym} 데이마켓 {(b.mid / pc - 1) * 100:+.1f}%"
-        return True, ""
-
     def _warning(self, symbol: str) -> str | None:
         """토스 매수 유의사항 (VI 발동·투자경고·정리매매 등). 조회 실패면 통과."""
         fn = getattr(self.mv, "warnings", None)
@@ -923,10 +910,6 @@ class Trader:
         open_trades = self.journal.open_trades()
         ctx = Ctx(now, trade_date, session, self.cal, self.mv, self.tcfg, fund=self.fund,
                   held={t["symbol"] for t in open_trades})
-        ok, why = self._regime_ok(ctx)
-        self.status["regime"] = why or "정상"
-        if not ok:
-            log.info("신규 매수 중단: %s", why)
         plans = []
         for name, strat in self.strategies.items():
             enabled, why = self.risk.strategy_enabled(name)
@@ -942,12 +925,6 @@ class Trader:
                     "score": p.score, "price": p.price}
 
         rows = [row(p, p.ok, p.reason) for p in plans]
-        if not ok:
-            rows = [row(p, False, f"리스크: 시장 상태 ({why})") for p in plans]
-            self.journal.log_signals(rows)
-            self.status["last_scan"] = now.isoformat(timespec="seconds")
-            self.status["candidates"] = 0
-            return
         if any(v["bot"] > v["account"] for v in self.mismatch.values()):
             rows += [row(p, False, "잔고 불일치 → 신규 매수 중단") for p in plans if p.ok]
             plans = [p for p in plans if not p.ok]
@@ -1085,7 +1062,7 @@ class Trader:
         st = self.status
         mode = "실거래" if st.get("mode") == "live" else "모의매매"
         lines = [f"📋 상태 · {mode} · {SESSION_KO.get(st.get('session'), st.get('session') or '-')}",
-                 f"영업일 {st.get('trade_date') or '-'} · 걸린 주문 {st.get('working', 0)}건 · 시장 {st.get('regime', '-')}"]
+                 f"영업일 {st.get('trade_date') or '-'} · 걸린 주문 {st.get('working', 0)}건"]
         if self.control.load()["kill"]:
             lines.append("⛔ 신규 매수 중단 상태 (/재개 로 켜기)")
         held = self.journal.open_trades()
