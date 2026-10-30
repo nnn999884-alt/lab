@@ -925,7 +925,6 @@ class Trader:
         self.status["regime"] = why or "정상"
         if not ok:
             log.info("신규 매수 중단: %s", why)
-            return
         plans = []
         for name, strat in self.strategies.items():
             enabled, why = self.risk.strategy_enabled(name)
@@ -941,6 +940,12 @@ class Trader:
                     "score": p.score, "price": p.price}
 
         rows = [row(p, p.ok, p.reason) for p in plans]
+        if not ok:
+            rows = [row(p, False, f"리스크: 시장 상태 ({why})") for p in plans]
+            self.journal.log_signals(rows)
+            self.status["last_scan"] = now.isoformat(timespec="seconds")
+            self.status["candidates"] = 0
+            return
         if any(v["bot"] > v["account"] for v in self.mismatch.values()):
             rows += [row(p, False, "잔고 불일치 → 신규 매수 중단") for p in plans if p.ok]
             plans = [p for p in plans if not p.ok]
