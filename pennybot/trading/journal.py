@@ -49,6 +49,7 @@ def now_iso(ts: datetime | None = None) -> str:
 class Journal:
     def __init__(self, path: str | Path, mode: str = "paper"):
         Path(path).parent.mkdir(parents=True, exist_ok=True)
+        self.path = Path(path)
         self.db = sqlite3.connect(str(path), check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")

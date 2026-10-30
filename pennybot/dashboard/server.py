@@ -689,7 +689,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         if not self._authorized():
             return
-        if urlparse(self.path).path not in ("/api/control", "/api/settings"):
+        if urlparse(self.path).path not in ("/api/control", "/api/settings", "/api/mode"):
             return self._json({"error": "not found"}, 404)
         origin = self.headers.get("Origin") or ""
         host = self.headers.get("Host") or ""
@@ -702,6 +702,24 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
         except ValueError:
             return self._json({"error": "잘못된 JSON"}, 400)
+        if urlparse(self.path).path == "/api/mode":
+            import os
+            mode = body.get("mode")
+            if mode not in ("paper", "live"):
+                return self._json({"error": "mode 는 paper 또는 live"}, 400)
+            if mode == "live":
+                if os.environ.get("PENNYBOT_LIVE_CONFIRM") != "YES":
+                    return self._json({"error": ".env 에 PENNYBOT_LIVE_CONFIRM=YES 가 필요합니다."}, 403)
+                n = self.data.t("SELECT COUNT(*) AS n FROM trades WHERE status IN ('PENDING','OPEN','EXITING')")[0]["n"]
+                if n:
+                    return self._json({"error": f"보유/진행 중 {n}건 — 모두 정리된 뒤에 전환할 수 있습니다."}, 400)
+            cfg = Path("config.yaml")
+            txt = cfg.read_text(encoding="utf-8")
+            txt = re.sub(r"(?m)^mode:.*$", f"mode: {mode}", txt, count=1)
+            cfg.write_text(txt, encoding="utf-8")
+            Path(self.data.cfg.state_dir, "restart.flag").write_text(mode, encoding="utf-8")
+            log.warning("모드 전환 요청: %s", mode)
+            return self._json({"mode": mode, "restart": True})
         if urlparse(self.path).path == "/api/settings":
             from .. import settings
             d = settings.save(self.data.cfg.state_dir, body)

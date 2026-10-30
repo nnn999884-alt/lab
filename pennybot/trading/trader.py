@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from datetime import date, datetime
 from datetime import time as dtime
 from datetime import timedelta, timezone
@@ -151,6 +152,12 @@ class Trader:
 
     # ---------- 틱 ----------
     def tick(self) -> None:
+        flag = Path(self.journal.path).parent / "restart.flag"
+        if flag.exists():
+            flag.unlink(missing_ok=True)
+            log.warning("설정 변경 → 봇 재시작 (run_forever)")
+            import os
+            os._exit(1)
         now = self.clock()
         trade_date, session = self.cal.classify(now)
         self.ex.sync()

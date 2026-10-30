@@ -2690,6 +2690,15 @@ async function control(body) {
   catch (e) { alert("제어 실패: " + e.message); }
   refresh();
 }
+$("mode").title = "클릭하면 실거래/모의매매 전환";
+$("mode").onclick = async () => {
+  const cur = (ov && ov.mode) || "paper", next = cur === "live" ? "paper" : "live";
+  if (next === "live" && !confirm("실제 주문이 나갑니다.\n실거래로 전환할까요? (.env 승인 + 보유 0 필요)")) return;
+  const r = await fetch("/api/mode", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ mode: next }) });
+  const j = await r.json();
+  if (!r.ok) { alert(j.error || r.status); return; }
+  alert(`모드: ${next} — 봇이 재시작됩니다 (30초 내)`);
+};
 $("kill-btn").onclick = () => control({ kill: !(ov && ov.kill) });
 $("flatten-btn").onclick = () => { if (confirm("보유 종목을 지금 전량 청산할까요? (지정가로 매도하고, 정규장에서 안 팔리면 시장가)")) control({ flatten: true }); };
 $("set-block").onsubmit = e => {
