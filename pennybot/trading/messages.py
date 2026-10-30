@@ -138,11 +138,16 @@ def buy_filled(t: dict, qty: int, price: float, session: str, info: list[str] | 
 
 def scaled_out(t: dict, qty: int, price: float, info: list[str] | None = None, name: str | None = None) -> str:
     gain = (price / t["entry_price"] - 1) * 100 if t.get("entry_price") else None
-    return "\n".join([
-        f"🟡 분할 익절 · {sym_s(t['symbol'], name)}",
-        f"💵 {qty}주 × {px(price)} ({pct(gain)}) · 남은 {t['remaining']}주",
-        f"🛡 손절을 본전 {px(t.get('entry_price'))}로 · 고점 대비 −{t.get('trail_pct') or 0:g}% 트레일링",
-    ] + (info or []))
+    lines = [f"🟡 분할 익절 · {sym_s(t['symbol'], name)}",
+             f"{pct(gain)} · {qty}주 매도 · 잔여 {t['remaining']}주",
+             "",
+             "💰 결과",
+             f"{qty}주 × {px(price)} ({pct(gain)})",
+             "",
+             "🛡 손절",
+             f"손절선 본전 {px(t.get('entry_price'))}로 이동",
+             f"트레일링 고점 대비 −{t.get('trail_pct') or 0:g}%"]
+    return "\n".join(lines + (info or []))
 
 
 def closed(t: dict, info: list[str] | None = None, name: str | None = None) -> str:
