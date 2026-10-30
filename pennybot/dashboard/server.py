@@ -399,7 +399,7 @@ class Data:
         return rows
 
     def trades(self, limit: int) -> list[dict]:
-        rows = self.t("SELECT * FROM trades WHERE status IN ('CLOSED','CANCELED') ORDER BY id DESC LIMIT ?", (limit,))
+        rows = self.t("SELECT * FROM trades WHERE status='CLOSED' ORDER BY id DESC LIMIT ?", (limit,))
         names, ko = self._names(), self._strat_names()
         for r in rows:
             r["name"] = names.get(r["symbol"])
