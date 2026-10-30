@@ -398,18 +398,25 @@ def alert_text(sym: str, name: str | None, day: dict, lv: dict, session_ko: str,
         quote_bits.append(f"호가 +10%안 {money_s(m['ask10'])} ({'얇음 ✅' if thin else '두꺼움'})")
     tip = {"🔴 추격 주의": "과열 — 추격 금지", "🟠 진행 중": "눌림 뒤 재상승 확인",
            "🟡 움직이기 시작": "거래량 지속 확인", "🟢 아직 조용": "지켜보기"}.get(j["state"], "")
-    return "\n".join(x for x in [
-        _head("🚨 급등 전조", sym, name, f" [{g}등급]" if g else ""),
-        f"💵 {px(m['price'])} ({pct(m['chg'])}) · {session_ko} · {j['state']}",
-        f"📊 거래 {j['flow']} · 1시간 {m.get('vol_x', 0):.1f}배 · 오늘 {money_s(m.get('dollar_today'))}",
-        f"3분 {money_s(m.get('dollar_3m'))}" + (f" · {' · '.join(quote_bits)}" if quote_bits else ""),
-        f"📉 전조 {day['score']}점" + (f" — {' · '.join(on_d[:5])}" if on_d else ""),
-        f"⚠️ 희석: {' · '.join(risk_tags[:4])}" if risk_tags else "",
-        f"🏷 {' · '.join(good_tags[:4])}" if good_tags else "",
-        f"60일 고점 {pct(dm.get('dd60'))} · 전날 거래량 {times(dm.get('vol_ratio'))}"
-        f" · 변동폭 {dm.get('range30') or 0:.0f}% (위험 {j['risk']})",
-        f"💬 {tip}" if tip else "",
-    ] if x)
+    lines = [
+        _head("🚨 급등 전조", sym, name, f" · {g}등급" if g else ""),
+        f"💵 {px(m['price'])} ({pct(m['chg'])}) · {session_ko}",
+        f"{j['state']} · 거래 {j['flow']}",
+        "",
+        f"📊 1시간 {m.get('vol_x', 0):.1f}배 · 오늘 {money_s(m.get('dollar_today'))} · 3분 {money_s(m.get('dollar_3m'))}",
+    ]
+    if quote_bits:
+        lines.append(" · ".join(quote_bits))
+    lines.append(f"위치 60일 고점 {pct(dm.get('dd60'))} · 전날 거래량 {times(dm.get('vol_ratio'))}"
+                 f" · 변동폭 {dm.get('range30') or 0:.0f}%")
+    lines.append(f"📉 전조 {day['score']}점" + (f" — {' · '.join(on_d[:5])}" if on_d else ""))
+    if risk_tags:
+        lines += ["", "⚠️ " + " · ".join(risk_tags[:4])]
+    if good_tags:
+        lines.append("🏷 " + " · ".join(good_tags[:4]))
+    if tip:
+        lines += ["", f"💬 {tip}"]
+    return "\n".join(lines)
 
 
 def alert_buttons(sym: str, dashboard: str | None) -> list:
