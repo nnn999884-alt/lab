@@ -128,6 +128,11 @@ def classify(form: str, items: str, text: str, filed: date, accession: str = "")
         for e in out:
             if e.direction < 0:
                 e.amount = amt
+    kinds = {e.kind for e in out if e.accession == accession}
+    if "DELISTING_NOTICE" in kinds and "COMPLIANCE_REGAINED" in kinds:
+        keep = "COMPLIANCE_REGAINED" if re.search(r"regain(ed|s)? compliance", t, re.I) else "DELISTING_NOTICE"
+        out[:] = [e for e in out if e.accession != accession or e.kind not in ("DELISTING_NOTICE", "COMPLIANCE_REGAINED")
+                  or e.kind == keep]
     return out
 
 
