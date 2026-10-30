@@ -157,18 +157,12 @@ def closed(t: dict, info: list[str] | None = None, name: str | None = None) -> s
     held = _held(t)
     peak = (t["high_water"] / t["entry_price"] - 1) * 100 if t.get("high_water") and t.get("entry_price") else None
     qty = t.get("exited_qty") or t.get("qty") or 0
-    head = f"{icon} {sym_s(t['symbol'], name)} " + ("청산" if win else "손절")
+    head = f"{icon} {sym_s(t['symbol'], name)} 청산"
     lines = [head,
              f"{usd(pnl, sign=True)} ({pct(t.get('pnl_pct'))}) · {qty}주" + (f" · {held} 보유" if held else ""),
              "", "💰 결과",
              f"가격 {px(t.get('entry_price'))} → {px(t.get('exit_price'))}" + (f" (최고 {pct(peak)})" if peak is not None else ""),
              f"사유 {t.get('exit_reason') or '-'}"]
-    entry = t.get("entry_price") or 0
-    trail = t.get("trail_pct") or 0
-    if trail and t.get("high_water"):
-        lines += ["", "🛡 손절", f"트레일링 고점 {px(t['high_water'])} 대비 −{trail:g}%"]
-    elif t.get("stop") and entry:
-        lines += ["", "🛡 손절", f"손절선 {px(t['stop'])} (진입가 {pct((t['stop'] / entry - 1) * 100)})"]
     lines += ["", "🧭 진입", f"{_strat(t)} · {_sess(t.get('entry_session'))} → {_sess(t.get('exit_session'))}"]
     if t.get("reason"):
         lines.append(f"📋 매수 이유: {t['reason'][:80]}")
