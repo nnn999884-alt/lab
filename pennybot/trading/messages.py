@@ -89,7 +89,7 @@ def info_block(stats: dict | None = None, brief: dict | None = None, reason: str
     sh, bo = b.get("short") or {}, b.get("borrow")
     part = []
     if sh.get("ratio") is not None:
-        part.append(f"공매도 {sh['ratio'] * 100:.0f}%")
+        part.append(f"공매도 오늘 {sh['ratio'] * 100:.0f}%")
     if bo:
         part.append(f"대차 {bo['fee_rate']:.0f}%" + (f" ({qty_s(bo['available'])}주)" if bo.get("available") else ""))
     if b.get("ssr"):

@@ -153,7 +153,7 @@ class Squeeze(Strategy):
                 continue
             score = min(100.0, 40 + ratio * 50 + min(fee, 100) * 0.2 + (10 if dollar >= 5e6 else 0))
             out.append(_plan(ctx, self, sym, self._entry_price(b),
-                             f"공매도 {ratio:.0%} 2일 연속, 대차 {fee:.0f}%, SSR/RegSHO, 거래대금 ${dollar/1e6:.1f}M",
+                             f"공매도 2일 최소 {ratio:.0%}, 대차 연 {fee:.0f}%, SSR/RegSHO, 거래대금 ${dollar/1e6:.1f}M",
                              score))
         return out
 
