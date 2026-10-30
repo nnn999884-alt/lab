@@ -1245,7 +1245,7 @@ class Collector:
         dm = json.loads(met or "{}")
         m["presurge"], why = presurge(iso(now), tier_, m.get("price") and m["price"] / (1 + (m.get("chg") or 0) / 100),
                                       dm.get("vol_ratio"), m.get("chg"), session)
-        if not m["presurge"]:
+        if False:
             if self.notifier and self._on("burst"):
                 link = None
                 try:
@@ -1268,7 +1268,7 @@ class Collector:
         except Exception as e:
             log.debug("호가 실패 %s: %s", sym, e)
         m = lv["metrics"]
-        if self.notifier and self._on("presurge"):
+        if self.notifier:
             day = {"score": score, "signals": json.loads(sig or "[]"), "metrics": json.loads(met or "{}")}
             link = None
             try:
