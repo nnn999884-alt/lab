@@ -8,6 +8,7 @@ from __future__ import annotations
 from ..sessions import AFTER, DAY, PRE, REGULAR
 from .strategies import (Ctx, DayDip, DayIgnition, DilutionCatalyst, Plan, RegularMomentum, RunnerOvernight,
                          Scalp, SteadyTrend, Strategy)
+from .vpull import VirtualPullback
 from .setups import Accumulation, News, Reversal, SessionGap, Squeeze
 
 
@@ -44,7 +45,7 @@ class Group(Strategy):
 
 class Pullback(Group):
     name = "pullback"
-    SOURCES = (Scalp, SteadyTrend, SessionGap, Accumulation, RegularMomentum)
+    SOURCES = (Scalp, SteadyTrend, SessionGap, Accumulation, RegularMomentum, VirtualPullback)
 
 
 class Rebound(Group):

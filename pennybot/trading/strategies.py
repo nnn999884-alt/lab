@@ -42,7 +42,7 @@ STRATEGY_KO = {
     "rebound": "역추세 반등",
     "surge": "급등 추격",
     "pump": "급등 눌림",
-    "vpull": "가상 눌림",
+    "vpull": "VWAP 눌림",
 }
 SESSION_KO = {"DAY": "데이마켓", "PRE": "프리마켓", "REGULAR": "정규장", "AFTER": "애프터마켓", "CLOSED": "휴장"}
 LABEL = {"ATM_TERMINATED": "ATM 종료", "REGISTRATION_WITHDRAWN": "증자 등록 철회",
