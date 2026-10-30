@@ -880,7 +880,7 @@ table.ca-tbl tr.off .ca-fill { opacity: .35; }
       <div class="pre-head"><h2><i class="ic ic-pulse" aria-hidden="true"></i>시스템 상태</h2><span class="sub" style="margin:0" id="st-ts"></span></div>
       <div class="sym-stats" id="st-grid"></div>
     </section>
-    <section class="card">
+    <section class="card" hidden>
       <div class="pre-head"><h2><i class="ic ic-sliders" aria-hidden="true"></i>가상 매매 전략</h2><span class="sub" style="margin:0">끄면 그 전략은 새 주문을 안 냄 (보유 중인 건 계속 정리)</span></div>
       <div class="set-list" id="set-strats"></div>
     </section>
@@ -892,7 +892,7 @@ table.ca-tbl tr.off .ca-fill { opacity: .35; }
       <div class="pre-head"><h2><i class="ic ic-bell" aria-hidden="true"></i>텔레그램 알림</h2><span class="sub" style="margin:0">종류별로 켜고 끄기 · 대시보드 기록은 계속</span></div>
       <div class="set-list" id="set-alerts"></div>
     </section>
-    <section class="card">
+    <section class="card" hidden>
       <div class="pre-head"><h2><i class="ic ic-wallet" aria-hidden="true"></i>가상 계좌</h2><span class="sub" style="margin:0">매매 탭 손익 계산 기준 ($)</span></div>
       <form class="set-form" id="set-va">
         <label>시작 금액 <input type="number" id="set-cap" min="100" step="100"></label>
@@ -909,7 +909,7 @@ table.ca-tbl tr.off .ca-fill { opacity: .35; }
       <div class="chips" id="blocked-list" style="margin-top:8px"></div>
     </section>
     <section class="card">
-      <div class="pre-head"><h2><i class="ic ic-layers" aria-hidden="true"></i>옛 매매 봇 (모의 계좌)</h2><span class="sub" style="margin:0">예전 전략 4개로 도는 별도 프로그램 — 지금 쓰는 가상 매매와 무관</span></div>
+      <div class="pre-head"><h2><i class="ic ic-layers" aria-hidden="true"></i>안전장치 (킬스위치 · 전량 청산)</h2><span class="sub" style="margin:0">즉시 멈추거나 전량 청산할 때 사용합니다</span></div>
       <div class="controls">
       <button id="kill-btn" class="danger" aria-pressed="false">킬스위치 켜기</button>
       <button id="flatten-btn" class="danger">전량 청산</button>
