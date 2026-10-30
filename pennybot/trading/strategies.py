@@ -42,7 +42,6 @@ STRATEGY_KO = {
     "rebound": "역추세 반등",
     "surge": "급등 추격",
     "pump": "급등 눌림",
-    "vpull": "VWAP 눌림",
 }
 SESSION_KO = {"DAY": "데이마켓", "PRE": "프리마켓", "REGULAR": "정규장", "AFTER": "애프터마켓", "CLOSED": "휴장"}
 LABEL = {"ATM_TERMINATED": "ATM 종료", "REGISTRATION_WITHDRAWN": "증자 등록 철회",
@@ -564,7 +563,3 @@ ALL.update(SETUP_ALL)
 from .groups import Pullback, Rebound, Surge   # noqa: E402  (setups 를 합친 뒤 마지막에)
 
 ALL.update({cls.name: cls for cls in (Pullback, Rebound, Surge)})
-
-from .vpull import VirtualPullback   # noqa: E402
-
-ALL["vpull"] = VirtualPullback
