@@ -149,8 +149,10 @@ class Data:
                                    "stop": px * (1 - rp["stop_loss_pct"] / 100), "stop_pct": -rp["stop_loss_pct"],
                                    "target": px * (1 + rp["take_profit_pct"] / 100), "target_pct": rp["take_profit_pct"]}
         out["events"] = self.m("SELECT ts, kind, text, value FROM events WHERE symbol=? AND kind != 'filing' ORDER BY ts DESC LIMIT 30", (sym,))
-        out["vsignals"] = self.m("SELECT strat, status, opened, closed, entry, exit_price, exit_reason, high, low, last, tp, sl "
-                                 "FROM vsignals WHERE symbol=? ORDER BY id DESC LIMIT 20", (sym,))
+        out["vsignals"] = self.t("""SELECT strategy AS strat, status, entry_ts AS opened, exit_ts AS closed,
+            entry_price AS entry, exit_price AS exit_price, exit_reason, high_water AS high, entry_price AS low,
+            COALESCE((SELECT last FROM prices WHERE symbol=? ORDER BY ts DESC LIMIT 1), exit_price, entry_price) AS last,
+            target AS tp, stop AS sl FROM trades WHERE symbol=? ORDER BY id DESC LIMIT 20""", (sym, sym))
         return out
 
     def _rq(self):

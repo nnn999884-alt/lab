@@ -821,6 +821,8 @@ class Trader:
 
     # ---------- 진입 ----------
     def _regime_ok(self, ctx: Ctx) -> tuple[bool, str]:
+        if (self.tcfg.regime_drop_pct or 0) <= 0:
+            return True, ""
         sym = self.tcfg.regime_symbol
         try:
             pc = self.mv.prev_close(sym, ctx.trade_date)
