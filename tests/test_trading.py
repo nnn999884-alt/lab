@@ -44,6 +44,7 @@ class FakeMV:
         self.day_dollar = {}
         self.flow = []
         self.bars = []                            # bars_1m 대역: 최신 → 과거 [(open, close, volume)]
+        self.ohlc = None                          # (open, high, low, close, volume) 대역 (클라이맥스 테스트용)
 
     def prev_trade_date(self, d): return PREV
     def runners(self, d, min_pct=30.0): return self.run
@@ -62,6 +63,8 @@ class FakeMV:
         return [e for e in self.flow if e["kind"] in kinds]
     def _asof(self): return "9999"
     def q(self, sql, args):                       # bars_1m: 최신 → 과거 [(open, close, volume)]
+        if "high" in sql and "low" in sql:
+            return self.ohlc[:66] if self.ohlc is not None else []
         if "open" in sql:
             return self.bars[:66]
         return [(r[2],) for r in self.bars[:21]]
@@ -343,6 +346,63 @@ def test_decline_exit_ignores_sideways_drift_near_the_high(env):
     mv.bars = _dump_bars()
     clock[0] = et(14, 5)
     market.set("FLO", 2.04, 2.06)
+    tr.tick()
+    assert j.q("SELECT status FROM trades WHERE symbol='FLO'")[0]["status"] == "OPEN"
+
+
+def _climax_bars(close, high, vol=50_000.0):
+    """최근 1분 (open, high, low, close, volume) + 앞 30분 평소 거래량."""
+    head = [(2.10, high, 2.05, close, vol)]
+    tail = [(2.00, 2.01, 1.99, 2.00, 1_000.0) for _ in range(30)]
+    return head + tail
+
+
+def _set_climax(mv, close, high, vol=50_000.0):
+    mv.ohlc = _climax_bars(close, high, vol)
+    mv.bars = [(2.10, close, vol)] + [(2.00, 2.00, 1_000.0)] * 30
+
+
+def _climax_setup(env):
+    tr, market, mv, clock, j, ctl, ex = env
+    tr.tcfg.strategies["scalp"]["take_profit_pct_override"] = 50.0
+    _flo_entry(tr, market, mv, clock, j)
+    clock[0] = et(10, 5)
+    return tr, market, mv, clock, j
+
+
+def test_volume_climax_holds_when_volume_spikes_into_a_strong_close(env):
+    """거래량만 터지고 고가권에 마감한 상승은 클라이맥스가 아니다 (2026-10-31 조기 청산 사례)."""
+    tr, market, mv, clock, j = _climax_setup(env)
+    _set_climax(mv, close=2.24, high=2.25)
+    market.set("FLO", 2.24, 2.26)
+    tr.tick()
+    assert j.q("SELECT status FROM trades WHERE symbol='FLO'")[0]["status"] == "OPEN"
+
+
+def test_volume_climax_exits_on_blowoff_bar_with_long_upper_wick(env):
+    """+10% 이상 오른 뒤 거래량이 터지고 윗꼬리가 길면 매수 클라이맥스로 보고 판다."""
+    tr, market, mv, clock, j = _climax_setup(env)
+    _set_climax(mv, close=2.12, high=2.40)
+    market.set("FLO", 2.24, 2.26)
+    tr.tick()
+    t = j.q("SELECT status, exit_reason FROM trades WHERE symbol='FLO'")[0]
+    assert t["status"] == "CLOSED" and t["exit_reason"] == "거래량 클라이맥스"
+
+
+def test_volume_climax_needs_five_times_the_average_volume(env):
+    """거래량이 평소의 5배에 못 미치면 윗꼬리가 길어도 팔지 않는다."""
+    tr, market, mv, clock, j = _climax_setup(env)
+    _set_climax(mv, close=2.12, high=2.40, vol=2_000.0)
+    market.set("FLO", 2.24, 2.26)
+    tr.tick()
+    assert j.q("SELECT status FROM trades WHERE symbol='FLO'")[0]["status"] == "OPEN"
+
+
+def test_volume_climax_needs_ten_percent_gain(env):
+    """+10%에 못 미친 상승은 클라이맥스로 보지 않는다."""
+    tr, market, mv, clock, j = _climax_setup(env)
+    _set_climax(mv, close=2.12, high=2.40)
+    market.set("FLO", 2.14, 2.16)
     tr.tick()
     assert j.q("SELECT status FROM trades WHERE symbol='FLO'")[0]["status"] == "OPEN"
 

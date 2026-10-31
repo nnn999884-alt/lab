@@ -643,22 +643,34 @@ class Trader:
         return cutoff if cutoff > e else cutoff + timedelta(days=1)
 
     def _volume_climax(self, t: dict, bid: float) -> bool:
+        """+10% 이상 오른 뒤 거래량이 터지면서 윗꼬리가 긴 봉 = 매수 클라이맥스.
+        거래량만 터지고 고가권에 마감한 상승은 계속 들고 간다."""
         entry = t.get("entry_price") or 0
-        if not bid or not entry or (bid / entry - 1) * 100 < 5:
+        if not bid or not entry or (bid / entry - 1) * 100 < self.tcfg.volume_climax_min_gain_pct:
             return False
         q = getattr(self.mv, "q", None)
         if q is None:
             return False
+        bars = self.tcfg.volume_climax_bars
         try:
-            rows = q("SELECT volume FROM bars_1m WHERE symbol=? AND trade_date=? AND ts<=? ORDER BY ts DESC LIMIT 21",
-                     (t["symbol"], t["trade_date"], self.mv._asof()))
+            rows = q("SELECT open, high, low, close, volume FROM bars_1m "
+                     "WHERE symbol=? AND trade_date=? AND ts<=? ORDER BY ts DESC LIMIT ?",
+                     (t["symbol"], t["trade_date"], self.mv._asof(), bars + 1))
         except Exception:
             return False
-        if len(rows) < 21:
+        if len(rows) < bars + 1:
             return False
-        last = rows[0][0] or 0
-        avg = sum(r[0] or 0 for r in rows[1:]) / 20
-        return bool(avg) and last >= 10 * avg
+        open_, high, low, close, vol = rows[0]
+        if not high or not low or not vol or open_ is None or close is None:
+            return False
+        base = [r[4] or 0 for r in rows[1:]]
+        avg = sum(base) / len(base)
+        if not avg or vol < self.tcfg.volume_climax_vol_x * avg:
+            return False
+        rng = high - low
+        if rng <= 0:
+            return False
+        return (high - max(open_, close)) / rng >= self.tcfg.volume_climax_wick_ratio
 
     def _accumulating(self, symbol: str, now: datetime) -> bool:
         """최근 60분 안에 그 종목 매집·거래터짐 신호가 있었는지 (3시간 규칙의 '매집' 판정)."""

@@ -191,6 +191,10 @@ class TradingConfig:
     dump_min_dd_pct: float = 3.0         # '하락'으로 볼 최소 낙폭(고점 대비 %). 이보다 덜 밀리면 횡보로 보고 청산 안 함
     dump_vol_x: float = 2.0              # 최근 5분 평균 거래량 / 직전 60분 평균 — 이 배 이상이어야 '물량 던지기'
     dump_dollar_x: float = 2.0           # 최근 5분 평균 거래대금 / 직전 60분 평균 — 거래량과 함께 봐야 진짜 던지기
+    volume_climax_min_gain_pct: float = 10.0  # 이만큼 오른 뒤에만 거래량 클라이맥스 청산을 본다
+    volume_climax_vol_x: float = 5.0     # 1분 거래량이 앞 N봉 평균의 이 배 이상이어야 클라이맥스
+    volume_climax_wick_ratio: float = 0.5  # 윗꼬리가 봉 전체 범위의 이 비율 이상이어야 '매수 클라이맥스'
+    volume_climax_bars: int = 30         # 거래량 평균을 낼 앞쪽 1분봉 수
     morning_flatten_et: str = "09:00"    # 정규장 전 이 시각(ET)부터는 전략 상관없이 전량 강제 청산
     session_transition_buffer_minutes: int = 3   # 세션 전환 전후 이 시간 동안은 장통합 호가 오류 때문에 손절 보류
     fee_pct: float = 0.1                 # 매매 수수료 % (실거래는 시작할 때 토스 /commissions 값으로 덮어씀)
