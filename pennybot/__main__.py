@@ -165,6 +165,11 @@ def cmd_summarize(cfg: Config, date: str) -> None:
     print(Store(cfg.collector.db_path).summarize(date), "행")
 
 
+def cmd_audit(cfg: Config, days: int) -> None:
+    from .audit import report, text
+    print(text(report(cfg.trading.db_path, cfg.collector.db_path, days), days))
+
+
 def cmd_trade(cfg: Config, once: bool) -> None:
     from pathlib import Path
 
@@ -458,6 +463,119 @@ def _pid_alive(pid: int) -> bool:
             return False
 
 
+_LAUNCHER_EXES = {"python.exe", "pythonw.exe", "py.exe", "pyw.exe",
+                  "cmd.exe", "powershell.exe", "pwsh.exe"}
+_SHELL_EXES = {"cmd.exe", "powershell.exe", "pwsh.exe"}
+
+
+def _win_process_table() -> dict:
+    """윈도우 프로세스 표 {pid: {ppid, name, cmd}}. 실패하면 빈 dict."""
+    import json
+    import subprocess
+    ps = ("[Console]::OutputEncoding=[Text.Encoding]::UTF8; "
+          "Get-CimInstance Win32_Process | ForEach-Object { "
+          "[pscustomobject]@{pid=$_.ProcessId; ppid=$_.ParentProcessId; "
+          "name=$_.Name; cmd=$_.CommandLine} } | ConvertTo-Json -Compress")
+    try:
+        r = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps],
+                           capture_output=True, timeout=25, encoding="utf-8", errors="replace")
+        data = json.loads(r.stdout.strip() or "[]")
+    except Exception:
+        return {}
+    if isinstance(data, dict):
+        data = [data]
+    out = {}
+    for d in data:
+        try:
+            out[int(d["pid"])] = {"ppid": int(d.get("ppid") or 0),
+                                  "name": (d.get("name") or "").lower(),
+                                  "cmd": d.get("cmd") or ""}
+        except (TypeError, ValueError, KeyError):
+            continue
+    return out
+
+
+def _ancestor_pids(pid: int, table: dict) -> set:
+    """pid 의 조상 PID 집합 (자기 자신 제외). 이 집합은 절대 죽이면 안 된다."""
+    out, cur, guard = set(), pid, 0
+    while guard < 64:
+        rec = table.get(cur)
+        if not rec:
+            break
+        parent = rec["ppid"]
+        if not parent or parent in out:
+            break
+        out.add(parent)
+        cur, guard = parent, guard + 1
+    return out
+
+
+def _wait_dead(pid: int, timeout: float = 5.0) -> bool:
+    import time
+    end = time.time() + timeout
+    while time.time() < end:
+        if not _pid_alive(pid):
+            return True
+        time.sleep(0.2)
+    return not _pid_alive(pid)
+
+
+def _old_tree_root(pid: int, command: str, table: dict, mine: set) -> int:
+    """옛 인스턴스를 확실히 끝낼 PID(보통 그 run_forever.bat 의 cmd.exe). 0 이면 손대지 않음."""
+    rec = table.get(pid)
+    if rec and rec["cmd"] and command not in rec["cmd"]:
+        return 0                                       # PID 재사용 — 다른 명령이므로 건드리지 않음
+    root, cur, seen = pid, pid, set()
+    while True:                                        # 옛 트리의 루트(cmd.exe)를 찾아 올라간다
+        r = table.get(cur)
+        if not r:
+            break
+        parent = r["ppid"]
+        if not parent or parent in seen or parent in mine:
+            break
+        prec = table.get(parent)
+        if not prec or prec["name"] not in _LAUNCHER_EXES:
+            break                                      # explorer.exe 등 바깥 프로세스는 넘어가지 않음
+        seen.add(parent)
+        if prec["name"] in _SHELL_EXES:
+            root = parent
+        cur = parent
+    if root == os.getpid() or root in mine:
+        return 0
+    return root
+
+
+def _stop_other_instance(pid: int, command: str) -> bool:
+    """옛 인스턴스(pid)를 종료한다. 성공(그리고 실제로 죽었으면) True.
+
+    run_forever.bat 은 프로그램이 죽으면 30초 뒤 다시 켜므로, python 프로세스만 죽이면
+    옛 창이 되살아나 중복이 된다. 그래서 옛 프로세스의 **실행 루트(그 cmd 창)만** 골라
+    `/T` 로 정리한다. 단 내 조상 계보(= 이 새 창)는 절대 건드리지 않는다.
+    """
+    if pid <= 0 or pid == os.getpid():
+        return False
+    if sys.platform != "win32":
+        import signal
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            return False
+        return _wait_dead(pid)
+
+    import subprocess
+    table = _win_process_table()
+    mine = _ancestor_pids(os.getpid(), table)          # 이 프로세스의 계보 = 손대면 자살
+    root = _old_tree_root(pid, command, table, mine)
+    if not root:
+        return False
+    try:
+        subprocess.run(["taskkill", "/F", "/T", "/PID", str(root)],
+                       capture_output=True, timeout=20)
+    except Exception:
+        return False
+    return _wait_dead(pid)
+
+
 def _single_instance(cfg: Config, command: str):
     if command not in LOCK_COMMANDS:
         return None
@@ -468,9 +586,12 @@ def _single_instance(cfg: Config, command: str):
     except (OSError, ValueError):
         pid = 0
     if pid and pid != os.getpid() and _pid_alive(pid):
-        print(f"[{command}] 이미 실행 중입니다 (PID {pid}) - 이 창은 종료합니다."
-              f" 끄려면 그 창을 닫거나: taskkill /PID {pid} /T")
-        raise SystemExit(3)
+        if _stop_other_instance(pid, command):
+            print(f"[{command}] 켜져 있던 옛 프로세스(PID {pid})를 종료하고 새로 시작합니다.")
+        else:
+            print(f"[{command}] 이미 실행 중입니다 (PID {pid}) - 종료하지 못해 이 창을 닫습니다."
+                  f" 직접 끄려면: taskkill /F /T /PID {pid}")
+            raise SystemExit(3)
     path.write_text(str(os.getpid()), encoding="utf-8")
     return path
 
@@ -488,7 +609,7 @@ def _release_lock(path) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description="미국 페니주 자동매매 (토스증권)")
     ap.add_argument("command", nargs="?", default="collect",
-                    choices=["check", "accounts", "collect", "summarize", "trade", "dashboard", "probe-orders",
+                    choices=["check", "accounts", "collect", "summarize", "audit", "trade", "dashboard", "probe-orders",
                              "backtest", "research", "bigruns", "chart30", "trigger", "anatomy", "telegram-setup", "tunnel", "screen", "run",
                              "backfill-daily", "backfill-minutes"])
     ap.add_argument("--config", default="config.yaml")
@@ -562,6 +683,7 @@ def _dispatch(cfg, args) -> None:
         "accounts": lambda: cmd_accounts(cfg),
         "collect": lambda: cmd_collect(cfg, args.once),
         "summarize": lambda: cmd_summarize(cfg, args.date),
+        "audit": lambda: cmd_audit(cfg, args.days),
         "trade": lambda: cmd_trade(cfg, args.once),
         "dashboard": lambda: cmd_dashboard(cfg, args.port, args.demo),
         "probe-orders": lambda: cmd_probe_orders(cfg, args.symbol, args.yes_real_order),

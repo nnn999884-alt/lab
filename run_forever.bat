@@ -7,7 +7,7 @@ title pennybot %1
 :loop
 .venv\Scripts\python -m pennybot %*
 if errorlevel 3 (
-  echo [%date% %time%] 이미 다른 인스턴스가 실행 중 - 이 창은 종료합니다.
+  echo [%date% %time%] 실행 중인 옛 인스턴스를 끝내지 못해 이 창은 종료합니다.
   timeout /t 15 /nobreak >nul
   exit /b 0
 )
