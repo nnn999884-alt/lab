@@ -97,7 +97,6 @@ class Trader:
         self.mismatch: dict = {}
         self._exit_fail: dict[int, tuple[int, datetime]] = {}   # 매도 주문 실패 횟수·다음 시도 시각
         self._flat_ref: dict[int, tuple[float, datetime]] = {}  # 변동없음 청산용: (기준가, 그 가격이 된 시각)
-        self._decline_ref: dict[int, datetime] = {}  # 수급 없는 하락 청산용: 마지막으로 신고점 찍은 시각
         self._recover()
 
     # ---------- 공통 ----------
@@ -362,7 +361,6 @@ class Trader:
         if t["status"] == "CLOSED":
             self.exit_reprices.pop(w.trade_id, None)
             self._flat_ref.pop(w.trade_id, None)
-            self._decline_ref.pop(w.trade_id, None)
             self.notifier.send(msg.closed(self.journal.trade(w.trade_id), self._info(w.symbol), name=nm))
 
     def _queue_entry_fill(self, w: Working, delta: int, px: float, session: str, now: datetime) -> None:
@@ -711,19 +709,48 @@ class Trader:
             return "변동없음 청산"
         return None
 
+    def _dumping(self, t: dict) -> bool:
+        """최근 5분이 '물량 던지기'(거래량·거래대금이 함께 터진 음봉)인지.
+
+        거래량만 많고 거래대금이 안 늘면(싼 가격에 주식 수만 많은 경우) 던지기로 보지 않는다.
+        거래량도 거래대금도 마른 하락은 매집으로 본다."""
+        q = getattr(self.mv, "q", None)
+        if q is None:
+            return False
+        try:
+            rows = q("SELECT open, close, volume FROM bars_1m WHERE symbol=? AND trade_date=? AND ts<=? "
+                     "ORDER BY ts DESC LIMIT 66", (t["symbol"], t["trade_date"], self.mv._asof()))
+        except Exception:
+            return False
+        if len(rows) < 21:
+            return False
+        recent, base = rows[:5], rows[5:]
+        base_vol = sum((r[2] or 0) for r in base) / len(base)
+        base_dol = sum((r[1] or 0) * (r[2] or 0) for r in base) / len(base)
+        now_vol = sum((r[2] or 0) for r in recent) / len(recent)
+        now_dol = sum((r[1] or 0) * (r[2] or 0) for r in recent) / len(recent)
+        if not base_vol or not base_dol:
+            return False
+        reds = sum(1 for r in recent if r[0] is not None and r[1] is not None and r[1] < r[0])
+        return (now_vol >= self.tcfg.dump_vol_x * base_vol
+                and now_dol >= self.tcfg.dump_dollar_x * base_dol and reds >= 3)
+
     def _decline_exit(self, t: dict, bid: float, now: datetime) -> str | None:
-        """매집(수급) 없이 계속 떨어지기만 하는 자리 — 손절가까진 안 갔어도 decline_exit_hours 동안 새 고점을
-        한 번도 못 만들면 정리한다. stale_exit 은 '거의 안 움직임'만 잡고, 서서히 쭉 빠지기만 하는 건 못 잡는다."""
+        """물량 던지기(거래량·거래대금이 함께 터진 음봉)로 밀릴 때만 청산한다.
+
+        거래량·거래대금이 마른 하락은 매집으로 보고 들고 간다. 2026-10-28~30 실제 기록에서 이렇게 잘라낸
+        22건이 전부 청산 직후 1시간 안에 반등했다 ('수급 없는 하락' 9건 평균 +10.9%, '반등·매집 없음' 13건 평균 +2.1%).
+        낙폭이 dump_min_dd_pct 보다 작으면(고점 근처 횡보) 하락으로 보지 않는다."""
         if bid <= 0:
             return None
         hw = max(t.get("high_water") or 0, bid)
-        last = self._decline_ref.get(t["id"])
-        if not last or bid >= hw:
-            self._decline_ref[t["id"]] = now
-            return None
-        if (now - last) >= timedelta(hours=self.tcfg.decline_exit_hours):
-            return "수급 없는 하락 청산"
-        return None
+        if hw and (bid / hw - 1) * 100 > -self.tcfg.dump_min_dd_pct:
+            return None                                # 고점 근처 — 하락이 아니다
+        if self._accumulating(t["symbol"], now):
+            return None                                # 수급이 붙는 중
+        if not self._dumping(t):
+            return None                                # 거래량·대금 마른 하락 = 매집
+        return "물량 던지기 청산"
 
     def _exit_reason(self, t: dict, bid: float, now: datetime, session: str) -> tuple[str, bool, int] | None:
         """(사유, 공격적 매도 여부, 수량). 수량은 보통 남은 전량, 분할 익절이면 일부."""
@@ -749,7 +776,9 @@ class Trader:
         if bid > 0 and t.get("no_rebound_at") and now >= datetime.fromisoformat(t["no_rebound_at"]) and not skip_day:
             entry = t.get("entry_price") or 0
             hw = max(t.get("high_water") or 0, bid)
-            if entry and hw < entry * (1 + self.tcfg.no_rebound_high_pct / 100) and not self._accumulating(t["symbol"], now):
+            # 시간이 지났어도 '거래량·거래대금이 실린 던지기'일 때만 자른다 — 마른 하락은 매집이라 들고 간다
+            if (entry and hw < entry * (1 + self.tcfg.no_rebound_high_pct / 100)
+                    and not self._accumulating(t["symbol"], now) and self._dumping(t)):
                 return f"반등·매집 없음 ({(self.tcfg.no_rebound_minutes or 0) / 60:g}시간)", False, left
         hw = max(t.get("high_water") or 0, bid)
         if scaled and trail and bid > 0 and bid <= hw * (1 - trail / 100):

@@ -43,6 +43,7 @@ class FakeMV:
         self.names = {}
         self.day_dollar = {}
         self.flow = []
+        self.bars = []                            # bars_1m 대역: 최신 → 과거 [(open, close, volume)]
 
     def prev_trade_date(self, d): return PREV
     def runners(self, d, min_pct=30.0): return self.run
@@ -59,6 +60,11 @@ class FakeMV:
     def day_stats(self, sym, max_age=120): return {"dollar": self.day_dollar[sym]} if sym in self.day_dollar else {}
     def recent_flow(self, since, kinds=("burst", "after_move", "bottom_bounce", "early20", "steady")):
         return [e for e in self.flow if e["kind"] in kinds]
+    def _asof(self): return "9999"
+    def q(self, sql, args):                       # bars_1m: 최신 → 과거 [(open, close, volume)]
+        if "open" in sql:
+            return self.bars[:66]
+        return [(r[2],) for r in self.bars[:21]]
 
 
 class FakeProfile:
@@ -264,31 +270,93 @@ def test_stale_exit_does_not_apply_during_day_session(env):
     assert j.q("SELECT status FROM trades")[0]["status"] == "OPEN"
 
 
-def test_decline_exit_without_support_over_hours(env):
-    """손절가까진 안 가도, 매집(수급) 없이 신고점을 decline_exit_hours 동안 한 번도 못 만들면 정리한다
-    (서서히 계속 빠지기만 하는 자리 — stale_exit 은 '거의 안 움직임'만 잡아서 이런 경우를 못 잡는다)."""
-    tr, market, mv, clock, j, ctl, ex = env
+def _dump_bars(vol=5000.0, price=1.0, red=True):
+    """최근 5분: 거래량·거래대금이 함께 터진 음봉 / 앞 60분: 평소."""
+    head = [(price, price - 0.01 if red else price, vol) for _ in range(5)]
+    tail = [(1.0, 1.0, 1000) for _ in range(61)]
+    return head + tail
+
+
+def _thin_bars():
+    """최근 5분: 거래량·거래대금이 마른 음봉 (매집)."""
+    head = [(1.0, 0.995, 200) for _ in range(5)]
+    tail = [(1.0, 1.0, 1000) for _ in range(61)]
+    return head + tail
+
+
+def _flo_entry(tr, market, mv, clock, j):
     tr.tcfg.strategies["scalp"]["entry_discount_pct"] = 0.0
-    tr.tcfg.strategies["scalp"]["max_hold_minutes"] = 600       # 강제 청산 시각이 끼어들지 않게
-    tr.tcfg.strategies["scalp"]["stop_loss_pct"] = 50.0         # 손절은 절대 안 걸리게
+    tr.tcfg.strategies["scalp"]["max_hold_minutes"] = 600
+    tr.tcfg.strategies["scalp"]["stop_loss_pct"] = 50.0
     clock[0] = et(10, 0)
     market.set("FLO", 2.00, 2.02)
     mv.flow = [{"symbol": "FLO", "kind": "burst", "ts": "x", "text": "거래 터짐", "chg": 12.0}]
-    tr.tick()                                    # 매수 체결
-    tr.tick()                                    # 여기서 신고점 기준 시각 최초 등록
+    tr.tick()
+    tr.tick()
     mv.flow = []
     clock[0] = et(10, 30)
-    market.set("FLO", 2.05, 2.07)                 # 신고점 (고점 시각 갱신)
+    market.set("FLO", 2.07, 2.09)
     tr.tick()
-    assert j.q("SELECT status FROM trades WHERE symbol='FLO'")[0]["status"] == "OPEN"
-    clock[0] = et(13, 59)                         # 신고점 뒤 3h29m — 가격은 그 아래, 수급 없이 하락만
+
+
+def test_decline_with_thin_volume_is_accumulation_and_holds(env):
+    """거래량·거래대금이 마른 하락은 매집 — 들고 간다.
+
+    2026-10-28~30 실기록: '수급 없는 하락'으로 잘라낸 9건 모두 청산 직후 반등 (1시간 평균 +10.9%),
+    그중 거래량·대금이 함께 터진 음봉은 0건이었다."""
+    tr, market, mv, clock, j, ctl, ex = env
+    _flo_entry(tr, market, mv, clock, j)
+    mv.bars = _thin_bars()
+    clock[0] = et(14, 5)
     market.set("FLO", 1.95, 1.97)
     tr.tick()
-    assert j.q("SELECT status FROM trades WHERE symbol='FLO'")[0]["status"] == "OPEN"   # 아직 3.5시간 안 됨
-    clock[0] = et(14, 1)                          # 3h31m
+    assert j.q("SELECT status FROM trades WHERE symbol='FLO'")[0]["status"] == "OPEN"
+
+
+def test_decline_exit_fires_on_volume_and_dollar_dump(env):
+    """거래량과 거래대금이 함께 터진 음봉(물량 던지기)이면 청산."""
+    tr, market, mv, clock, j, ctl, ex = env
+    _flo_entry(tr, market, mv, clock, j)
+    mv.bars = _dump_bars()
+    clock[0] = et(14, 5)
+    market.set("FLO", 1.95, 1.97)
     tr.tick()
     t = j.q("SELECT status, exit_reason FROM trades WHERE symbol='FLO'")[0]
-    assert t["status"] == "CLOSED" and t["exit_reason"] == "수급 없는 하락 청산"
+    assert t["status"] == "CLOSED" and t["exit_reason"] == "물량 던지기 청산"
+
+
+def test_decline_ignores_volume_without_dollar_volume(env):
+    """주식 수만 터지고 거래대금이 안 늘면(싼 가격에 물량만 많은 경우) 던지기로 보지 않는다."""
+    tr, market, mv, clock, j, ctl, ex = env
+    _flo_entry(tr, market, mv, clock, j)
+    mv.bars = [(1.0, 0.99, 5000), (1.0, 1.0, 1000)] * 33      # 거래량 5배, 거래대금 그대로
+    clock[0] = et(14, 5)
+    market.set("FLO", 1.95, 1.97)
+    tr.tick()
+    assert j.q("SELECT status FROM trades WHERE symbol='FLO'")[0]["status"] == "OPEN"
+
+
+def test_decline_exit_ignores_sideways_drift_near_the_high(env):
+    """고점 아래에서 조금 횡보하는 것(낙폭 < dump_min_dd_pct)은 하락이 아니다 (XNDU 2026-10-28)."""
+    tr, market, mv, clock, j, ctl, ex = env
+    _flo_entry(tr, market, mv, clock, j)
+    mv.bars = _dump_bars()
+    clock[0] = et(14, 5)
+    market.set("FLO", 2.04, 2.06)
+    tr.tick()
+    assert j.q("SELECT status FROM trades WHERE symbol='FLO'")[0]["status"] == "OPEN"
+
+
+def test_decline_exit_waits_when_money_is_flowing_in(env):
+    """거래량·대금이 터져도 최근 60분 매집·거래터짐 신호가 붙어 있으면 다시 지켜본다."""
+    tr, market, mv, clock, j, ctl, ex = env
+    _flo_entry(tr, market, mv, clock, j)
+    mv.bars = _dump_bars()
+    mv.flow = [{"symbol": "FLO", "kind": "steady", "ts": "x", "text": "꾸준히 거래 붙음", "chg": 1.0}]
+    clock[0] = et(14, 5)
+    market.set("FLO", 1.97, 1.99)
+    tr.tick()
+    assert j.q("SELECT status FROM trades WHERE symbol='FLO'")[0]["status"] == "OPEN"
 
 
 def test_morning_cutoff_flattens_positions_regardless_of_strategy_deadline(env):
@@ -1028,8 +1096,8 @@ def test_flatten_before_korean_open(env):
     assert j.q("SELECT status FROM trades")[0]["status"] in ("CLOSED", "EXITING")
 
 
-def test_no_rebound_exit_after_3h(env):
-    """체결 3시간 뒤 고점이 +3%를 못 넘고 매집 신호도 없으면 손익 무관하게 청산."""
+def test_no_rebound_exit_only_on_volume_and_dollar_dump(env):
+    """시간이 지나고 반등·매집이 없어도, 거래량·거래대금이 실린 던지기일 때만 청산."""
     tr, market, mv, clock, j, ctl, ex = env
     tr.tcfg.flatten_kst = ""
     tr.tcfg.entry_cutoff_kst = ""
@@ -1038,10 +1106,29 @@ def test_no_rebound_exit_after_3h(env):
     tr.tick()
     row = j.q("SELECT no_rebound_at FROM trades")[0]
     assert row["no_rebound_at"]                                   # 판정 시각이 저장된다 (재시작해도 이어감)
+    mv.bars = _dump_bars(price=1.0)
     clock[0] = et(4, 5)                                           # 3시간 뒤 (프리마켓)
-    market.set("PEN", 1.02, 1.03)
+    market.set("PEN", 1.00, 1.01)
     tr.tick()
     assert "반등" in j.q("SELECT exit_reason FROM trades")[0]["exit_reason"]
+
+
+def test_no_rebound_holds_while_volume_and_dollar_are_thin(env):
+    """시간 손절도 거래량·거래대금을 본다 — 마른 하락은 매집이라 들고 간다.
+
+    2026-10-28~30 실기록: '반등·매집 없음'으로 잘라낸 13건 모두 청산 직후 반등 (1시간 평균 +2.1%),
+    거래량·대금이 함께 터진 음봉은 0건이었다."""
+    tr, market, mv, clock, j, ctl, ex = env
+    tr.tcfg.flatten_kst = ""
+    tr.tcfg.entry_cutoff_kst = ""
+    tr.tcfg.no_rebound_minutes = 180
+    market.set("PEN", 1.03, 1.035)
+    tr.tick()
+    mv.bars = _thin_bars()
+    clock[0] = et(4, 5)
+    market.set("PEN", 1.00, 1.01)
+    tr.tick()
+    assert j.q("SELECT status FROM trades")[0]["status"] == "OPEN"
 
 
 def test_no_rebound_keeps_position_when_accumulating(env):

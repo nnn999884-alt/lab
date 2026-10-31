@@ -188,7 +188,9 @@ class TradingConfig:
     stale_alert_minutes: int = 30        # 강제 청산 시각이 이만큼 지나도 남아 있으면 알림
     stale_exit_hours: float = 3.0        # 체결가가 이 시간 동안 stale_move_pct 넘게 안 움직이면 '변동없음'으로 청산
     stale_move_pct: float = 1.0          # 이 % 안에서만 움직였으면 '변동없음'으로 친다
-    decline_exit_hours: float = 3.5      # 손절가까진 안 가도, 매집(수급) 없이 신고점을 이 시간 동안 못 만들면 청산
+    dump_min_dd_pct: float = 3.0         # '하락'으로 볼 최소 낙폭(고점 대비 %). 이보다 덜 밀리면 횡보로 보고 청산 안 함
+    dump_vol_x: float = 2.0              # 최근 5분 평균 거래량 / 직전 60분 평균 — 이 배 이상이어야 '물량 던지기'
+    dump_dollar_x: float = 2.0           # 최근 5분 평균 거래대금 / 직전 60분 평균 — 거래량과 함께 봐야 진짜 던지기
     morning_flatten_et: str = "09:00"    # 정규장 전 이 시각(ET)부터는 전략 상관없이 전량 강제 청산
     session_transition_buffer_minutes: int = 3   # 세션 전환 전후 이 시간 동안은 장통합 호가 오류 때문에 손절 보류
     fee_pct: float = 0.1                 # 매매 수수료 % (실거래는 시작할 때 토스 /commissions 값으로 덮어씀)
