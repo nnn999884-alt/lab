@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, time as dtime, timedelta, timezone
 
 log = logging.getLogger(__name__)
 
@@ -88,3 +88,96 @@ def backfill_daily(client, store, symbols: list[str], since: str = "2025-01-01",
         if sleep:
             time.sleep(sleep)
     return {"symbols": len(todo), "rows": rows_total, "skipped": len(symbols) - len(todo)}
+
+
+def _next_weekday(d: date) -> date:
+    d += timedelta(days=1)
+    while d.weekday() >= 5:
+        d += timedelta(days=1)
+    return d
+
+
+def session_of(ts: datetime) -> tuple[date | None, str]:
+    """봉 **종료** 시각 → (미국 영업일, 세션).
+
+    토스 1분봉은 데이·프리·정규·애프터 봉을 모두 준다. 데이마켓은 그 영업일 전날 밤(동부 20:00~04:00)이라
+    20시 이후 봉은 다음 영업일에 붙인다. 휴장일·조기폐장은 static_day() 와 같은 한계로 반영하지 못한다.
+    """
+    from ..sessions import AFTER, CLOSED, DAY, ET, PRE, REGULAR
+
+    et = ts.astimezone(ET)
+    t, d = et.time(), et.date()
+    if t >= dtime(20, 0):
+        return _next_weekday(d), DAY
+    if t < dtime(4, 0):
+        return d, DAY
+    if t < dtime(9, 30):
+        return d, PRE
+    if t < dtime(16, 0):
+        return d, REGULAR
+    if t < dtime(19, 50):
+        return d, AFTER
+    return None, CLOSED
+
+
+def backfill_minutes(client, store, symbols: list[str], since: str, pages: int = 20, sleep: float = 0.0,
+                     limit: int | None = None, progress=None) -> dict:
+    """symbols 의 1분봉을 since(YYYY-MM-DD) 까지 거슬러 받는다.
+
+    토스는 페이지당 200봉, `before` 로 계속 거슬러 올라갈 수 있다 (종목당 한도는 사실상 유동성에 달림 —
+    거래가 많은 종목은 4,000봉이 5일치, 한산한 종목은 4,000봉이 3개월치). 진행 상태는 candle_jobs(1m)에
+    남겨서 주말에 나눠 돌려도 이미 받은 종목은 건너뛴다. → {'symbols': n, 'rows': n, 'skipped': n}
+    """
+    ensure(store)
+    done = done_map(store, "1m")
+    todo = [s for s in symbols if not done.get(s) or done[s] > since]
+    if limit:
+        todo = todo[:limit]
+    rows_total = 0
+    for i, sym in enumerate(todo, 1):
+        cursor, oldest, got = None, None, 0
+        for _ in range(max(1, pages)):
+            try:
+                res = client.candles(sym, "1m", 200, before=cursor) or {}
+            except Exception as e:
+                log.warning("1분봉 실패 %s: %s", sym, str(e)[:120])
+                break
+            candles = res.get("candles") or []
+            if not candles:
+                break
+            payload = []
+            for cd in candles:
+                try:
+                    end = datetime.fromisoformat(str(cd["timestamp"]).replace("Z", "+00:00"))
+                    d, sess = session_of(end)
+                    if d is None:
+                        continue
+                    d0 = d.isoformat()
+                    if d0 < since:
+                        continue
+                    payload.append({"symbol": sym, "ts": end.astimezone(timezone.utc).isoformat(timespec="seconds"),
+                                    "trade_date": d0, "session": sess,
+                                    "open": float(cd["openPrice"]), "high": float(cd["highPrice"]),
+                                    "low": float(cd["lowPrice"]), "close": float(cd["closePrice"]),
+                                    "volume": float(cd["volume"])})
+                    oldest = d0 if oldest is None else min(oldest, d0)
+                except (KeyError, TypeError, ValueError):
+                    continue
+            if payload:
+                store.put_bars(payload)
+                rows_total += len(payload)
+                got += len(payload)
+            cursor = res.get("nextBefore")
+            if not cursor or (oldest and oldest <= since):
+                break
+            if sleep:
+                time.sleep(sleep)
+        if oldest:
+            _mark(store, sym, "1m", since if oldest <= since else oldest)
+        log.debug("1분봉 %s: %d행 (가장 오래된 %s)", sym, got, oldest)
+        if progress and (i % 25 == 0 or i == len(todo)):
+            progress(i, len(todo), rows_total)
+        if sleep:
+            time.sleep(sleep)
+    return {"symbols": len(todo), "rows": rows_total, "skipped": len(symbols) - len(todo)}
+

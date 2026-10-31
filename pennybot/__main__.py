@@ -108,10 +108,29 @@ def cmd_backfill_daily(cfg: Config, args) -> None:
     syms = [r[0] for r in store.query("SELECT symbol FROM stock_info WHERE symbol IS NOT NULL ORDER BY symbol")]
     if not syms:
         syms = [r[0] for r in store.query("SELECT DISTINCT symbol FROM universe ORDER BY symbol")]
-    log.info("일봉 백필 시작: %d종목, since=%s", len(syms), getattr(args, "since", "2025-01-01"))
-    rep = backfill_daily(client, store, syms, since=args.since, sleep=args.pause, limit=args.limit or None,
+    since = args.since or "2025-01-01"
+    log.info("일봉 백필 시작: %d종목, since=%s", len(syms), since)
+    rep = backfill_daily(client, store, syms, since=since, sleep=args.pause, limit=args.limit or None,
                          progress=lambda i, n, r: log.info("일봉 진행 %d/%d (누적 %d행)", i, n, r))
     log.info("일봉 백필 끝: %s", rep)
+
+
+def cmd_backfill_minutes(cfg: Config, args) -> None:
+    from datetime import date, timedelta
+
+    from .collector import Store
+    from .collector.backfill import backfill_minutes
+    setup_file_log(cfg, "backfill")
+    client = make_client(cfg, "collector")
+    store = Store(cfg.collector.db_path)
+    syms = [r[0] for r in store.query(
+        "SELECT symbol, MAX(ts) AS last FROM prices GROUP BY symbol ORDER BY last DESC")]
+    since = args.since or (date.today() - timedelta(days=90)).isoformat()
+    log.info("1분봉 백필 시작: %d종목, since=%s, 페이지 %d", len(syms), since, args.pages)
+    rep = backfill_minutes(client, store, syms, since=since, pages=args.pages, sleep=args.pause,
+                           limit=args.limit or None,
+                           progress=lambda i, n, r: log.info("1분봉 진행 %d/%d (누적 %d행)", i, n, r))
+    log.info("1분봉 백필 끝: %s", rep)
 
 
 def cmd_collect(cfg: Config, once: bool) -> None:
@@ -470,7 +489,7 @@ def main() -> None:
     ap.add_argument("command", nargs="?", default="collect",
                     choices=["check", "accounts", "collect", "summarize", "trade", "dashboard", "probe-orders",
                              "backtest", "research", "bigruns", "chart30", "trigger", "anatomy", "telegram-setup", "tunnel", "screen", "run",
-                             "backfill-daily"])
+                             "backfill-daily", "backfill-minutes"])
     ap.add_argument("--config", default="config.yaml")
     ap.add_argument("--once", action="store_true", help="collect/run: 한 번만 실행")
     ap.add_argument("--date", help="summarize: 미국 영업일 YYYY-MM-DD")
@@ -491,9 +510,11 @@ def main() -> None:
     ap.add_argument("--no-edgar", action="store_true", help="research: SEC 공시 판정 생략 (빠름)")
     ap.add_argument("--no-intraday", action="store_true", help="bigruns: 1분봉(데이마켓) 분석 생략 (빠름)")
     ap.add_argument("--min-pct", type=float, default=30.0, help="research: 급등 기준 %%")
-    ap.add_argument("--since", default="2025-01-01", help="backfill-daily: 언제까지 거슬러 받을지")
-    ap.add_argument("--limit", type=int, default=0, help="backfill-daily: 종목 수 제한 (0 = 전체)")
-    ap.add_argument("--pause", type=float, default=0.1, help="backfill-daily: 종목당 대기(초)")
+    ap.add_argument("--since", help="backfill-daily: 언제까지 거슬러 받을지 (기본 2025-01-01) / "
+                                    "backfill-minutes: 기본 90일 전")
+    ap.add_argument("--limit", type=int, default=0, help="backfill: 종목 수 제한 (0 = 전체)")
+    ap.add_argument("--pause", type=float, default=0.1, help="backfill: 종목당 대기(초)")
+    ap.add_argument("--pages", type=int, default=20, help="backfill-minutes: 종목당 최대 페이지 (200봉/페이지)")
     ap.add_argument("-v", "--verbose", action="store_true")
     args = ap.parse_args()
     for stream in (sys.stdout, sys.stderr):    # 윈도우 콘솔(cp949)에서 이모지 때문에 멈추지 않게
@@ -554,6 +575,7 @@ def _dispatch(cfg, args) -> None:
         "screen": lambda: cmd_screen(cfg),
         "run": lambda: cmd_run(cfg, args.once),
         "backfill-daily": lambda: cmd_backfill_daily(cfg, args),
+        "backfill-minutes": lambda: cmd_backfill_minutes(cfg, args),
     }[args.command]()
 
 
