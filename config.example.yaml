@@ -101,9 +101,12 @@ trading:
   backstop_slippage_pct: 8      # 발동 시 지정가 = 감시가 −8%
   use_stream: true              # 토스 웹소켓 (pip install websocket-client). 끊기면 자동으로 REST
   order_poll_fallback_seconds: 30
+  # 2026-10-31: runner_overnight·dilution_catalyst·day_ignition 은 기본 꺼짐.
+  # 그룹 전략(pullback/rebound/surge/pump)과 당일 셋업(squeeze·news·session_gap·accumulation·reversal)은
+  # pennybot/config.py 의 기본값을 따릅니다. 바꾸고 싶은 키만 여기에 적으면 그 값이 우선합니다.
   strategies:                   # 바꾸고 싶은 키만 적으면 나머지는 기본값 (전체 목록은 pennybot/config.py)
     runner_overnight:           # 전날 급등 + 희석 여력 낮음 → 데이마켓 매수 → 개장 무렵 매도
-      enabled: true
+      enabled: false
       min_runner_pct: 30        # 전날 정규장 상승률
       min_close_loc: 0.6        # 고가권 마감 (0=저가, 1=고가)
       min_rotation: 0.3         # 거래량 / 발행주식
@@ -112,10 +115,10 @@ trading:
       scale_out_pct: 0.5        # 익절가에서 절반만 매도 (1.0 = 전량)
       trail_pct: 8              # 나머지는 고점 대비 −8% 트레일링 (강제 청산 시각까지)
     dilution_catalyst:          # ATM 종료 · 증자 등록 철회 · 공모 철회 · 자사주 매입
-      enabled: true
+      enabled: false
       max_runup_pct: 15
     day_ignition:               # 데이마켓에서 새 호재로 막 움직이기 시작
-      enabled: true
+      enabled: false
       min_move_pct: 5
       max_move_pct: 25
     day_dip:
