@@ -61,11 +61,12 @@ def test_briefing_window_and_text(tmp_path):
     t = datetime(2026, 10, 22, 7, 47, tzinfo=timezone.utc)    # 03:47 ET
     assert col.send_briefing(t - timedelta(minutes=10), "2026-10-22") is None     # 03:37 → 아직
     txt = col.send_briefing(t, "2026-10-22")
-    assert txt.startswith("🗞 장 시작 전 브리핑") and "HLT" in txt and "▲ FIL 대형 계약" in txt
+    assert txt.startswith("🗞 장 시작 전 브리핑") and "2026-10-22" in txt
+    assert "HLT" not in txt                     # 거래정지·공시는 실시간 알림·대시보드 탭에서 보는다 (브리핑에서 빼냄)
     assert sent.msgs[-1][0] == txt
     assert col.send_briefing(t + timedelta(minutes=1), "2026-10-22") is None      # 하루 한 번
     b = json.loads((tmp_path / "briefing.json").read_text(encoding="utf-8"))
-    assert b["halts"][0]["symbol"] == "HLT"
+    assert b["date"] == "2026-10-22" and "halts" not in b
     col._settings.value["alerts"]["briefing"] = False                            # 설정에서 끄면 텔레그램 안 보냄
     n = len(sent.msgs)
     col._brief_sent = None

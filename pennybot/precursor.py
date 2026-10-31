@@ -490,8 +490,15 @@ def ranked(db_path: str, limit: int = 50, only_active: bool = True) -> dict:
                 or (r["metrics"].get("vol_ratio") or 0) >= ACTIVE_MIN_DAY_VOL_RATIO]
     # '거래 급증'(wake)은 방향을 안 본다 — 폭락하면서도 거래량이 터지면 뜬다. 지금 내려가는 중인데
     # '거래 급증·매수세 유입'으로 맨 위에 뜨는 걸 막으려고, 지금 오르고 있을 때만(live_m.chg > 0) 그 우선순위를 준다.
-    rows.sort(key=lambda r: (-(r["live_m"].get("dollar_3m") or 0), -r["tier"], -r["score"],
-                             -(r["metrics"].get("vol_ratio") or 0)))
+    def _key(r: dict) -> tuple:
+        m = r["live_m"]
+        chg = m.get("chg")
+        rising_wake = "wake" in r["live"] and chg is not None and chg > 0
+        return (0 if rising_wake else 1,                 # 오르면서 거래가 터진 것부터
+                -(m.get("dollar_3m") or 0), -r["tier"], -r["score"],
+                -(r["metrics"].get("vol_ratio") or 0))
+
+    rows.sort(key=_key)
     total = len(rows)
     rows = rows[:limit]
     con = sqlite3.connect(ro_uri(db_path), uri=True)

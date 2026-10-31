@@ -184,7 +184,7 @@ def get_market_path(tmp):
 def test_briefing_account_overhead_endpoints(server):
     base, tmp = server
     b = get(base + "/api/briefing")
-    assert set(b) >= {"date", "picks", "night", "halts", "filings"}
+    assert set(b) >= {"ts", "date", "d0"}
     assert get(base + "/api/account") == {}                         # 수집기가 아직 안 남김
     (tmp / "account.json").write_text(json.dumps({"ts": "2026-10-24T00:00:00+00:00", "holdings": {"items": []}}), encoding="utf-8")
     assert get(base + "/api/account")["holdings"] == {"items": []}
