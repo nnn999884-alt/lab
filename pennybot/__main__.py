@@ -468,7 +468,8 @@ def _single_instance(cfg: Config, command: str):
     except (OSError, ValueError):
         pid = 0
     if pid and pid != os.getpid() and _pid_alive(pid):
-        print(f"[{command}] 이미 실행 중입니다 (PID {pid}) — 이 창은 종료합니다.")
+        print(f"[{command}] 이미 실행 중입니다 (PID {pid}) - 이 창은 종료합니다."
+              f" 끄려면 그 창을 닫거나: taskkill /PID {pid} /T")
         raise SystemExit(3)
     path.write_text(str(os.getpid()), encoding="utf-8")
     return path
