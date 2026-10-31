@@ -218,23 +218,21 @@ class TradingConfig:
     daily_report_time_kst: str = "07:30" # 한국 시간 이 시각 이후에 보냄 (정규장은 새벽 5~6시에 끝나므로). "00:00" = 끝나자마자
     strategies: dict = field(default_factory=lambda: {
         # gap_risk_pct: 밤사이 최악의 갭(%) — 수량은 손절폭이 아니라 이 갭을 기준으로 정한다
-        "runner_overnight": {"enabled": True, "budget_pct": 0.40, "max_positions": 4,
+        # runner_overnight / dilution_catalyst / day_ignition: 사용자 요청으로 기본 꺼짐 (2026-10-31)
+        "runner_overnight": {"enabled": False, "budget_pct": 0.40, "max_positions": 4,
                              "min_runner_pct": 30.0, "min_close_loc": 0.6, "min_rotation": 0.3,
                              "min_day_change_pct": -8.0, "max_day_change_pct": 15.0,
                              "take_profit_pct": 12.0, "stop_loss_pct": 10.0,
-                             "entry_discount_pct": 0.5,  # 신호가 뜬 가격보다 3% 낮게 지정가 (체결률은 낮아지지만 더 싸게)
+                             "entry_discount_pct": 0.5,
                              "gap_risk_pct": 35.0, "sell_before_open_minutes": 30,
                              "exit_after_open_minutes": 30,
-                             # 익절가에서 절반만 팔고, 나머지는 고점 대비 −8% 트레일링 (강제 청산 시각까지)
                              "scale_out_pct": 0.5, "trail_pct": 8.0,
-                             # 과거 검증(180일, 급등일 940건): 공매도 비율 50%+ 또는 평소(5일 평균) 대비 1.5배+ 급증한 날은
-                             # 다음 날 시가 수익률이 뚜렷이 나빴음 (오버나이트라 특히 중요) → 그런 날은 거름
                              "max_short_ratio": 0.5, "max_short_surge": 1.5},
-        "dilution_catalyst": {"enabled": True, "budget_pct": 0.30, "max_positions": 3,
+        "dilution_catalyst": {"enabled": False, "budget_pct": 0.30, "max_positions": 3,
                               "max_runup_pct": 15.0, "entry_discount_pct": 0.5,
                               "take_profit_pct": 10.0, "stop_loss_pct": 8.0, "gap_risk_pct": 25.0,
                               "sell_before_open_minutes": 90},
-        "day_ignition": {"enabled": True, "budget_pct": 0.30, "max_positions": 3,
+        "day_ignition": {"enabled": False, "budget_pct": 0.30, "max_positions": 3,
                          "min_insider_usd": 10000, "min_move_pct": 5.0, "max_move_pct": 25.0,
                          "max_pullback_pct": 4.0, "entry_discount_pct": 0.5,
                          "take_profit_pct": 10.0, "stop_loss_pct": 7.0, "gap_risk_pct": 25.0,

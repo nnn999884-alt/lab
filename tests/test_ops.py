@@ -112,6 +112,7 @@ def test_loss_streak_cooldown_and_weekly_limit(tmp_path):
     from pennybot.config import TradingConfig
     from pennybot.trading.risk import Risk
     t = TradingConfig(max_daily_loss_usd=1e9, max_weekly_loss_usd=0, loss_streak_stop=3)
+    t.strategies["runner_overnight"]["enabled"] = True
     j = Journal(tmp_path / "r.db")
     risk = Risk(t, j, Control(tmp_path))
     base = et(5, 0)

@@ -86,6 +86,7 @@ def env(tmp_path):
     tcfg.stop_loss_pct_override = 0.0      # 전략별 손절폭을 검증하는 테스트라 전역 −50% 덮어쓰기는 끈다
     tcfg.strategies["dilution_catalyst"]["enabled"] = False
     tcfg.strategies["day_ignition"]["enabled"] = False
+    tcfg.strategies["runner_overnight"]["enabled"] = True       # 기본 꺼짐이지만 테스트는 켜고 돌림
     tcfg.strategies["runner_overnight"]["entry_discount_pct"] = 0.0   # 아래 테스트는 즉시 체결을 가정 (할인은 따로 테스트)
     ex = PaperExchange(market, 10_000, tmp_path / "paper.json")
     j = Journal(tmp_path / "t.db")
@@ -553,6 +554,8 @@ def test_restart_recovers_working_orders(env, tmp_path):
 
 def test_risk_sizing_daily_loss_and_auto_disable(tmp_path):
     tcfg = TradingConfig()
+    tcfg.strategies["runner_overnight"]["enabled"] = True
+    tcfg.strategies["day_ignition"]["enabled"] = True
     j = Journal(tmp_path / "r.db")
     risk = Risk(tcfg, j, Control(tmp_path))
     # 계좌 1만$: 금액 상한 $300, 갭 35% 기준 손실 ≤ $100 → 100 / 0.35 = 285주
@@ -571,6 +574,7 @@ def test_risk_sizing_daily_loss_and_auto_disable(tmp_path):
 
 def test_can_enter_rejects_blocked_symbol(tmp_path):
     tcfg = TradingConfig()
+    tcfg.strategies["runner_overnight"]["enabled"] = True
     j = Journal(tmp_path / "r.db")
     ctl = Control(tmp_path)
     risk = Risk(tcfg, j, ctl)
@@ -584,6 +588,7 @@ def test_can_enter_rejects_blocked_symbol(tmp_path):
 
 def test_can_enter_allows_retry_after_canceled_entries(tmp_path):
     tcfg = TradingConfig()
+    tcfg.strategies["runner_overnight"]["enabled"] = True
     j = Journal(tmp_path / "r.db")
     risk = Risk(tcfg, j, Control(tmp_path))
     for _ in range(3):
@@ -595,6 +600,8 @@ def test_can_enter_allows_retry_after_canceled_entries(tmp_path):
 
 def test_can_enter_blocks_symbol_used_by_another_strategy_today(tmp_path):
     tcfg = TradingConfig()
+    tcfg.strategies["runner_overnight"]["enabled"] = True
+    tcfg.strategies["scalp"]["enabled"] = True
     j = Journal(tmp_path / "r.db")
     risk = Risk(tcfg, j, Control(tmp_path))
     tid = j.open_trade(strategy="scalp", symbol="JYD", trade_date=str(D), planned_qty=30,
