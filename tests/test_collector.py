@@ -1,4 +1,4 @@
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 from pennybot.collector import Collector, Store
 from pennybot.config import CollectorConfig
@@ -150,6 +150,53 @@ def test_collector_tick_tags_sessions(tmp_path):
     n_before = store.query("SELECT COUNT(*) FROM bars_1m")[0][0]
     col.sync_candles(et(1, 0))
     assert store.query("SELECT COUNT(*) FROM bars_1m")[0][0] == n_before
+
+
+def test_watch_splits_rank_flow_rotation_and_rotates(tmp_path):
+    col, toss, store, clock = make(tmp_path, et(10, 0))
+    now = et(10, 0)
+    col.cfg.watch_size = 9
+    col.cfg.watch_rank_slots = 4
+    col.cfg.watch_flow_slots = 3
+    col.cfg.watch_rotation_slots = 2
+    col.cfg.watch_rotation_minutes = 1
+    col.cfg.watch_flow_minutes = 30
+    col.universe = {f"S{i:02d}": {"name": f"S{i}"} for i in range(20)}
+    store.put_rankings([
+        {"ts": now.isoformat(), "trade_date": "2026-10-21", "session": "DAY", "type": "MARKET_TRADING_AMOUNT",
+         "duration": "realtime", "rank": i + 1, "symbol": f"S{i:02d}", "last": 1.0, "base": 1.0,
+         "change_rate": 1.0, "volume": 1000 - i, "amount": 10_000 - i * 100, "ranked_at": now.isoformat()}
+        for i in range(6)])
+    store.put_events([
+        {"ts": (now - timedelta(minutes=5)).astimezone(timezone.utc).isoformat(), "symbol": f"S{i}", "kind": "burst",
+         "text": "x", "value": 1.0}
+        for i in (10, 11, 12)])
+    col.select_watch(now, D)
+    assert col._watch_buckets == {"rank": 4, "flow": 3, "rotation": 2}
+    assert set(col.watch[:4]) == {"S00", "S01", "S02", "S03"}
+    assert set(col.watch[4:7]) == {"S10", "S11", "S12"}
+    first_rotation = set(col.watch[7:9])
+    col.select_watch(now + timedelta(minutes=1), D)
+    assert set(col.watch[7:9]) != first_rotation
+
+
+def test_promoted_spike_joins_watch_without_waiting_for_rotation(tmp_path):
+    col, toss, store, clock = make(tmp_path, et(10, 0))
+    now = et(10, 0)
+    col.cfg.watch_size = 5
+    col.cfg.watch_rank_slots = 3
+    col.cfg.watch_flow_slots = 2
+    col.cfg.watch_rotation_slots = 0
+    col.universe = {f"S{i:02d}": {"name": f"S{i}"} for i in range(10)}
+    store.put_rankings([
+        {"ts": now.isoformat(), "trade_date": "2026-10-21", "session": "DAY", "type": "MARKET_TRADING_AMOUNT",
+         "duration": "realtime", "rank": i + 1, "symbol": f"S{i:02d}", "last": 1.0, "base": 1.0,
+         "change_rate": 1.0, "volume": 1000, "amount": 10_000 - i * 100, "ranked_at": now.isoformat()}
+        for i in range(4)])
+    col.select_watch(now, D)
+    col._promote("S09", now)
+    col.select_watch(now, D)
+    assert "S09" in col.watch
 
 
 def test_session_change_triggers_summary(tmp_path):

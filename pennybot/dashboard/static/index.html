@@ -690,6 +690,7 @@ table.ca-tbl tr.off .ca-fill { opacity: .35; }
         <h2>급등 후보 <span class="sub">감시 종목 스크리너</span></h2>
         <div class="seg" id="pre-filter" role="group" aria-label="보기">
           <button data-f="all" aria-pressed="true">전체</button>
+          <button data-f="new" aria-pressed="false">새로 잡힘</button>
           <button data-f="live" aria-pressed="false">지금 움직임</button>
           <button data-f="top" aria-pressed="false">등급 종목</button>
         </div>
@@ -2390,16 +2391,17 @@ $("set-va").onsubmit = e => { e.preventDefault();
 /* ---------- 급등 전조 목록 ---------- */
 let preData = null, preFilter = "all", preShown = 40;
 async function loadPre() {
-  const fresh = await api("/api/precursor?limit=15");
+  const fresh = await api("/api/precursor?limit=200");
   if (unchanged("pre", fresh)) return;
   preData = fresh;
   const r = preData;
   const live = (r.rows || []).filter(x => x.live.includes("wake") && x.live.includes("creep")).length;
+  const newN = (r.rows || []).filter(x => x.new).length;
   const t3 = (r.rows || []).filter(x => x.tier === 3).length, t2 = (r.rows || []).filter(x => x.tier === 2).length;
   $("k-picks").textContent = r.d0 ? `★★★ ${t3} · ★★ ${t2}` : "-";
   $("pt-pre").textContent = (r.rows || []).filter(x => x.tier).length || "";
   $("k-picks-n").textContent = r.d0 ? `${r.d0} 기준 · 표시 ${(r.rows || []).length} / 전체 ${r.n}종목` : "";
-  $("pre-sub").textContent = r.d0 ? `${r.d0} 기준 · 표시 ${(r.rows || []).length} / 전체 ${r.n}종목 · 지금 움직임 ${live} · 3초 갱신` : "아직 없음 — 수집기가 장 마감 뒤 전 종목을 계산합니다";
+  $("pre-sub").textContent = r.d0 ? `${r.d0} 기준 · 표시 ${(r.rows || []).length} / 전체 ${r.n}종목 · 새로 잡힘 ${newN} · 지금 움직임 ${live} · 3초 갱신` : "아직 없음 — 수집기가 장 마감 뒤 전 종목을 계산합니다";
   drawPre();
 }
 const SESS_SHORT = { DAY: "데이", PRE: "프리", REGULAR: "정규", AFTER: "애프터", CLOSED: "휴장" };
@@ -2446,6 +2448,7 @@ function drawPreCards(box, rows) {
     it.style.setProperty("--heat", Math.min(1, Math.abs(chg || 0) / 30).toFixed(2));
     const l = mk("div", "pc-l");
     const top = mk("div", "pc-top"); top.append(mk("b", "mono", x.symbol), mk("span", "nm", x.name || ""));
+    if (x.new) top.append(mk("span", "tg tg-live", "NEW"));
     if (x.tier) top.append(mk("span", "tg tg-tier", "★".repeat(x.tier)));
     x.live_labels.slice(0, 1).forEach(lb => top.append(mk("span", "tg tg-live", lb.replace(/^[^\p{L}]+/u, ""))));
     l.append(top);
@@ -2465,13 +2468,16 @@ function drawPreCards(box, rows) {
 function drawPre() {
   const box = $("pre-list"); box.replaceChildren();
   const all = (preData && preData.rows) || [];
-  let rows = all.filter(x => preFilter === "live" ? x.live.length : preFilter === "top" ? x.tier > 0 : true);
+  let rows = all.filter(x => preFilter === "new" ? x.new : preFilter === "live" ? x.live.length : preFilter === "top" ? x.tier > 0 : true);
+  if (preFilter === "new") {
+    rows = [...rows].sort((p, q) => String(q.created || "").localeCompare(String(p.created || "")));
+  }
   if (preSort.k !== "auto") {
     const col = PRE_COLS.find(c => c[0] === preSort.k), f = col[2];
     rows = [...rows].sort((p, q) => { const a = f(p), b = f(q); if (a == null) return 1; if (b == null) return -1;
       return (a > b ? 1 : a < b ? -1 : 0) * preSort.dir; });
   }
-  if (!rows.length) { const d = document.createElement("div"); d.className = "empty"; d.textContent = preFilter === "live" ? "지금 장중 증상이 켜진 종목이 없습니다" : "없음"; box.appendChild(d); return; }
+  if (!rows.length) { const d = document.createElement("div"); d.className = "empty"; d.textContent = preFilter === "new" ? "최근 30분 안에 새로 잡힌 종목이 없습니다" : preFilter === "live" ? "지금 장중 증상이 켜진 종목이 없습니다" : "없음"; box.appendChild(d); return; }
   if (PHONE.matches) { drawPreCards(box, rows); return; }
   const wrap = document.createElement("div"); wrap.className = "scr-wrap";
   const t = document.createElement("table"); t.className = "scr";
@@ -2497,7 +2503,9 @@ function drawPre() {
       if (k === "sym") {
         const a = document.createElement("div"); a.className = "scr-sym"; a.textContent = x.symbol;
         const n = document.createElement("span"); n.className = "scr-name"; n.textContent = x.name || "";
-        a.appendChild(n); td.appendChild(a); td.title = x.name || "";
+        a.appendChild(n);
+        if (x.new) { const b = document.createElement("span"); b.className = "tg tg-live"; b.textContent = "NEW"; a.appendChild(b); }
+        td.appendChild(a); td.title = x.name || "";
       } else if (k === "sig") {
         if (x.tier) { const b = document.createElement("span"); b.className = "tg tg-tier"; b.textContent = "★".repeat(x.tier); td.appendChild(b); }
         x.live_labels.slice(0, 1).forEach(l => { const b = document.createElement("span"); b.className = "tg tg-live"; b.textContent = l.replace(/^[^\p{L}]+/u, ""); td.appendChild(b); });

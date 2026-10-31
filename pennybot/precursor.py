@@ -441,7 +441,8 @@ def ranked(db_path: str, limit: int = 50, only_active: bool = True) -> dict:
         if not d0:
             return {"d0": None, "rows": []}
         rows = [dict(r) for r in con.execute(
-            """SELECT d.symbol, d.score, d.signals, d.metrics, d.close, l.signals AS live, l.metrics AS live_m, l.ts, l.alerted,
+            """SELECT d.symbol, d.score, d.signals, d.metrics, d.close, d.created,
+                      l.signals AS live, l.metrics AS live_m, l.ts, l.alerted,
                       (SELECT name FROM universe u WHERE u.symbol=d.symbol ORDER BY snapshot_date DESC LIMIT 1) AS name
                FROM precursor_daily d LEFT JOIN precursor_live l ON l.d0=d.d0 AND l.symbol=d.symbol
                WHERE d.d0=? ORDER BY d.score DESC, d.symbol""", (d0,))]
@@ -466,6 +467,13 @@ def ranked(db_path: str, limit: int = 50, only_active: bool = True) -> dict:
         r["metrics"] = json.loads(r["metrics"] or "{}")
         r["live"] = json.loads(r["live"] or "[]")
         r["live_m"] = json.loads(r["live_m"] or "{}")
+        try:
+            created = datetime.fromisoformat(r.get("created") or "")
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=timezone.utc)
+            r["new"] = (datetime.now(timezone.utc) - created).total_seconds() <= 1800
+        except (TypeError, ValueError):
+            r["new"] = False
         on = set(r["signals"]) - ({"vol_up"} if "vol_up_strong" in r["signals"] else set())
         r["labels"] = [lab for k, lab in DAILY_LABELS.items() if k in on]
         r["live_labels"] = [LIVE_LABELS[k] for k in r["live"]]
@@ -484,7 +492,7 @@ def ranked(db_path: str, limit: int = 50, only_active: bool = True) -> dict:
         if r["early20"]:
             r["tier"] = max(r["tier"], 1)
     if only_active:
-        rows = [r for r in rows if r["live"]
+        rows = [r for r in rows if r.get("new") or r["live"]
                 or (r["live_m"].get("dollar_3m") or 0) >= ACTIVE_MIN_DOLLAR_3M
                 or (r["live_m"].get("vol_x") or 0) >= ACTIVE_MIN_VOL_X
                 or (r["metrics"].get("vol_ratio") or 0) >= ACTIVE_MIN_DAY_VOL_RATIO]

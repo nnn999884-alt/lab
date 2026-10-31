@@ -66,6 +66,10 @@ collector:
   max_price: 10.0
   price_poll_seconds: 60      # 유니버스 전체 현재가 (200개씩 묶음)
   watch_size: 120             # 호가·1분봉을 촘촘히 받을 종목 수
+  watch_rank_slots: 50        # 최신 랭킹의 거래대금·거래량·회전율 상위
+  watch_flow_slots: 25        # 최근 터짐·수급·신선한 공시·승격 종목
+  watch_rotation_slots: 45    # 최근에 안 본 유니버스 종목 순환
+  watch_rotation_minutes: 10  # 순환 묶음 교체 주기
   orderbook_poll_seconds: 60
   candle_sync_minutes: 30
   ranking_poll_minutes: 10       # 애프터마켓

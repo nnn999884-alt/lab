@@ -106,6 +106,11 @@ class Collector:
         self.cik_to_symbol: dict[int, str] = {}
         self.watch: list[str] = []
         self.recent_filers: dict[str, datetime] = {}
+        self._watch_seen: dict[str, datetime] = {}      # 종목 → 마지막으로 감시한 시각 (순환용)
+        self._rotation: list[str] = []                  # 이번 순환 묶음
+        self._rotation_at: datetime | None = None
+        self._promoted: dict[str, datetime] = {}        # 급증·새 랭킹으로 감시에 올린 종목과 시각
+        self._watch_buckets: dict[str, int] = {}        # 수급/새 수급/순환 칸 수 (상태 표시용)
         self._next: dict[str, datetime] = {}
         try:    # 재시작해도 휴장 중 과거 패턴 자동 갱신이 바로 다시 돌지 않도록, 지난 완료 시각을 파일에서 이어받는다
             last = datetime.fromisoformat(json.loads(self._research_marker().read_text(encoding="utf-8"))["last"])
@@ -133,7 +138,9 @@ class Collector:
                      "last_frame_sec": round(rt.clock() - rt.last_frame, 1) if rt and rt.last_frame else None,
                      "connects": rt.connects if rt else 0, "subscribed": len(rt.desired()) if rt else 0,
                      "error": rt.last_error if rt else ""},
-              "watch": len(self._rt_syms), "open": sum(len(v) for v in self._vopen.values()),
+              "watch": len(self.watch), "watch_buckets": dict(self._watch_buckets),
+              "rt": len(self._rt_syms), "promoted": len(self._promoted),
+              "open": sum(len(v) for v in self._vopen.values()),
               "orders": sum(len(v) for v in self._vorders.values())}
         p = Path(self.cfg.db_path).parent / "collector_status.json"
         tmp = p.with_suffix(".tmp")
@@ -479,6 +486,9 @@ class Collector:
                 self._event(now, r["symbol"], kind,
                             f"{'⚡' if kind == 'spike_up' else '▼'} {r['symbol']} {name} 1분새 {chg:+.1f}% {word} ${r['last']:.4g}"
                             f" · {SESSION_KO.get(session, session)}{vol}", chg)
+                if kind == "spike_up":
+                    self._promote(r["symbol"], now)
+                    self._watch_now([r["symbol"]])
 
     def poll_after_movers(self, now: datetime, trade_date) -> None:
         """애프터마켓은 거래가 천천히 쌓여서 1분 급등(spike_up, +4%) 기준엔 잘 안 걸린다 — 정규장 종가 대비
@@ -599,35 +609,97 @@ class Collector:
                                                SESSION_KO.get(session, session)),
                                    buttons=alert_buttons(sym, link))
 
+    def _promote(self, sym: str, now: datetime) -> None:
+        """급증 종목을 감시 목록에 올린다."""
+        if sym not in self.universe:
+            return
+        self._promoted[sym] = now
+        cutoff = now - timedelta(minutes=self.cfg.watch_promote_minutes)
+        self._promoted = {s: t for s, t in self._promoted.items() if t >= cutoff}
+        limit = max(self.cfg.watch_flow_slots * 2, 20)
+        if len(self._promoted) > limit:
+            keep = sorted(self._promoted.items(), key=lambda kv: kv[1], reverse=True)[:limit]
+            self._promoted = dict(keep)
+
     def select_watch(self, now: datetime, trade_date) -> None:
-        """공시 > 랭킹 > 급변 순으로 감시 종목을 채운다 (모두 유니버스 안에서만)."""
+        """감시 목록: 거래대금·거래량·회전율 상위 + 새 수급 + 순환. 등락률은 쓰지 않는다."""
+        c = self.cfg
+        size = c.watch_size
+        rank_cap = max(0, min(c.watch_rank_slots, size))
+        flow_cap = max(0, min(c.watch_flow_slots, size - rank_cap))
+        rot_cap = max(0, min(c.watch_rotation_slots, size - rank_cap - flow_cap))
+        caps = {"rank": rank_cap, "flow": flow_cap, "rotation": rot_cap}
         picked: list[str] = []
+        buckets = {"rank": 0, "flow": 0, "rotation": 0}
 
-        def add(sym):
-            if sym in self.universe and sym not in picked and len(picked) < self.cfg.watch_size:
-                picked.append(sym)
+        def add(sym: str, bucket: str) -> bool:
+            if sym not in self.universe or sym in picked or len(picked) >= size:
+                return False
+            if buckets[bucket] >= caps[bucket]:
+                return False
+            picked.append(sym)
+            buckets[bucket] += 1
+            return True
 
-        cutoff = now - timedelta(hours=24)
-        for sym, t in sorted(self.recent_filers.items(), key=lambda x: x[1], reverse=True):
-            if t >= cutoff:
-                add(sym)
-        for (sym,) in self.store.query(
-                "SELECT symbol FROM rankings WHERE ts=(SELECT MAX(ts) FROM rankings) ORDER BY rank"):
-            add(sym)
-        # 급변: 이번 영업일 첫 현재가 대비 변동폭이 큰 순
-        movers = self.store.query("""
-            SELECT symbol, MIN(ts), MAX(ts) FROM prices WHERE trade_date=? GROUP BY symbol""",
-                                  (trade_date.isoformat(),))
-        first_last = []
-        for sym, t0, t1 in movers:
-            r = self.store.query("SELECT ts, last FROM prices WHERE symbol=? AND ts IN (?, ?)", (sym, t0, t1))
-            vals = dict(r)
-            if vals.get(t0):
-                first_last.append((abs(vals[t1] / vals[t0] - 1), sym))
-        for _, sym in sorted(first_last, reverse=True):
-            add(sym)
+        filing_cut = now - timedelta(minutes=c.watch_filing_minutes)
+        fresh = [s for s, t in sorted(self.recent_filers.items(), key=lambda kv: kv[1], reverse=True)
+                 if t >= filing_cut]
+        promoted = [s for s, _ in sorted(self._promoted.items(), key=lambda kv: kv[1], reverse=True)]
+        for sym in fresh + promoted:
+            add(sym, "flow")
+
+        shares = dict(self.store.query("SELECT symbol, shares FROM stock_info WHERE shares > 0"))
+        rows = self.store.query("""
+            SELECT symbol, MIN(rank) AS rank, MAX(amount) AS amount, MAX(volume) AS volume
+            FROM rankings WHERE ts=(SELECT MAX(ts) FROM rankings)
+            GROUP BY symbol""")
+        ranked = []
+        for sym, rank, amount, volume in rows:
+            if sym not in self.universe:
+                continue
+            turnover = (volume / shares[sym] * 100) if shares.get(sym) and volume else 0.0
+            ranked.append((amount or 0, turnover, volume or 0, -(rank or 10**9), sym))
+        ranked.sort(reverse=True)
+        for _, _, _, _, sym in ranked:
+            if buckets["rank"] >= rank_cap:
+                break
+            add(sym, "rank")
+
+        flow_cut = now - timedelta(minutes=c.watch_flow_minutes)
+        events = self.store.query(
+            "SELECT symbol, MAX(ts) AS t FROM events "
+            "WHERE kind IN ('burst','spike_up','steady','flow2','after_move','precursor','reaccel','approach') "
+            "AND ts >= ? GROUP BY symbol ORDER BY t DESC", (iso(flow_cut),))
+        for sym, _ in events:
+            if buckets["flow"] >= flow_cap:
+                break
+            add(sym, "flow")
+
+        epoch = datetime.min.replace(tzinfo=timezone.utc)
+        due = self._rotation_at is None or (now - self._rotation_at) >= timedelta(minutes=c.watch_rotation_minutes)
+        if due or not self._rotation:
+            pool = [s for s in self.universe if s not in picked]
+            pool.sort(key=lambda s: (self._watch_seen.get(s, epoch), s))
+            self._rotation = pool[:max(rot_cap * 2, rot_cap)]
+            self._rotation_at = now
+        for sym in self._rotation:
+            if buckets["rotation"] >= rot_cap:
+                break
+            add(sym, "rotation")
+        if buckets["rotation"] < rot_cap:
+            pool = [s for s in self.universe if s not in picked]
+            pool.sort(key=lambda s: (self._watch_seen.get(s, epoch), s))
+            for sym in pool:
+                if buckets["rotation"] >= rot_cap:
+                    break
+                add(sym, "rotation")
+
+        for sym in picked:
+            self._watch_seen[sym] = now
         self.watch = picked
-        log.info("감시 종목 %d개", len(picked))
+        self._watch_buckets = buckets
+        log.info("감시 종목 %d개 (수급 %d · 새 수급 %d · 순환 %d)",
+                 len(picked), buckets["rank"], buckets["flow"], buckets["rotation"])
 
     def sync_candles(self, now: datetime) -> None:
         counts: dict[str, int] = {}
@@ -1508,6 +1580,7 @@ class Collector:
             self._fast_hot = (d0, set())
         self._fast_hot[1].update(symbols)
         for s in symbols:
+            self._promote(s, datetime.now(timezone.utc))
             if not store.query("SELECT 1 FROM precursor_daily WHERE d0=? AND symbol=?", (d0, s)):
                 row = self._precursor_row(s, d0, store, src="fast")
                 if row:
@@ -1604,6 +1677,8 @@ class Collector:
         new = [s for s in seen if s not in self._rt_syms and s not in self._fast_hot[1]]
         if new:
             self._fast_hot[1].update(new)
+            for s in new:
+                self._promote(s, now)
             self._rt_set(list(self._rt_syms))
             for s in new:                                # 1분 감시·가상 매매용 일봉 점수 (없으면)
                 if not store.query("SELECT 1 FROM precursor_daily WHERE d0=? AND symbol=?", (d0, s)):
@@ -1635,6 +1710,7 @@ class Collector:
         if check and not (d2 >= 5e4 or (shares and 0.5 <= v2 / shares * 100 <= 1000)):
             return False                                 # 거래가 얇음
         self._fast_hot[1].add(sym)                       # 다음 1분 감시·가상 매매에 넣는다
+        self._promote(sym, now)
         if self._alerted(store, d0, sym):                # 오늘 이미 알림 → 눌렸다 다시 붙는 거면 재가속 알림
             self._reaccel_check(store, now, session, d0, sym, today, pc, shares, start)
             return True

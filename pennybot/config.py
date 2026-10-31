@@ -84,6 +84,13 @@ class CollectorConfig:
     price_poll_seconds: int = 60     # 유니버스 전체 현재가 (200개씩 묶음 조회)
     stall_restart_minutes: int = 15  # 메인 루프가 이만큼 통째로 멈추면 프로세스 재시작 (run_forever 가 다시 켬). 0 = 끔
     watch_size: int = 120            # 호가·1분봉을 촘촘히 받을 종목 수
+    watch_rank_slots: int = 50       # 최신 랭킹에서 거래대금·거래량·회전율 상위로 채울 칸
+    watch_flow_slots: int = 25       # 최근 터짐·수급·신선한 공시·승격 종목 칸
+    watch_rotation_slots: int = 45   # 최근에 안 본 유니버스 종목을 돌려 볼 칸
+    watch_rotation_minutes: int = 10 # 순환 묶음을 바꾸는 주기
+    watch_filing_minutes: int = 60   # 공시는 이 시간 안에서만 새 수급으로 우선
+    watch_flow_minutes: int = 30     # 이 시간 안의 터짐·수급 이벤트를 새 수급으로
+    watch_promote_minutes: int = 30  # 급증 종목을 감시 목록에 유지하는 시간
     orderbook_poll_seconds: int = 60
     candle_sync_minutes: int = 30    # 감시 종목 1분봉 동기화 주기 (세션 종료 시에도 실행)
     ranking_poll_minutes: int = 10   # 휴장·애프터마켓
