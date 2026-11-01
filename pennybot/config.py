@@ -143,6 +143,9 @@ class CollectorConfig:
     universe_refresh_hours: int = 24
     research_auto: bool = True       # 휴장 중(주말 포함) 틈틈이 python -m pennybot research 를 자동으로 다시 돌려 과거 급등주 패턴(분석 탭)을 최신화
     research_refresh_days: int = 7   # 이 날짜 간격으로 (휴장 중에만 시작, 장중엔 안 건드림)
+    db_cleanup: bool = True          # 하루에 한 번 오래된 원시 데이터를 지워 market.db 가 무한정 커지는 것을 막음
+    db_retain_tick_days: int = 14    # prices/quotes/rankings/events (틱·호가·랭킹 원본) 보관 기간
+    db_retain_bar_days: int = 400    # bars_1m (1분봉, 백테스트·signal-audit 재료) 보관 기간 — 길게
 
 
 @dataclass
@@ -307,6 +310,38 @@ class TradingConfig:
                  "pullback_pct": 5.0, "min_session_minutes": 30,
                  "take_profit_pct": 20.0, "stop_loss_pct": 50.0, "scale_out_pct": 0.5, "trail_pct": 5.0,
                  "gap_risk_pct": 25.0},
+        # 2026-11-01 편향 없는 재검증(bars_1m 전체 1,758종목, 날짜순 2/3 학습·1/3 홀드아웃, 그리드 2번)으로 확인:
+        # 정규장·프리마켓은 "세션 시작가 대비 +15% 터진 뒤 고점 대비 눌림목에서 받기"가 홀드아웃에서도 이김
+        # (정규장 승률 63~64%·중앙값 +5~7%, 프리마켓 승률 62~67%·중앙값 +9~12%). 데이·애프터마켓은 표본이
+        # 적어 그리드를 넓히면 결과가 뒤집혀(오버핏) 제외. stop/horizon 은 그리드가 두 번 다 상한을 그대로
+        # 골라서(그 이상은 안 보여줘서 모름) 정확한 최적치가 아니라 두 그리드 결과의 중간값으로 보수적으로 잡음.
+        "session_pop": {"enabled": True, "budget_pct": 0.15, "max_positions": 2,
+                        "trigger_pct": 15.0, "stop_loss_pct_override": 0.0, "take_profit_pct_override": 0.0,
+                        "gap_risk_pct": 25.0,
+                        "by_session": {
+                            "REGULAR": {"pullback_pct": 15.0, "take_profit_pct": 15.0,
+                                        "stop_loss_pct": 50.0, "horizon_minutes": 180},
+                            "PRE": {"pullback_pct": 20.0, "take_profit_pct": 20.0,
+                                    "stop_loss_pct": 50.0, "horizon_minutes": 240},
+                        }},
+        # 2026-11-01 같은 방식으로 확인: "데이마켓 끝 매수 → 프리마켓 시작 매도"는 전일 거래량이 20일
+        # 평균(중앙값)의 상위 25%(연구 표본 대략 7배+)인 종목만 걸렀을 때 학습·검증이 어긋나지 않았음
+        # (+1.1%/+1.0%, 승률 43~45%). 승률이 50% 밑이라 소수 큰 건이 평균을 끄는 구조라 budget 작게,
+        # 아직 다른 대안(완전히 다른 신호)도 검토 중이라 기본은 꺼둠 — 켤지는 session_pop 모의매매 결과를
+        # 본 뒤 결정.
+        # 2026-11-01 핸드오프 규칙 탐색(수수료 1.5% 차감, 3구간 모두 플러스)에서 애프터마켓만 통과: 애프터가
+        # -2.7% 이하로 밀려 세션 하위 15%에 마감 → 다음 프리마켓 시작에 매도. 구간 갈수록 약해지고 실제 애프터
+        # 스프레드(중앙값 10%)가 커서 max_spread_pct 로 좁은 종목만 산다 — 모의매매로 검증. 이 전략만 아침 전량
+        # 청산(flatten_kst)·진입 차단(entry_cutoff_kst) 제외(KEEP_OVERNIGHT).
+        "after_dip": {"enabled": True, "budget_pct": 0.10, "max_positions": 2,
+                      "late_window_minutes": 25, "min_bars": 5, "max_session_ret_pct": -2.7,
+                      "max_close_loc": 0.15, "max_spread_pct": 1.5, "entry_discount_pct": 0.0,
+                      "stop_loss_pct_override": 0.0, "stop_loss_pct": 25.0, "take_profit_pct": 30.0,
+                      "exit_after_pre_minutes": 90, "gap_risk_pct": 25.0},
+        "day_handoff": {"enabled": False, "budget_pct": 0.10, "max_positions": 2,
+                        "late_window_minutes": 120, "min_vol_ratio": 5.0, "min_dollar": 5e5,
+                        "entry_discount_pct": 0.5, "stop_loss_pct_override": 0.0,
+                        "stop_loss_pct": 25.0, "take_profit_pct": 20.0, "gap_risk_pct": 25.0},
     })
 
     def spread_cap(self, session: str) -> float:

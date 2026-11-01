@@ -22,11 +22,12 @@ from .dilution import Event, classify, clean_text
 
 log = logging.getLogger(__name__)
 
+# 2026-11-01 실제 요청으로 확인: GlobeNewswire·BusinessWire 는 정직한 User-Agent(브라우저로 위장하지 않음)를
+# 전부 403 으로 막음(RSS 뿐 아니라 사이트 자체). AccessWire 는 accessnewswire.com 으로 바뀌면서 RSS 경로를
+# robots.txt 에서 통째로 Disallow 함(404). 셋 다 URL을 고친다고 되는 게 아니라 접근 자체가 막혀 있어서 뺐다.
+# PRNewswire 만 살아 있음을 확인(20건 수신). 새 피드를 추가하기 전엔 python -m pennybot.news 류로 먼저 확인할 것.
 DEFAULT_FEEDS = [
-    "https://www.globenewswire.com/RssFeed/orgclass/1/feedTitle/GlobeNewswire%20-%20News%20about%20Public%20Companies",
     "https://www.prnewswire.com/rss/news-releases-list.rss",
-    "https://feed.businesswire.com/rss/home/?rss=G1QFDERJXkJeEFtRWA==",
-    "https://www.accesswire.com/rss/latest",
 ]
 
 _TICKER = re.compile(r"\(?\b(NASDAQ|Nasdaq|NYSE American|NYSE Arca|NYSE MKT|NYSE|AMEX|NasdaqCM|NasdaqGM|NasdaqGS)"

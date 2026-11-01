@@ -232,6 +232,17 @@ class Collector:
         from pathlib import Path
         return Path(self.cfg.db_path).parent / "research_auto.json"
 
+    def cleanup_db(self, now: datetime) -> None:
+        """market.db 가 무한정 커지는 것을 막는다. prices/quotes/rankings/events 는 원시 데이터라 짧게,
+        bars_1m 은 백테스트·signal-audit 재료라 길게 보관한다. 파일 크기 자체를 줄이는 VACUUM 은 무겁고
+        쓰기를 막으므로 여기서는 하지 않는다 — 필요하면 수집기를 멈추고 `python -m pennybot vacuum-db`."""
+        tick_cutoff = (now.date() - timedelta(days=self.cfg.db_retain_tick_days)).isoformat()
+        bar_cutoff = (now.date() - timedelta(days=self.cfg.db_retain_bar_days)).isoformat()
+        counts = self.store.prune(tick_cutoff, bar_cutoff)
+        total = sum(counts.values())
+        if total:
+            log.info("DB 정리: %s (틱 기준 %s 이전, 1분봉 기준 %s 이전)", counts, tick_cutoff, bar_cutoff)
+
     def _maybe_research_refresh(self, now: datetime) -> None:
         """장이 닫혀 있을 때(주말 포함) 틈틈이 python -m pennybot research 를 다시 돌려 과거 급등주 패턴(분석 탭)을 최신화.
         research.db 를 archive_1m 과 동시에 쓰지 않도록, 그 스레드가 돌고 있으면 이번 주기는 건너뛴다 (다음 주기에 다시 시도)."""
@@ -290,6 +301,8 @@ class Collector:
 
         if self._due("status", now, timedelta(seconds=15)):
             self._run("status", self.write_status, now, session)
+        if c.db_cleanup and self._due("db_cleanup", now, timedelta(hours=24)):
+            self._run("db_cleanup", self.cleanup_db, now)
         if self._due("account", now, timedelta(seconds=10 if session != CLOSED else 300)):
             self._run("account", self.write_account, now)
         if self._last_session is None:

@@ -812,7 +812,8 @@ class Trader:
         if not (scaled and trail):
             if now >= datetime.fromisoformat(t["sell_from"]):
                 return "매도 구간", False, left
-            if now >= self._morning_cutoff(t["entry_ts"]):
+            keep = getattr(self.strategies.get(t["strategy"]), "KEEP_OVERNIGHT", False)
+            if not keep and now >= self._morning_cutoff(t["entry_ts"]):
                 return "장 마감 전 정리", False, left   # 전략 매도 시각이 늦게 잡혀도 이 시각엔 무조건 정리
         return None
 
@@ -944,9 +945,11 @@ class Trader:
             counts[sym] = counts.get(sym, 0) + 1
 
     def scan_and_enter(self, now: datetime, trade_date, session: str) -> None:
-        if self._kst_entry_blocked(now):
+        kst_blocked = self._kst_entry_blocked(now)
+        if kst_blocked:
             self.status["last_scan"] = now.isoformat(timespec="seconds")
-            return
+            if not any(getattr(s, "KEEP_OVERNIGHT", False) for s in self.strategies.values()):
+                return
         day = self.cal.bounds(trade_date, DAY)
         if day and now < day[0] + timedelta(minutes=self.tcfg.day_open_wait_minutes):
             return    # 데이마켓 개장 직후는 호가가 얇다
@@ -955,6 +958,8 @@ class Trader:
                   held={t["symbol"] for t in open_trades})
         plans = []
         for name, strat in self.strategies.items():
+            if kst_blocked and not getattr(strat, "KEEP_OVERNIGHT", False):
+                continue
             enabled, why = self.risk.strategy_enabled(name)
             if not enabled:
                 continue

@@ -268,6 +268,28 @@ def test_catch_up_summaries_on_start(tmp_path):
     assert store.query("SELECT COUNT(*) FROM session_summary WHERE trade_date='2026-10-21'")[0][0] >= 1
 
 
+def test_prune_keeps_recent_ticks_and_old_bars(tmp_path):
+    store = Store(tmp_path / "m.db")
+    store.put_prices([{"symbol": "PEN", "ts": "2026-01-01T00:00:00+00:00", "trade_date": "2026-01-01",
+                       "session": "REGULAR", "last": 1.0, "price_ts": None},
+                      {"symbol": "PEN", "ts": "2026-10-30T00:00:00+00:00", "trade_date": "2026-10-30",
+                       "session": "REGULAR", "last": 1.0, "price_ts": None}])
+    store.put_rankings([{"ts": "2026-01-01T00:00:00+00:00", "trade_date": "2026-01-01", "session": "REGULAR",
+                         "type": "amount", "duration": "1d", "rank": 1, "symbol": "PEN", "last": 1.0,
+                         "base": 1.0, "change_rate": 0.0, "volume": 1, "amount": 1, "ranked_at": None}])
+    store.put_events([{"ts": "2026-01-01T00:00:00+00:00", "symbol": "PEN", "kind": "spike", "text": "", "value": 1.0}])
+    store.put_bars([{"symbol": "PEN", "ts": "2026-01-01T00:00:00+00:00", "trade_date": "2026-01-01",
+                     "session": "REGULAR", "open": 1, "high": 1, "low": 1, "close": 1, "volume": 1},
+                    {"symbol": "PEN", "ts": "2026-10-30T00:00:00+00:00", "trade_date": "2026-10-30",
+                     "session": "REGULAR", "open": 1, "high": 1, "low": 1, "close": 1, "volume": 1}])
+
+    counts = store.prune(tick_cutoff_date="2026-10-01", bar_cutoff_date="2026-06-01")
+
+    assert counts == {"prices": 1, "quotes": 0, "rankings": 1, "events": 1, "bars_1m": 1}
+    assert store.query("SELECT trade_date FROM prices") == [("2026-10-30",)]
+    assert store.query("SELECT trade_date FROM bars_1m") == [("2026-10-30",)]   # 2026-01-01 1분봉은 보관 기간(6개월) 전이라 같이 지워짐
+
+
 def test_calendar_failure_falls_back_to_static_then_retries():
     from datetime import datetime
 

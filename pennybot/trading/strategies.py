@@ -42,6 +42,9 @@ STRATEGY_KO = {
     "rebound": "역추세 반등",
     "surge": "급등 추격",
     "pump": "급등 눌림",
+    "session_pop": "세션 터짐 눌림",
+    "day_handoff": "데이 거래량 핸드오프",
+    "after_dip": "애프터 눌림 마감 반등",
 }
 SESSION_KO = {"DAY": "데이마켓", "PRE": "프리마켓", "REGULAR": "정규장", "AFTER": "애프터마켓", "CLOSED": "휴장"}
 LABEL = {"ATM_TERMINATED": "ATM 종료", "REGISTRATION_WITHDRAWN": "증자 등록 철회",
@@ -194,6 +197,7 @@ def dilution_gate(sym: str, price: float, ctx: Ctx, has_catalyst: bool, max_flag
 class Strategy:
     name = ""
     SESSIONS = {DAY}   # 이 세션에서만 신규 매수 (대부분 '데이마켓에 사서 그날 밤 판다' 구조라 데이마켓만)
+    KEEP_OVERNIGHT = False   # True 면 매일 아침 전량 청산(flatten_kst)·진입 차단(entry_cutoff_kst) 대상에서 제외
 
     def __init__(self, params: dict):
         self.p = params
@@ -564,3 +568,11 @@ ALL.update(SETUP_ALL)
 from .groups import Pullback, Rebound, Surge   # noqa: E402  (setups 를 합친 뒤 마지막에)
 
 ALL.update({cls.name: cls for cls in (Pullback, Rebound, Surge)})
+
+from .sessionpop import SessionPop   # noqa: E402
+from .dayhandoff import DayHandoff   # noqa: E402
+from .afterdip import AfterDip   # noqa: E402
+
+ALL[SessionPop.name] = SessionPop
+ALL[DayHandoff.name] = DayHandoff
+ALL[AfterDip.name] = AfterDip

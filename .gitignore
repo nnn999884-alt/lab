@@ -9,7 +9,13 @@ state_demo/
 tools/
 
 .omc/
+.omo/
 
 # 테스트·점검 스크립트가 남기는 파일
 pe.json
 *.tmp
+tmp_*.py
+tmp_*.txt
+
+# 차트 사이트에서 내린 CSV 등 (state/screens/*.csv 는 state/ 로 이미 제외됨)
+/*.csv

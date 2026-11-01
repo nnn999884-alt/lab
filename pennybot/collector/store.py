@@ -181,6 +181,24 @@ class Store:
         r = self.query("SELECT MAX(ts) FROM bars_1m WHERE symbol=?", (symbol,))
         return r[0][0] if r else None
 
+    def prune(self, tick_cutoff_date: str, bar_cutoff_date: str) -> dict[str, int]:
+        """원시 틱(prices/quotes/rankings)은 짧게, 1분봉(bars_1m)은 길게 보관한다.
+
+        prices/quotes 는 PK가 (symbol, ts) 라 trade_date 인덱스(ix_*_day)로 지워진다.
+        events 는 trade_date 가 없어 ts 문자열(ISO, UTC)을 그대로 날짜 컷오프와 비교한다
+        (ISO 포맷이라 문자열 비교 = 시간 비교)."""
+        counts = {}
+        with self.db:
+            for table in ("prices", "quotes", "rankings"):
+                cur = self.db.execute(f"DELETE FROM {table} WHERE trade_date < ?", (tick_cutoff_date,))
+                counts[table] = cur.rowcount
+            cur = self.db.execute("DELETE FROM events WHERE ts < ?", (tick_cutoff_date,))
+            counts["events"] = cur.rowcount
+            cur = self.db.execute("DELETE FROM bars_1m WHERE trade_date < ?", (bar_cutoff_date,))
+            counts["bars_1m"] = cur.rowcount
+        self.db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        return counts
+
     def summarize(self, trade_date: str) -> int:
         """1분봉 + 호가 스냅샷 → 세션 요약. 체결이 없는 세션도 호가 기록이 있으면 남긴다."""
         with self.db:

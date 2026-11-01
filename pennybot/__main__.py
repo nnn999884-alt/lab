@@ -9,6 +9,7 @@
   python -m pennybot signal-audit --days 30  # 신호 감사 (5초 스캔 → 독립 신호, +5%/−5% 선도달)
   python -m pennybot tunnel                # 대시보드 외부 주소 (cloudflared, 주소는 알림으로, 비밀번호 없으면 보기 전용)
   python -m pennybot probe-orders --symbol SYM --yes-real-order   # 토스 정정·취소 동작 실계좌 확인 (1주)
+  python -m pennybot vacuum-db              # market.db/trading.db 파일 크기 줄이기 (collect/trade 끈 상태에서)
   python -m pennybot screen                # (구) Coil & Catalyst 스크리닝
   python -m pennybot run [--once]          # (구) 매매 루프
 """
@@ -177,6 +178,21 @@ def cmd_signal_audit(cfg: Config, days: int, gap: int, horizon: int) -> None:
     print(text(rep, days))
     if not rep.get("error"):
         print(f"\n저장: {save(rep, cfg.state_dir)}")
+
+
+def cmd_vacuum_db(cfg: Config) -> None:
+    """DELETE 만으로는 빈 페이지가 재사용될 뿐 파일이 작아지지 않는다. collect/trade 를 끈 상태에서
+    실행할 것 (파일을 통째로 다시 쓰므로 그동안 다른 프로세스의 쓰기를 막는다)."""
+    import sqlite3
+    for name, path in (("market.db", cfg.collector.db_path), ("trading.db", cfg.trading.db_path)):
+        if not Path(path).exists():
+            continue
+        before = Path(path).stat().st_size
+        con = sqlite3.connect(path)
+        con.execute("VACUUM")
+        con.close()
+        after = Path(path).stat().st_size
+        print(f"{name}: {before / 1e6:.0f}MB -> {after / 1e6:.0f}MB")
 
 
 def cmd_trade(cfg: Config, once: bool) -> None:
@@ -620,7 +636,8 @@ def main() -> None:
     ap.add_argument("command", nargs="?", default="collect",
                     choices=["check", "accounts", "collect", "summarize", "audit", "signal-audit", "trade", "dashboard",
                              "probe-orders", "backtest", "research", "bigruns", "chart30", "trigger", "anatomy",
-                             "telegram-setup", "tunnel", "screen", "run", "backfill-daily", "backfill-minutes"])
+                             "telegram-setup", "tunnel", "screen", "run", "backfill-daily", "backfill-minutes",
+                             "vacuum-db"])
     ap.add_argument("--config", default="config.yaml")
     ap.add_argument("--once", action="store_true", help="collect/run: 한 번만 실행")
     ap.add_argument("--date", help="summarize: 미국 영업일 YYYY-MM-DD")
@@ -711,6 +728,7 @@ def _dispatch(cfg, args) -> None:
         "run": lambda: cmd_run(cfg, args.once),
         "backfill-daily": lambda: cmd_backfill_daily(cfg, args),
         "backfill-minutes": lambda: cmd_backfill_minutes(cfg, args),
+        "vacuum-db": lambda: cmd_vacuum_db(cfg),
     }[args.command]()
 
 
