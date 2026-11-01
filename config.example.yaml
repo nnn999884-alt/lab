@@ -105,7 +105,7 @@ trading:
   backstop_buffer_pct: 3        # 봇 손절가보다 3% 아래에 감시
   backstop_slippage_pct: 8      # 발동 시 지정가 = 감시가 −8%
   use_stream: true              # 토스 웹소켓 (pip install websocket-client). 끊기면 자동으로 REST
-  scan_seconds: 1               # 전략 스캔 주기
+  scan_seconds: 3               # 전략 스캔 주기
   tick_seconds: 0.5             # 주문·청산 확인 주기
   entry_ttl_seconds: 60         # 미체결 매수 취소까지
   exit_reprice_seconds: 15      # 매도 재호가 주기

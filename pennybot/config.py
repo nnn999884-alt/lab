@@ -160,7 +160,7 @@ class TradingConfig:
         "REGULAR": 1.5, "PRE": 2.0, "AFTER": 3.0, "DAY": 5.0})
     entry_cutoff_minutes: int = 30       # 데이마켓 종료 30분 전부터 신규 매수 중단
     scan_minutes: int = 5            # (예전 설정, scan_seconds 가 우선)
-    scan_seconds: int = 1           # 전략 스캔 간격 (초 단위 실행)
+    scan_seconds: int = 3           # 전략 스캔 간격 (틱은 0.5초, 진입 신호는 1분/5분봉 기준)
     tick_seconds: float = 0.5       # 매매 엔진 틱 간격 (주문·청산 확인)
     forced_exit_minutes: int = 60        # 정규장 개장 후 N분에 전량 청산
     entry_ttl_seconds: int = 60          # 매수 지정가 미체결 시 취소
