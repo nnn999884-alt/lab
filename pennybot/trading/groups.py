@@ -17,6 +17,9 @@ class Group(Strategy):
     SOURCES: tuple = ()
 
     def scan(self, ctx: Ctx) -> list[Plan]:
+        sessions = self.p.get("sessions")
+        if sessions and ctx.session not in sessions:
+            return []
         best: dict[str, Plan] = {}
         for cls in self.SOURCES:
             if ctx.session not in cls.SESSIONS:
