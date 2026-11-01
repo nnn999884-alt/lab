@@ -225,6 +225,7 @@ python -m pennybot backfill-minutes --pages 50 --limit 100
 | `telegram-setup` | 텔레그램 chat id 찾기 |
 | `summarize --date 2026-10-21` | 그 영업일의 세션 요약 다시 만들기 |
 | `audit [--days 30]` | 청산 감사: 매도 사유별 손익, 보유 중 최고가, 청산 후 1시간 가격, 조기 청산 의심 |
+| `signal-audit [--days 30]` | 신호 감사: 5초 스캔을 독립 신호로 묶고, 신호 후 +5%/−5% 선도달·MFE/MAE·+5%까지 시간 |
 | `research [--days 180] [--min-pct 30] [--no-edgar]` | 과거 데이터로 가설 검증 (데이마켓 재현, 공매도·희석·부양 동기별) |
 | `bigruns [--no-intraday]` | +500% 급등 사례의 급등 전 차트·데이마켓 분석 vs 비교군 |
 | `chart30` | 급등 전 30일 일봉 조건 찾기 (학습/검증 분리) |

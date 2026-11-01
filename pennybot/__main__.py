@@ -6,6 +6,7 @@
   python -m pennybot trade [--once]        # 세션 매매 엔진 (mode: paper 기본, live 는 이중 확인)
   python -m pennybot dashboard [--demo]    # 로컬 대시보드 http://127.0.0.1:8050 (--demo: 예시 데이터)
   python -m pennybot research [--days 180]  # 과거 데이터로 가설 검증 (데이마켓 재현, 공매도·희석·부양 동기별)
+  python -m pennybot signal-audit --days 30  # 신호 감사 (5초 스캔 → 독립 신호, +5%/−5% 선도달)
   python -m pennybot tunnel                # 대시보드 외부 주소 (cloudflared, 주소는 알림으로, 비밀번호 없으면 보기 전용)
   python -m pennybot probe-orders --symbol SYM --yes-real-order   # 토스 정정·취소 동작 실계좌 확인 (1주)
   python -m pennybot screen                # (구) Coil & Catalyst 스크리닝
@@ -168,6 +169,14 @@ def cmd_summarize(cfg: Config, date: str) -> None:
 def cmd_audit(cfg: Config, days: int) -> None:
     from .audit import report, text
     print(text(report(cfg.trading.db_path, cfg.collector.db_path, days), days))
+
+
+def cmd_signal_audit(cfg: Config, days: int, gap: int, horizon: int) -> None:
+    from .signalaudit import report, save, text
+    rep = report(cfg.trading.db_path, cfg.collector.db_path, days, gap, horizon)
+    print(text(rep, days))
+    if not rep.get("error"):
+        print(f"\n저장: {save(rep, cfg.state_dir)}")
 
 
 def cmd_trade(cfg: Config, once: bool) -> None:
@@ -609,9 +618,9 @@ def _release_lock(path) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description="미국 페니주 자동매매 (토스증권)")
     ap.add_argument("command", nargs="?", default="collect",
-                    choices=["check", "accounts", "collect", "summarize", "audit", "trade", "dashboard", "probe-orders",
-                             "backtest", "research", "bigruns", "chart30", "trigger", "anatomy", "telegram-setup", "tunnel", "screen", "run",
-                             "backfill-daily", "backfill-minutes"])
+                    choices=["check", "accounts", "collect", "summarize", "audit", "signal-audit", "trade", "dashboard",
+                             "probe-orders", "backtest", "research", "bigruns", "chart30", "trigger", "anatomy",
+                             "telegram-setup", "tunnel", "screen", "run", "backfill-daily", "backfill-minutes"])
     ap.add_argument("--config", default="config.yaml")
     ap.add_argument("--once", action="store_true", help="collect/run: 한 번만 실행")
     ap.add_argument("--date", help="summarize: 미국 영업일 YYYY-MM-DD")
@@ -628,7 +637,9 @@ def main() -> None:
     ap.add_argument("--param", action="append", help="backtest: 설정 덮어쓰기 (예: runner_overnight.trail_pct=6)")
     ap.add_argument("--with-edgar", action="store_true", help="backtest: SEC 희석 프로필 사용 (네트워크 필요)")
     ap.add_argument("--out", help="backtest: 결과 폴더")
-    ap.add_argument("--days", type=int, default=180, help="research: 과거 며칠 (급등일 기준)")
+    ap.add_argument("--days", type=int, default=180, help="research/signal-audit/audit: 최근 며칠")
+    ap.add_argument("--gap-minutes", type=int, default=30, help="signal-audit: 같은 종목 신호를 새로 볼 간격(분)")
+    ap.add_argument("--horizon", type=int, default=60, help="signal-audit: 신호 후 몇 분까지 볼지")
     ap.add_argument("--no-edgar", action="store_true", help="research: SEC 공시 판정 생략 (빠름)")
     ap.add_argument("--no-intraday", action="store_true", help="bigruns: 1분봉(데이마켓) 분석 생략 (빠름)")
     ap.add_argument("--min-pct", type=float, default=30.0, help="research: 급등 기준 %%")
@@ -684,6 +695,7 @@ def _dispatch(cfg, args) -> None:
         "collect": lambda: cmd_collect(cfg, args.once),
         "summarize": lambda: cmd_summarize(cfg, args.date),
         "audit": lambda: cmd_audit(cfg, args.days),
+        "signal-audit": lambda: cmd_signal_audit(cfg, args.days, args.gap_minutes, args.horizon),
         "trade": lambda: cmd_trade(cfg, args.once),
         "dashboard": lambda: cmd_dashboard(cfg, args.port, args.demo),
         "probe-orders": lambda: cmd_probe_orders(cfg, args.symbol, args.yes_real_order),
