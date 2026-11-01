@@ -70,6 +70,7 @@ collector:
   watch_flow_slots: 25        # 최근 터짐·수급·신선한 공시·승격 종목
   watch_rotation_slots: 45    # 최근에 안 본 유니버스 종목 순환
   watch_rotation_minutes: 10  # 순환 묶음 교체 주기
+  fast_scan_seconds: 2        # 실시간 랭킹 훑기 (초 단위 실행)
   orderbook_poll_seconds: 60
   candle_sync_minutes: 30
   ranking_poll_minutes: 10       # 애프터마켓
@@ -104,7 +105,12 @@ trading:
   backstop_buffer_pct: 3        # 봇 손절가보다 3% 아래에 감시
   backstop_slippage_pct: 8      # 발동 시 지정가 = 감시가 −8%
   use_stream: true              # 토스 웹소켓 (pip install websocket-client). 끊기면 자동으로 REST
-  order_poll_fallback_seconds: 30
+  scan_seconds: 1               # 전략 스캔 주기
+  tick_seconds: 0.5             # 주문·청산 확인 주기
+  entry_ttl_seconds: 60         # 미체결 매수 취소까지
+  exit_reprice_seconds: 15      # 매도 재호가 주기
+  stream_max_age_seconds: 2     # 웹소켓 호가가 이보다 오래되면 REST
+  order_poll_fallback_seconds: 5
   # 2026-10-31: runner_overnight·dilution_catalyst·day_ignition 은 기본 꺼짐.
   # 그룹 전략(pullback/rebound/surge/pump)과 당일 셋업(squeeze·news·session_gap·accumulation·reversal)은
   # pennybot/config.py 의 기본값을 따릅니다. 바꾸고 싶은 키만 여기에 적으면 그 값이 우선합니다.

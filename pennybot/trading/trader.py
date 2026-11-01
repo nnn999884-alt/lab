@@ -208,7 +208,9 @@ class Trader:
             return None
 
     def run(self, sleep=time.sleep) -> None:
-        log.info("매매 엔진 시작 (mode=%s)", self.journal.mode)
+        tick = max(0.1, getattr(self.tcfg, "tick_seconds", 0.5))
+        log.info("매매 엔진 시작 (mode=%s, tick=%.1fs, scan=%ss)",
+                 self.journal.mode, tick, getattr(self.tcfg, "scan_seconds", 0))
         while True:
             try:
                 self.tick()
@@ -217,10 +219,10 @@ class Trader:
                 self.notifier.send(msg.warn("매매 엔진 오류", f"{type(e).__name__}: {e}"[:300],
                                             "같은 오류는 30분에 한 번만 알립니다. 반복되면 state/logs/trade.log 확인"),
                                    key="tick-error", every=1800)
-            for _ in range(10):          # 5초 간격, 주문 이벤트가 오면 바로 다음 틱
+            for _ in range(max(1, int(tick / 0.1))):
                 if self.stream is not None and self.stream.has_events():
                     break
-                sleep(0.5)
+                sleep(0.1)
 
     def _entry_window(self, now: datetime, trade_date) -> bool:
         b = self.cal.bounds(trade_date, DAY)
@@ -1003,8 +1005,12 @@ class Trader:
         unrealized = self._unrealized(open_trades) if any(p.ok for p in plans) else 0.0
         for p in sorted((p for p in plans if p.ok), key=lambda p: p.score, reverse=True):
             sp = self.tcfg.strategies.get(p.strategy) or {}
-            sl = sp.get("stop_loss_pct_override") or getattr(self.tcfg, "stop_loss_pct_override", 0)
-            tp = sp.get("take_profit_pct_override") or getattr(self.tcfg, "take_profit_pct_override", 0)
+            sl = sp.get("stop_loss_pct_override")
+            if sl is None:
+                sl = getattr(self.tcfg, "stop_loss_pct_override", 0)
+            tp = sp.get("take_profit_pct_override")
+            if tp is None:
+                tp = getattr(self.tcfg, "take_profit_pct_override", 0)
             if sl:
                 p.stop = p.price * (1 - sl / 100)
             if tp:

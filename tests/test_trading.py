@@ -622,8 +622,9 @@ def test_day_dip_off_by_default(env):
 
 
 def test_exit_reprice_counts_once_per_order_and_final_limit(env):
-    """취소 처리 중(실거래 PENDING_CANCEL)에 매 틱 재취소·재호가 카운트가 쌓이면 안 된다."""
+    """한 처리 주기(실거래 PENDING_CANCEL)에 한 틱마다 재호가 횟수를 올리면 안 된다."""
     tr, market, mv, clock, j, ctl, ex = env
+    tr.tcfg.exit_reprice_seconds = 60
     market.set("PEN", 1.03, 1.035)
     tr.tick()
     tid = j.q("SELECT id FROM trades")[0]["id"]
@@ -870,6 +871,7 @@ class FakeStream:
 def test_stream_events_drive_order_polling(env):
     tr, market, mv, clock, j, ctl, ex = env
     tr.tcfg.entry_ttl_seconds = 10_000
+    tr.tcfg.order_poll_fallback_seconds = 30
     st = tr.stream = FakeStream()
     market.set("PEN", 1.00, 1.025)                    # 미체결 매수
     tr.tick()

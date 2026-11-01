@@ -102,7 +102,7 @@ class CollectorConfig:
     precursor_min_score: int = 5     # 장중 감시·알림 대상 일봉 점수 (최대 10)
     precursor_live_max: int = 80     # 장중 감시 종목 수 상한 (1분에 이만큼 1분봉 조회)
     precursor_rank_max: int = 40     # 목록 밖이라도 지금 랭킹(급등률·거래대금·거래량)에 든 종목을 이만큼 더 장중 감시
-    fast_scan_seconds: int = 3      # 거래대금·거래량 실시간 랭킹을 이 간격으로 봐서 새로 든 종목을 바로 실시간 구독 (0 = 끔)
+    fast_scan_seconds: int = 2      # 거래대금·거래량 실시간 랭킹을 이 간격으로 봐서 새로 든 종목을 바로 실시간 구독 (0 = 끔)
     realtime_alerts: bool = True     # 웹소켓 체결로 실시간 알림 (계정당 연결 2개 중 1개 사용, 끊기면 1분 확인으로 대체)
     halt_alerts: bool = True         # 뉴스 대기 거래정지가 뜨면 바로 알림 + 실시간 구독 (재개 순간 거래 터짐을 잡게)
     pre_open_watch: bool = True      # 03:55 ET: 데이마켓에서 움직인 종목을 '프리 개장 주목' 으로 다시 알리고 실시간 구독 고정
@@ -160,9 +160,10 @@ class TradingConfig:
         "REGULAR": 1.5, "PRE": 2.0, "AFTER": 3.0, "DAY": 5.0})
     entry_cutoff_minutes: int = 30       # 데이마켓 종료 30분 전부터 신규 매수 중단
     scan_minutes: int = 5            # (예전 설정, scan_seconds 가 우선)
-    scan_seconds: int = 5           # 전략 스캔 간격 (후보 호가는 웹소켓 실시간)
+    scan_seconds: int = 1           # 전략 스캔 간격 (초 단위 실행)
+    tick_seconds: float = 0.5       # 매매 엔진 틱 간격 (주문·청산 확인)
     forced_exit_minutes: int = 60        # 정규장 개장 후 N분에 전량 청산
-    entry_ttl_seconds: int = 180         # 매수 지정가 미체결 시 취소
+    entry_ttl_seconds: int = 60          # 매수 지정가 미체결 시 취소
     entry_reprice_limit: int = 1         # 취소 전에 최우선 매도호가로 한 번 따라가 볼 횟수 (0 = 예전처럼 바로 취소)
     entry_chase_pct: float = 2.0         # 그때 허용하는 추격폭 (처음 지정가 대비 %). 넘으면 체결 포기
     fill_flush_seconds: int = 15
@@ -186,7 +187,7 @@ class TradingConfig:
     flatten_kst: str = ""                # "08:50" 이면 매일 이 시각(KST) 전량 청산 (빈 값 = morning_flatten_et 사용)
     entry_cutoff_kst: str = ""           # "08:20" 이면 이 시각~flatten 사이 신규 진입 중단
     max_unfilled_entries: int = 0        # 0 = 끔. (예전: 같은 종목 3번 미체결이면 그날 제외 — 사용자 요청으로 삭제)
-    exit_reprice_seconds: int = 60       # 매도 지정가 재호가 주기
+    exit_reprice_seconds: int = 15       # 매도 지정가 재호가 주기
     exit_slippage_pct: float = 1.0       # 강제 청산 매도가 = bid × (1 − x%)
     max_exit_reprices: int = 3           # 정규장에서 이 횟수 넘게 안 팔리면 최종 청산가로
     final_exit_slippage_pct: float = 5.0 # 최종 청산 지정가 = bid × (1 − x%). 호가가 아예 없을 때만 시장가
@@ -206,8 +207,8 @@ class TradingConfig:
     session_transition_buffer_minutes: int = 3   # 세션 전환 전후 이 시간 동안은 장통합 호가 오류 때문에 손절 보류
     fee_pct: float = 0.1                 # 매매 수수료 % (실거래는 시작할 때 토스 /commissions 값으로 덮어씀)
     use_stream: bool = True              # 토스 웹소켓(호가·체결·내 주문 이벤트). 끊기면 자동으로 REST
-    stream_max_age_seconds: float = 5.0  # 웹소켓 호가가 이보다 오래되면 REST 호가
-    order_poll_fallback_seconds: int = 30  # 웹소켓 연결 중에도 주문을 이 주기로는 REST 확인
+    stream_max_age_seconds: float = 2.0  # 웹소켓 호가가 이보다 오래되면 REST 호가
+    order_poll_fallback_seconds: int = 5  # 웹소켓 연결 중에도 주문을 이 주기로는 REST 확인
     # 서버 손절 안전망: 보유 중에는 토스 조건주문(모든 세션 발동)으로 손절가 아래에 매도를 걸어 둔다.
     # PC·봇이 꺼져도 동작. 평소에는 봇의 손절이 먼저 나가도록 손절가보다 buffer 만큼 아래
     backstop: bool = True
@@ -293,7 +294,7 @@ class TradingConfig:
                      "min_drop_pct": 35.0, "min_dollar": 5e6, "recover_pct": 15.0,
                      "take_profit_pct": 12.0, "stop_loss_pct": 50.0, "gap_risk_pct": 25.0},
         "pullback": {"enabled": False, "budget_pct": 0.40, "max_positions": 3, "max_candidates": 3,
-                     "sessions": ["AFTER", "REGULAR"],
+                     "sessions": ["AFTER", "REGULAR"], "stop_loss_pct_override": 0.0,
                      "take_profit_pct": 10.0, "stop_loss_pct": 8.0, "scale_out_pct": 1.0, "trail_pct": 0.0,
                      "gap_risk_pct": 25.0},
         "rebound": {"enabled": False, "budget_pct": 0.30, "max_positions": 2, "max_candidates": 2,

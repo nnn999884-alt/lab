@@ -37,3 +37,4 @@ def test_pullback_stop_and_target_are_tightened():
     assert p["take_profit_pct"] == 10.0
     assert p["scale_out_pct"] == 1.0
     assert p["sessions"] == ["AFTER", "REGULAR"]
+    assert p["stop_loss_pct_override"] == 0.0
