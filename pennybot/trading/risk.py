@@ -79,6 +79,12 @@ class Risk:
             return "전략 동시 보유 한도"
         if any(t["symbol"] == symbol for t in open_trades):
             return "이미 보유 중인 종목"
+        wait = self.t.reentry_block_minutes
+        last = self.j.last_closed(symbol) if wait and now else None
+        if last and ((last["pnl"] or 0) < 0 or "던지기" in (last["exit_reason"] or "")):
+            ago = (now - datetime.fromisoformat(last["exit_ts"])).total_seconds() / 60
+            if 0 <= ago < wait:
+                return f"방금 손실·던지기로 청산한 종목 — {wait}분 재진입 대기"
         other = self.j.strategies_today(symbol, trade_date) - {strategy}
         if other:
             return f"오늘 다른 전략({', '.join(sorted(other))})이 이 종목 매매"

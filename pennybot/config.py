@@ -226,6 +226,7 @@ class TradingConfig:
     max_daily_loss_usd: float = 150.0
     max_weekly_loss_usd: float = 400.0   # 최근 7일 실현 손실이 이만큼이면 신규 매수 중단 (0 = 끔)
     loss_streak_stop: int = 4            # N연속 손실이면 (0 = 끔)
+    reentry_block_minutes: int = 0       # 손실·물량 던지기로 청산한 종목을 되사지 않고 쉬는 분 (0=끔. 모의 데이터상 되사기가 이득이라 기본 끔)
     loss_streak_cooldown_hours: int = 24 # 마지막 손실 후 이 시간 동안 신규 매수 쉼
     auto_disable_trades: int = 20        # 최근 N회 평균 손익이 음수면 그 전략 자동 정지
     notify_webhook: str = ""             # 디스코드/슬랙 웹훅 (환경변수 PENNYBOT_WEBHOOK 우선)

@@ -237,3 +237,22 @@ def test_getupdates_conflict_raises(tmp_path):
     import pytest
     with pytest.raises(RuntimeError, match="409"):
         tg.poll(timeout=0)
+
+
+def test_reentry_blocked_after_loss_exit_then_allowed(tmp_path):
+    """손실로 청산한 종목은 20분 동안 같은 전략이라도 다시 사지 않는다 (11/02 INO·JDZG: 던지고 1~3분 뒤 재매수)."""
+    from datetime import timedelta
+
+    from pennybot.config import TradingConfig
+    from pennybot.trading.risk import Risk
+    t = TradingConfig(max_daily_loss_usd=1e9, max_weekly_loss_usd=0, loss_streak_stop=99, reentry_block_minutes=20)
+    t.strategies["runner_overnight"]["enabled"] = True
+    j = Journal(tmp_path / "re.db")
+    risk = Risk(t, j, Control(tmp_path))
+    base = et(5, 0)
+    tid = j.open_trade(strategy="runner_overnight", symbol="INO", trade_date="2026-10-21", planned_qty=10,
+                       stop=0.5, target=2, sell_from=base, deadline=base, reason="", now=base)
+    j.record_entry_fill(tid, 10, 1.0, "DAY", base)
+    j.record_exit_fill(tid, 10, 0.95, "PRE", base)
+    assert "재진입 대기" in risk.can_enter("runner_overnight", "INO", "2026-10-21", [], now=base + timedelta(minutes=2))
+    assert risk.can_enter("runner_overnight", "INO", "2026-10-21", [], now=base + timedelta(minutes=21)) is None

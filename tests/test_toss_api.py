@@ -79,6 +79,20 @@ def test_429_waits_retry_after_then_learns_limit(tmp_path):
     assert abs(c._buckets["MARKET_DATA"].min_interval - 1 / 4.5) < 1e-9
 
 
+def test_429_without_limit_header_widens_interval_then_recovers(tmp_path):
+    """차트 그룹처럼 한도 헤더 없이 429 만 오면, 간격을 늘려 덜 부딪히고 성공이 이어지면 천천히 되돌린다."""
+    r429 = Resp(429, {"error": {"code": "rate-limit-exceeded", "message": ""}}, {"Retry-After": "1"})
+    ok = Resp(200, {"result": {"bids": [], "asks": []}})
+    c, _, _ = client(tmp_path, {("GET", "/api/v1/orderbook"): [r429, r429, ok]})
+    c.orderbook("AAPL")
+    b = c._buckets["MARKET_DATA"]
+    assert b.min_interval > b.floor * 2
+    widened = b.min_interval
+    for _ in range(3):
+        c.orderbook("AAPL")
+    assert b.floor <= b.min_interval < widened
+
+
 def test_token_shared_across_clients_and_401_reuses_newer(tmp_path):
     ok = Resp(200, {"result": []})
     a, sa, _ = client(tmp_path, {("GET", "/api/v1/accounts"): [ok]})
@@ -102,6 +116,17 @@ def test_repeated_401_within_cooldown_does_not_reissue_again(tmp_path):
     c.accounts()
     assert s.tokens_issued == 1            # 두 번째 401 에서는 재발급을 건너뜀
     assert s.calls[-1][4]["Authorization"] == "Bearer tok1"
+
+
+def test_repeated_token_revoked_logs_one_error_with_hint(tmp_path, caplog):
+    """토큰이 5분 안에 5번 취소되면(= 같은 키를 쓰는 다른 곳이 계속 재발급) 원인을 에러로 한 번만 남긴다."""
+    revoked = Resp(401, {"error": {"code": "token-revoked", "message": "새로 발급된 토큰으로 대체"}})
+    ok = Resp(200, {"result": []})
+    c, _, _ = client(tmp_path, {("GET", "/api/v1/accounts"): [revoked] * 6 + [ok]})
+    with caplog.at_level("ERROR", logger="pennybot.toss_api"):
+        c.request("GET", "/api/v1/accounts", retries=6)
+    errors = [r for r in caplog.records if "token-revoked" in r.getMessage()]
+    assert len(errors) == 1 and "다른 PC" in errors[0].getMessage()
 
 
 def test_create_retried_with_same_body_but_cancel_not(tmp_path):

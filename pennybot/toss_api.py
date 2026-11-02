@@ -120,6 +120,8 @@ class TokenStore:
 class _Bucket:
     min_interval: float
     next_at: float = 0.0
+    floor: float = 0.0        # 서버 헤더나 기본값으로 정한 최소 간격 (429 로 늘렸다가 성공하면 여기까지 되돌림)
+    from_header: bool = False  # 서버가 한도를 헤더로 알려줬는지
 
 
 class TossClient:
@@ -188,7 +190,8 @@ class TossClient:
     # ---------- 공통 요청 ----------
     def _throttle(self, group: str) -> None:
         # 헤더로 한도를 알기 전에는 명세 예시값(초당 10회) × 내 몫
-        b = self._buckets.setdefault(group, _Bucket(1.0 / (10 * self.rate_share)))
+        base = 1.0 / (10 * self.rate_share)
+        b = self._buckets.setdefault(group, _Bucket(base, floor=base))
         with self._lock:
             now = self._clock()
             wait = b.next_at - now
@@ -200,7 +203,18 @@ class TossClient:
         lim = r.headers.get("X-RateLimit-Limit")
         if lim and lim.isdigit() and int(lim) > 0:
             # 그룹 한도 중 이 프로세스 몫만 쓴다
-            self._buckets[group].min_interval = 1.0 / (int(lim) * self.rate_share)
+            b = self._buckets[group]
+            b.min_interval = b.floor = 1.0 / (int(lim) * self.rate_share)
+            b.from_header = True
+        elif r.status_code == 429:
+            # 2026-11-02: 차트 그룹이 헤더 없이 429 만 줘서, 기본값(초당 5회)으로 계속 부딪혀 하루 4,700번 대기했다.
+            # 헤더가 없으면 429 마다 간격을 1.5배로 늘리고(최대 3초), 성공하면 천천히 되돌린다.
+            b = self._buckets[group]
+            b.min_interval = min(max(b.min_interval * 1.5, 0.5), 3.0)
+        elif r.ok:
+            b = self._buckets[group]
+            if not b.from_header and b.min_interval > b.floor:
+                b.min_interval = max(b.floor, b.min_interval * 0.97)
 
     @staticmethod
     def _error(r: requests.Response) -> TossApiError:
@@ -211,6 +225,19 @@ class TossClient:
         return TossApiError(r.status_code, e.get("code", "http-error"),
                             e.get("message") or r.text[:200], e.get("data"),
                             e.get("requestId") or r.headers.get("X-Request-Id", ""))
+
+    def _note_401(self, r: requests.Response) -> None:
+        """token-revoked = 누가 새 토큰을 발급해서 내 토큰이 죽었다는 뜻. 토스는 키당 토큰이 1개라, 같은 키를 쓰는
+        다른 PC·프로그램이 있으면 서로 계속 무효화한다 (2026-11-01 트레이더가 하루 3,699번 재발급). 5분에 5번
+        넘으면 원인을 에러로 남긴다 (10분에 한 번)."""
+        if self._error(r).code != "token-revoked":
+            return
+        now = self._clock()
+        self._revoked = [t for t in getattr(self, "_revoked", []) if now - t < 300] + [now]
+        if len(self._revoked) >= 5 and now - getattr(self, "_revoked_warned", 0) > 600:
+            self._revoked_warned = now
+            log.error("토큰이 5분 안에 %d번 취소됨 (token-revoked) — 같은 토스 키를 쓰는 다른 PC·프로그램이 있는지 "
+                      "확인하세요. 서로 토큰을 계속 무효화해 요청이 실패할 수 있습니다.", len(self._revoked))
 
     def request(self, method: str, path: str, *, params: dict | None = None,
                 json_body: dict | None = None, account: bool = False, retries: int = 4):
@@ -238,6 +265,8 @@ class TossClient:
                 self._sleep(min(2 ** attempt, 30))
                 continue
             self._learn_limits(group, r)
+            if r.status_code == 401:
+                self._note_401(r)
             if r.status_code == 401 and attempt < retries:
                 force_token = True
                 continue

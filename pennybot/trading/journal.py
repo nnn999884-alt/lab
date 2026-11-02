@@ -176,6 +176,12 @@ class Journal:
                       (symbol, trade_date, self.mode))
         return {r["strategy"] for r in rows}
 
+    def last_closed(self, symbol: str) -> dict | None:
+        """이 종목의 가장 최근 청산 거래 (재진입 대기 판단용)."""
+        rows = self.q("SELECT exit_ts, exit_reason, pnl FROM trades WHERE symbol=? AND mode=? AND status='CLOSED' "
+                      "AND exit_ts IS NOT NULL ORDER BY exit_ts DESC LIMIT 1", (symbol, self.mode))
+        return dict(rows[0]) if rows else None
+
     def strategy_stats(self, strategy: str | None = None, last_n: int | None = None) -> list[dict]:
         rows = self.q("""SELECT strategy, pnl, pnl_pct FROM trades WHERE status='CLOSED' AND mode=?
                          ORDER BY id DESC""", (self.mode,))
