@@ -276,3 +276,19 @@ def test_chart_analysis_factors():
     assert {"turn30", "wake", "sub1"} <= on and "small" not in on            # 발행 1천만 주 = 경계 밖
     assert set(a["strong"]) == {"전날 회전율 30%+", "거래 깨어남"} and a["best_x100"] > 15
     assert analyze(bars[:10]) is None
+
+
+def test_steady_event_raises_tier_and_adds_tag(tmp_path):
+    """'꾸준히 거래 붙음' 이벤트가 있는 종목은 등급이 최소 2로 오르고 태그가 붙는다 (알림이 아니라 데이터로 등급에 반영)."""
+    from datetime import datetime, timezone
+
+    from pennybot.precursor import ranked
+    col, st, sent = make(tmp_path)
+    d0 = "2026-10-23"
+    st.put_precursor_daily([{"d0": d0, "symbol": s, "score": 1, "close": 1.0, "created": "x",
+                             "signals": "[]", "metrics": "{}"} for s in ("STDY", "PLAIN")])
+    st.put_events([{"ts": datetime.now(timezone.utc).isoformat(), "symbol": "STDY", "kind": "steady",
+                    "text": "🫧 STDY 꾸준히 거래 붙음 (2시간 중 10/10회 거래대금 상위 30위)", "value": None}])
+    rows = {x["symbol"]: x for x in ranked(str(tmp_path / "m.db"), 10, only_active=False)["rows"]}
+    assert rows["STDY"]["tier"] >= 2 and "꾸준히 거래" in rows["STDY"]["patterns"]
+    assert rows["PLAIN"]["tier"] == 0 and rows["PLAIN"]["steady"] is False

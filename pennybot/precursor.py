@@ -271,6 +271,7 @@ def signal_text(sym: str, name: str | None, lv: dict, session_ko: str, tags: lis
         f"💵 {px(m.get('price'))} ({pct(m.get('chg'))}) · {session_ko}",
         f"📊 3분 {money_s(m.get('dollar_3m'))} · 오늘 {money_s(m.get('dollar_today'))}",
         f"🏷 {' · '.join(tags[:4])}" if tags else "",
+        "급등 전조 조건($5 미만/거래량 50배+/★★★ 중 하나 + 전날 대비 +5%↑)은 아님 — 참고용",
     ] if x)
 
 
@@ -456,8 +457,10 @@ def ranked(db_path: str, limit: int = 50, only_active: bool = True) -> dict:
                 "SELECT symbol, COUNT(*) FROM events WHERE kind='reaccel' AND ts>=? GROUP BY symbol", (since,)).fetchall())
             early20 = {r[0] for r in con.execute(
                 "SELECT symbol FROM events WHERE kind='early20' AND ts>=?", (since,)).fetchall()}
+            steady = {r[0] for r in con.execute(
+                "SELECT symbol FROM events WHERE kind='steady' AND ts>=?", (since,)).fetchall()}
         except sqlite3.OperationalError:
-            reaccel_n, early20 = {}, set()
+            reaccel_n, early20, steady = {}, set(), set()
     except sqlite3.OperationalError:
         return {"d0": None, "rows": []}
     finally:
@@ -491,6 +494,12 @@ def ranked(db_path: str, limit: int = 50, only_active: bool = True) -> dict:
         r["early20"] = r["symbol"] in early20
         if r["early20"]:
             r["tier"] = max(r["tier"], 1)
+        # '꾸준히 거래 붙음'(2시간 거의 매번 거래대금 상위)도 등급 보정. 알림 대신 데이터로: 다음 날 장중 +30% 도달 14.5%
+        # (55종목·일, 후보 전체 기준 2.2% → 6.6배, 2026-11-02 events 'steady' 와 일봉으로 확인; 표본 작음)
+        r["steady"] = r["symbol"] in steady
+        if r["steady"]:
+            r["tier"] = max(r["tier"], 2)
+            r["patterns"] = r["patterns"] + ["꾸준히 거래"]
     if only_active:
         rows = [r for r in rows if r.get("new") or r["live"]
                 or (r["live_m"].get("dollar_3m") or 0) >= ACTIVE_MIN_DOLLAR_3M

@@ -1331,7 +1331,7 @@ class Collector:
         dm = json.loads(met or "{}")
         m["presurge"], why = presurge(iso(now), tier_, m.get("price") and m["price"] / (1 + (m.get("chg") or 0) / 100),
                                       dm.get("vol_ratio"), m.get("chg"), session)
-        if False:
+        if not m["presurge"]:        # 조건(전날 대비 +5%↑ & $5 미만·전날 거래량 50배+·★★★ 중 하나)을 못 채우면 '급등 전조'가 아니라 거래 터짐
             if self.notifier and self._on("burst"):
                 link = None
                 try:
