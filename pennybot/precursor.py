@@ -268,6 +268,7 @@ def signal_text(sym: str, name: str | None, lv: dict, session_ko: str, tags: lis
     m = lv["metrics"]
     return "\n".join(x for x in [
         _head("📶 거래 터짐", sym, name),
+        rise_line(m.get("chg")),
         f"💵 {px(m.get('price'))} ({pct(m.get('chg'))}) · {session_ko}",
         f"📊 3분 {money_s(m.get('dollar_3m'))} · 오늘 {money_s(m.get('dollar_today'))}",
         f"🏷 {' · '.join(tags[:4])}" if tags else "",
@@ -376,6 +377,18 @@ def judge(m: dict, dm: dict) -> dict:
     return {"state": state, "timing": timing, "flow": flow, "risk": risk, "verdict": verdict}
 
 
+def rise_line(chg: float | None) -> str:
+    """알림 둘째 줄: 이미 얼마나 오른 상태인지 (알림 260건: 알림 때 +10% 이하 3시간 뒤 평균 +8.8%,
+    +20~40% +1.2%, +40% 이상 −10.6% — 이미 많이 오른 뒤 따라 사면 손해라 크게 알린다)."""
+    if chg is None:
+        return ""
+    if chg >= 20:
+        return f"🔴 이미 +{chg:.0f}% 오른 상태 — 추격 금지"
+    if chg >= 10:
+        return f"🟡 이미 +{chg:.0f}% 오름 — 늦었을 수 있음"
+    return f"🟢 초입 (+{max(chg, 0):.0f}%)"
+
+
 def alert_text(sym: str, name: str | None, day: dict, lv: dict, session_ko: str, dashboard: str | None = None,
                now=None, shares: float | None = None, tags: list | None = None) -> str:
     """텔레그램 알림: 첫 줄 = 무슨 일·종목, 다음 = 한눈 판단, 마지막 = 근거 숫자."""
@@ -401,6 +414,7 @@ def alert_text(sym: str, name: str | None, day: dict, lv: dict, session_ko: str,
            "🟡 움직이기 시작": "거래량 지속 확인", "🟢 아직 조용": "지켜보기"}.get(j["state"], "")
     lines = [
         _head("🚨 급등 전조", sym, name, f" · {g}등급" if g else ""),
+        rise_line(m.get("chg")),
         f"💵 {px(m['price'])} ({pct(m['chg'])}) · {session_ko}",
         f"{j['state']} · 거래 {j['flow']}",
         "",
