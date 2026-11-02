@@ -194,3 +194,14 @@ def test_rate_share_splits_limit_between_processes(tmp_path):
     assert "ACCOUNT" not in c._buckets                    # 아직 버킷 없음
     c.accounts()
     assert abs(c._buckets["ACCOUNT"].min_interval - 1 / 3.5) < 1e-9   # 초당 10회 중 35% = 3.5회
+
+
+def test_token_endpoint_error_as_plain_string_does_not_crash(tmp_path):
+    """키가 폐기되면 토큰 발급이 {"error": "invalid_client"} (문자열)로 실패한다 — AttributeError 가 아니라 TossApiError 여야 한다."""
+    class Bad(FakeSession):
+        def post(self, url, data=None, timeout=None):
+            return Resp(401, {"error": "invalid_client", "error_description": "bad secret"})
+    c = TossClient("id", "secret", "1", tmp_path / "tok.json", session=Bad({}), sleep=lambda x: None)
+    with pytest.raises(TossApiError) as e:
+        c.accounts()
+    assert e.value.code == "invalid_client" and e.value.status == 401

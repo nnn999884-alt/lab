@@ -88,6 +88,8 @@ CREATE INDEX IF NOT EXISTS ix_prices_day ON prices (trade_date, session);
 
 # 예전 DB 에 나중에 추가된 컬럼
 MIGRATIONS = [
+    ("live_tick", "vol_3s", "REAL"),      # 최근 3초 체결 수량 (웹소켓 체결 합, 급등 후보 정렬용)
+    ("live_tick", "amt_3s", "REAL"),      # 최근 3초 체결 대금
     ("filings", "events", "TEXT"),        # 희석 이벤트 (쉼표 구분)
     ("filings", "direction", "INTEGER"),  # +1 호재 / −1 악재 / 0
     ("filings", "amount", "REAL"),        # 공모 금액(달러)

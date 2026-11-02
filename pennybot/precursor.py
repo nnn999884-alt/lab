@@ -496,14 +496,44 @@ def ranked(db_path: str, limit: int = 50, only_active: bool = True) -> dict:
                 or (r["live_m"].get("dollar_3m") or 0) >= ACTIVE_MIN_DOLLAR_3M
                 or (r["live_m"].get("vol_x") or 0) >= ACTIVE_MIN_VOL_X
                 or (r["metrics"].get("vol_ratio") or 0) >= ACTIVE_MIN_DAY_VOL_RATIO]
-    # '거래 급증'(wake)은 방향을 안 본다 — 폭락하면서도 거래량이 터지면 뜬다. 지금 내려가는 중인데
-    # '거래 급증·매수세 유입'으로 맨 위에 뜨는 걸 막으려고, 지금 오르고 있을 때만(live_m.chg > 0) 그 우선순위를 준다.
+    # 정렬(추천순) = 지금 거래가 센 순. 웹소켓 체결을 3초씩 모은 값(live_tick.vol_3s·amt_3s)의 거래대금·거래량·회전율
+    # 순위를 합쳐 낮은 순이고, 동점·3초 데이터가 없을 때는 최근 3분 값으로 가른다. 등락률은 보지 않는다.
+    # (2026-11-02: 예전엔 '거래 급증' 여부 → 3분 거래대금 순이라 한 지표·긴 구간에 끌려갔다)
+    def _ranks(vals: list[float]) -> list[int]:
+        return [1 + sum(1 for w in vals if w > v) for v in vals]       # 동점은 같은 순위
+
+    def _flow_ranks() -> None:
+        fresh = {}
+        try:
+            c3 = sqlite3.connect(ro_uri(db_path), uri=True)
+            try:
+                cut = (datetime.now(timezone.utc) - timedelta(seconds=9)).isoformat()
+                fresh = {a: (b or 0.0, c or 0.0) for a, b, c in c3.execute(
+                    "SELECT symbol, vol_3s, amt_3s FROM live_tick WHERE ts >= ?", (cut,))}
+            finally:
+                c3.close()
+        except sqlite3.OperationalError:
+            pass                                   # 수집기가 아직 새 열을 안 만든 경우: 3분 값만 쓴다
+
+        def per(r, kind):
+            sh = shares.get(r["symbol"])
+            v3, a3 = fresh.get(r["symbol"], (0.0, 0.0))
+            lm = r["live_m"]
+            return {"s_amt": a3, "s_vol": v3, "s_turn": v3 / sh * 100 if sh else 0.0,
+                    "m_amt": lm.get("dollar_3m") or 0.0, "m_vol": lm.get("vol_3m") or 0.0,
+                    "m_turn": (lm.get("vol_3m") or 0) / sh * 100 if sh else 0.0}[kind]
+        for pre in ("s", "m"):
+            tot = [0] * len(rows)
+            for kind in ("amt", "vol", "turn"):
+                for n, rk in enumerate(_ranks([per(r, f"{pre}_{kind}") for r in rows])):
+                    tot[n] += rk
+            for r, t in zip(rows, tot):
+                r["flow_rank_3s" if pre == "s" else "flow_rank"] = t
+
+    _flow_ranks()
+
     def _key(r: dict) -> tuple:
-        m = r["live_m"]
-        chg = m.get("chg")
-        rising_wake = "wake" in r["live"] and chg is not None and chg > 0
-        return (0 if rising_wake else 1,                 # 오르면서 거래가 터진 것부터
-                -(m.get("dollar_3m") or 0), -r["tier"], -r["score"],
+        return (r["flow_rank_3s"], r["flow_rank"], -(r["live_m"].get("dollar_3m") or 0), -r["tier"], -r["score"],
                 -(r["metrics"].get("vol_ratio") or 0))
 
     rows.sort(key=_key)

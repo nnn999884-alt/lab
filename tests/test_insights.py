@@ -239,27 +239,23 @@ def test_tier_turnover_and_wake():
     assert r["metrics"]["wake"] and "wake" in r["signals"]
 
 
-def test_ranked_does_not_rank_falling_stock_above_rising_one(tmp_path):
-    """'거래 급증'(wake)은 방향을 안 본다 — 지금 떨어지는 중이어도 뜬다. 떨어지는 종목이 일봉 점수만 높다고
-    (지금) 오르는 종목보다 급등 후보 맨 위로 오면 안 된다."""
+def test_ranked_orders_by_flow_not_by_price_change(tmp_path):
+    """추천순 = 최근 3분 거래대금·거래량·회전율 순위 합 (사용자 요청 2026-11-02: 등락률은 안 본다).
+    거래가 센 종목이 떨어지는 중이어도, 거래가 약한 종목보다 위에 온다."""
     from pennybot.precursor import ranked
     col, st, sent = make(tmp_path)
     d0 = "2026-10-23"
     st.put_precursor_daily([
-        {"d0": d0, "symbol": "DOWN", "score": 9, "close": 1.0, "created": "x",
-         "signals": "[]", "metrics": "{}"},
-        {"d0": d0, "symbol": "UP", "score": 4, "close": 1.0, "created": "x",
-         "signals": "[]", "metrics": "{}"},
-    ])
+        {"d0": d0, "symbol": s, "score": sc, "close": 1.0, "created": "x", "signals": "[]", "metrics": "{}"}
+        for s, sc in (("BUSY", 1), ("QUIET", 9))])
     st.put_precursor_live([
-        {"d0": d0, "symbol": "DOWN", "ts": "x", "alerted": "x",
-         "signals": json.dumps(["wake"]), "metrics": json.dumps({"chg": -12.0})},
-        {"d0": d0, "symbol": "UP", "ts": "x", "alerted": "x",
-         "signals": json.dumps(["wake"]), "metrics": json.dumps({"chg": 8.0})},
+        {"d0": d0, "symbol": "BUSY", "ts": "x", "alerted": "x", "signals": json.dumps(["wake"]),
+         "metrics": json.dumps({"chg": -12.0, "dollar_3m": 900000.0, "vol_3m": 900000.0})},
+        {"d0": d0, "symbol": "QUIET", "ts": "x", "alerted": "x", "signals": json.dumps(["wake"]),
+         "metrics": json.dumps({"chg": 8.0, "dollar_3m": 5000.0, "vol_3m": 5000.0})},
     ])
-    r = ranked(str(tmp_path / "m.db"), 10)
-    syms = [x["symbol"] for x in r["rows"]]
-    assert syms.index("UP") < syms.index("DOWN")
+    syms = [x["symbol"] for x in ranked(str(tmp_path / "m.db"), 10)["rows"]]
+    assert syms.index("BUSY") < syms.index("QUIET")
 
 
 def test_early20_text_format():

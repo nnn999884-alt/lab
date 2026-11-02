@@ -220,8 +220,14 @@ class TossClient:
     def _error(r: requests.Response) -> TossApiError:
         try:
             e = r.json().get("error") or {}
-        except ValueError:
+        except (ValueError, AttributeError):
             e = {}
+        if isinstance(e, str):                 # 토큰 발급 엔드포인트는 {"error": "invalid_client", ...} 처럼 문자열로 준다
+            try:
+                msg = r.json().get("error_description")
+            except (ValueError, AttributeError):
+                msg = None
+            e = {"code": e, "message": msg}
         return TossApiError(r.status_code, e.get("code", "http-error"),
                             e.get("message") or r.text[:200], e.get("data"),
                             e.get("requestId") or r.headers.get("X-Request-Id", ""))

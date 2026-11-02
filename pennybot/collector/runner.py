@@ -90,6 +90,7 @@ class Collector:
         self._rb_sent: set = set()                # 오늘 보낸 (종목, 단계)
         self._rt_last: dict = {}                  # 종목 → 직전 체결가 (선을 아래에서 위로 넘는 순간만)
         self._rt_px: dict = {}
+        self._rt_acc: dict = {}                   # 종목 → [3초 체결 수량, 3초 체결 대금] (flush 마다 비움)
         self._rt_flush = 0.0
         self._rt_dmin: dict = {}
         self._rt_wave: dict = {}
@@ -1405,6 +1406,9 @@ class Collector:
                 v["_closing"] = True
                 self._rt_q.put(("vclose", v["id"], price))
         self._rt_px[sym] = (datetime.fromtimestamp(t, timezone.utc).isoformat(), price)
+        acc = self._rt_acc.setdefault(sym, [0.0, 0.0])
+        acc[0] += vol
+        acc[1] += price * vol
         w = self._rt_win.setdefault(sym, deque())
         w.append((t, price, vol))
         while w and t - w[0][0] > 60:
@@ -1482,7 +1486,10 @@ class Collector:
         while True:
             if self._rt_px and time.time() - self._rt_flush >= 3:
                 try:
-                    store.put_live_ticks([{"symbol": k, "ts": v[0], "last": v[1]} for k, v in list(self._rt_px.items())])
+                    acc, self._rt_acc = self._rt_acc, {}
+                    store.put_live_ticks([{"symbol": k, "ts": v[0], "last": v[1],
+                                           "vol_3s": acc.get(k, (0.0, 0.0))[0], "amt_3s": acc.get(k, (0.0, 0.0))[1]}
+                                          for k, v in list(self._rt_px.items())])
                 except Exception:
                     pass
                 self._rt_px.clear()
