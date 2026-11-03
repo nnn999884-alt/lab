@@ -1323,16 +1323,21 @@ class Collector:
 
     def _alert(self, store, now, session, sym, score, sig, met, lv, tier_, extra_tags) -> None:
         """거래 터짐 한 건: 급등 전조 조건(presurge)이면 '🚨 급등 전조' 전체, 아니면 '📶 거래 터짐' 짧은 신호 (세션 상관없이)."""
-        from ..precursor import TIER_LABEL, alert_buttons, alert_text, ask_depth, presurge, runner_tag, signal_text
+        from ..precursor import (MIN_BURST_TURN3, TIER_LABEL, alert_buttons, alert_text, ask_depth, presurge, runner_tag,
+                                 signal_text)
         r = (getattr(self, "_runner_cache", None) or (None, {}))[1].get(sym)
         if r and r["days"]:                              # 며칠 전 급등주면 알림에 표시
             extra_tags = [runner_tag(r)] + list(extra_tags)
         m = lv["metrics"]
         dm = json.loads(met or "{}")
+        _sh = store.query("SELECT shares FROM stock_info WHERE symbol=?", (sym,))
+        _shares = (_sh[0][0] if _sh and _sh[0][0] else None) or self._rt_shares.get(sym)
+        turn3 = (m.get("vol_3m") or 0) / _shares * 100 if _shares else None
+        m["turn3"] = turn3
         m["presurge"], why = presurge(iso(now), tier_, m.get("price") and m["price"] / (1 + (m.get("chg") or 0) / 100),
-                                      dm.get("vol_ratio"), m.get("chg"), session)
+                                      dm.get("vol_ratio"), m.get("chg"), session, turn3)
         if not m["presurge"]:        # 조건(전날 대비 +5%↑ & $5 미만·전날 거래량 50배+·★★★ 중 하나)을 못 채우면 '급등 전조'가 아니라 거래 터짐
-            if self.notifier and self._on("burst"):
+            if self.notifier and self._on("burst") and (turn3 or 0) >= MIN_BURST_TURN3:   # 회전율 낮은 터짐은 기록만 (알림 과다, 11/02)
                 link = None
                 try:
                     link = self.link() if self.link else None
@@ -1344,7 +1349,8 @@ class Collector:
                                                extra_tags + ([TIER_LABEL[tier_]] if tier_ else []) + ([oh] if oh else [])),
                                    buttons=alert_buttons(sym, link))
             log.info("거래 터짐 신호 %s (%s)", sym, session)
-            self._event(now, sym, "burst", f"📶 {sym} 거래 터짐 ({m.get('chg', 0):+.1f}% · 3분 ${m.get('dollar_3m', 0) / 1e3:.0f}K)",
+            self._event(now, sym, "burst", f"📶 {sym} 거래 터짐 ({m.get('chg', 0):+.1f}% · 3분 ${m.get('dollar_3m', 0) / 1e3:.0f}K · "
+                        f"{session} · 회전 {m['turn3'] if m.get('turn3') is not None else 0:.2f}%)",
                         m.get("chg"), store=store)
             return
         m["grade_why"] = why
@@ -1375,7 +1381,7 @@ class Collector:
                                buttons=alert_buttons(sym, link))
         log.info("급등 전조 알림 %s (%s)", sym, " · ".join(m["grade_why"]))
         self._event(now, sym, "precursor", f"🚨 {sym} 급등 전조 ({' · '.join(m['grade_why'])} · "
-                    f"{m.get('chg', 0):+.1f}% · 3분 ${m.get('dollar_3m', 0) / 1e3:.0f}K)", m.get("chg"), store=store)
+                    f"{m.get('chg', 0):+.1f}% · 3분 ${m.get('dollar_3m', 0) / 1e3:.0f}K · {session})", m.get("chg"), store=store)
 
     # ---------- 실시간: 웹소켓 체결 → 최근 60초 거래대금·회전율·평소 대비 거래량 → 바로 알림 (등락률은 안 봄) ----------
     def _rt_set(self, symbols) -> None:

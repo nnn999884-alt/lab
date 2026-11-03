@@ -194,17 +194,26 @@ def alert_grade(ts: str, tier_: int, price: float | None, vol_ratio: float | Non
     return ("A" if len(why) >= 2 else "B" if why else "C"), why
 
 
+MIN_BURST_TURN3 = 0.5      # '📶 거래 터짐' 알림을 보내는 최소 3분 회전율(%). 터짐 12,064건: 하루 75→24건, +30% 도달 9.4→17.1%
+
+
 def presurge(ts: str, tier_: int, price: float | None, vol_ratio: float | None, chg: float | None,
-            session: str | None = None) -> tuple[bool, list[str]]:
-    """'진짜 급등 전조' — 거래가 붙었다는 것만으로는 안 보내고, 정규장·애프터마켓이 아니고(정규장 터짐은
-    +30% 먼저 올 확률이 8%로 훨씬 낮았음) 전날 대비 +5%↑ 이면서 ($5 미만 · 전날 거래량 50배+ · ★★★ 중 하나) 일 때만 보낸다.
-    원래는 동부 06~09시 터짐만 쳤는데($2 미만 포함 조합 +30% 먼저 약 50%) — RENT 사례(그 시간대 밖에서 터져서
-    급등 전조를 못 받음)를 계기로 '정규장만 아니면 됨'으로 풀었다. 새 조건의 적중률은 아직 재검증 전이라 지켜봐야 한다."""
-    from .sessions import AFTER, REGULAR
-    why = [w for ok, w in ((price and price < 5, "$5 미만"), ((vol_ratio or 0) >= 50, "전날 거래량 50배+"),
+            session: str | None = None, turn3: float | None = None) -> tuple[bool, list[str]]:
+    """'진짜 급등 전조' (2026-11-02 B안, 시간대별로 다르게).
+    · 동부 06~09시 (프리): 원래 조건 — 전날 대비 +5%↑ 이면서 ($10 미만 · 전날 거래량 50배+ · ★★★ 중 하나).
+      (원래 $2 였으나 11/02 사용자 요청으로 $10 까지)
+      (10/24 재학습, 첫 1분 터짐 476건: +30% 가 −20% 보다 먼저 온 비율 약 50% vs 전체 26%)
+    · 그 밖의 시간(데이·그 외 프리·정규·애프터): 위 조건에 더해 3분 회전율 1%↑ 도 채워야 한다
+      (11/02 터짐 12,064건 연구: 회전율 ≥3% 는 +30% 도달 23%, <0.1% 는 3%. 데이마켓은 1.5%뿐이라 더 엄격하게).
+    못 채운 터짐은 '📶 거래 터짐' 으로 간다. price 는 전날 종가."""
+    from .sessions import ET
+    t = datetime.fromisoformat(ts).astimezone(ET)
+    why = [w for ok, w in ((price and price < 10, "$10 미만"), ((vol_ratio or 0) >= 50, "전날 거래량 50배+"),
                            (tier_ == 3, "★★★")) if ok]
-    ok = (chg or 0) >= 5 and bool(why)
-    return ok, why
+    if 6 <= t.hour < 9:
+        return (chg or 0) >= 5 and bool(why), (["프리 06~09시"] + why) if why else why
+    ok = (chg or 0) >= 5 and bool(why) and (turn3 or 0) >= 1
+    return ok, (why + [f"3분 회전율 {turn3:.1f}%"]) if ok else why
 
 
 def _head(prefix: str, sym: str, name: str | None, suffix: str = "") -> str:
@@ -272,7 +281,7 @@ def signal_text(sym: str, name: str | None, lv: dict, session_ko: str, tags: lis
         f"💵 {px(m.get('price'))} ({pct(m.get('chg'))}) · {session_ko}",
         f"📊 3분 {money_s(m.get('dollar_3m'))} · 오늘 {money_s(m.get('dollar_today'))}",
         f"🏷 {' · '.join(tags[:4])}" if tags else "",
-        "급등 전조 조건($5 미만/거래량 50배+/★★★ 중 하나 + 전날 대비 +5%↑)은 아님 — 참고용",
+        "급등 전조 조건(전날 대비 +5%↑ + $10 미만/거래량 50배+/★★★ 중 하나, 프리 06~09시 밖은 3분 회전율 1%↑ 추가)은 아님 — 참고용",
     ] if x)
 
 
@@ -383,10 +392,10 @@ def rise_line(chg: float | None) -> str:
     if chg is None:
         return ""
     if chg >= 20:
-        return f"🔴 이미 +{chg:.0f}% 오른 상태 — 추격 금지"
+        return f"🔴 전날 대비 이미 +{chg:.0f}% 오른 상태 — 추격 금지"
     if chg >= 10:
-        return f"🟡 이미 +{chg:.0f}% 오름 — 늦었을 수 있음"
-    return f"🟢 초입 (+{max(chg, 0):.0f}%)"
+        return f"🟡 전날 대비 이미 +{chg:.0f}% 오름 — 늦었을 수 있음"
+    return f"🟢 초입 (전날 대비 +{max(chg, 0):.0f}%)"
 
 
 def alert_text(sym: str, name: str | None, day: dict, lv: dict, session_ko: str, dashboard: str | None = None,
@@ -520,7 +529,7 @@ def ranked(db_path: str, limit: int = 50, only_active: bool = True) -> dict:
                 or (r["live_m"].get("vol_x") or 0) >= ACTIVE_MIN_VOL_X
                 or (r["metrics"].get("vol_ratio") or 0) >= ACTIVE_MIN_DAY_VOL_RATIO]
     # 정렬(추천순) = 지금 거래가 센 순. 웹소켓 체결을 3초씩 모은 값(live_tick.vol_3s·amt_3s)의 거래대금·거래량·회전율
-    # 순위를 합쳐 낮은 순이고, 동점·3초 데이터가 없을 때는 최근 3분 값으로 가른다. 등락률은 보지 않는다.
+    # 순위에 3분 거래대금 순위를 더해 합친 낮은 순이고, 동점·3초 데이터가 없을 때는 최근 3분 값으로 가른다. 등락률은 보지 않는다.
     # (2026-11-02: 예전엔 '거래 급증' 여부 → 3분 거래대금 순이라 한 지표·긴 구간에 끌려갔다)
     def _ranks(vals: list[float]) -> list[int]:
         return [1 + sum(1 for w in vals if w > v) for v in vals]       # 동점은 같은 순위
@@ -549,6 +558,9 @@ def ranked(db_path: str, limit: int = 50, only_active: bool = True) -> dict:
             tot = [0] * len(rows)
             for kind in ("amt", "vol", "turn"):
                 for n, rk in enumerate(_ranks([per(r, f"{pre}_{kind}") for r in rows])):
+                    tot[n] += rk
+            if pre == "s":                         # 3초 합계에 3분 거래대금 순위도 한 항목으로 더한다 (2026-11-02 요청)
+                for n, rk in enumerate(_ranks([per(r, "m_amt") for r in rows])):
                     tot[n] += rk
             for r, t in zip(rows, tot):
                 r["flow_rank_3s" if pre == "s" else "flow_rank"] = t

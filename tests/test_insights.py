@@ -297,5 +297,5 @@ def test_steady_event_raises_tier_and_adds_tag(tmp_path):
 def test_rise_line_warns_when_already_up():
     from pennybot.precursor import rise_line
     assert rise_line(5.0).startswith("🟢 초입")
-    assert rise_line(14.0).startswith("🟡 이미 +14%")
+    assert rise_line(14.0).startswith("🟡 전날 대비 이미 +14%")
     assert "추격 금지" in rise_line(31.0) and rise_line(None) == ""

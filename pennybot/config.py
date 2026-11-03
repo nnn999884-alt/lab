@@ -126,7 +126,7 @@ class CollectorConfig:
     steady_rank_cutoff: int = 30         # 유니버스 내 거래대금 랭킹 상위 N위 안에 들었는지
     steady_min_ratio: float = 0.5        # 그 기간 폴링 중 이 비율 이상 랭킹에 있었으면 '꾸준함'
     steady_min_polls: int = 6           # 폴링 기록이 이보다 적으면(세션 시작 직후) 판단 보류
-    steady_cooldown_hours: float = 1.0   # 같은 종목 재알림 간격
+    steady_cooldown_hours: float = 6.0   # 같은 종목 재알림 간격 (11/02: 1→6시간, 하루 60건 → 종목당 1~2번)
     precursor_daily_alert: int = 10  # 장 마감 뒤 점수 계산이 끝나면 상위 N종목 목록 알림 (0 = 끔)
     vsignal: bool = True             # 가상 매매 알림 (실제 주문 없음) — 전략 정의는 pennybot/vstrat.py
     keep_days: int = 20            # 고가 +keep_min_run% 급등주는 이 거래일 수만큼 계속 감시 (며칠 뒤 다시 오르는 경우)

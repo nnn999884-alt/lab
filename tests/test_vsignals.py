@@ -316,7 +316,7 @@ def test_realtime_alert_sends(tmp_path):
     class C:
         def candles(self, sym, interval, count, before=None):
             return {"candles": [{"timestamp": (T0 + timedelta(minutes=k)).isoformat(), "openPrice": 1, "highPrice": 1.1,
-                                 "lowPrice": 1, "closePrice": 1.08, "volume": 1000} for k in range(3)]}
+                                 "lowPrice": 1, "closePrice": 1.08, "volume": 3000} for k in range(3)]}
 
         def orderbook(self, sym):
             return {"asks": []}
@@ -339,13 +339,17 @@ def test_realtime_alert_sends(tmp_path):
 def test_presurge_rule():
     from pennybot.precursor import presurge
     t7 = "2026-10-23T11:10:00+00:00"                                      # 07:10 ET
-    assert presurge(t7, 0, 1.5, 3, 12, "PRE") == (True, ["$5 미만"])
-    assert presurge(t7, 0, 3.0, 80, 12, "PRE")[0]                         # 전날 거래량 80배
-    assert not presurge(t7, 0, 6.0, 10, 12, "PRE")[0]                     # $6 · 10배 · ★ 없음 → 아무 사유도 없음
+    assert presurge(t7, 0, 1.5, 3, 12, "PRE") == (True, ["프리 06~09시", "$10 미만"])
+    assert presurge(t7, 0, 9.5, 3, 12, "PRE")[0]                          # $10 미만
+    assert presurge(t7, 0, 12.0, 80, 12, "PRE")[0]                        # 전날 거래량 80배
+    assert not presurge(t7, 0, 12.0, 10, 12, "PRE")[0]                    # $12 · 10배 · ★ 없음
     assert not presurge(t7, 3, 1.5, 80, 3, "PRE")[0]                      # +3% (아직 +5% 아님)
-    assert presurge("2026-10-23T14:10:00+00:00", 3, 1.5, 80, 12, "DAY")[0]       # 정규장만 아니면 시간대 상관없음
-    assert presurge("2026-10-23T14:10:00+00:00", 3, 1.5, 80, 12, "REGULAR")[0]  # 정규장은 여전히 막힘
-    assert presurge(t7, 3, 1.5, 80, 12, "AFTER")[0]                   # 애프터마켓도 막힘
+    # 프리 06~09시 밖: 3분 회전율 1%↑ 가 있어야 한다
+    t14 = "2026-10-23T14:10:00+00:00"                                     # 10:10 ET
+    assert not presurge(t14, 3, 1.5, 80, 12, "REGULAR")[0]                # 회전율 정보 없음
+    assert not presurge(t14, 3, 1.5, 80, 12, "REGULAR", 0.4)[0]           # 0.4% < 1%
+    assert presurge(t14, 3, 1.5, 80, 12, "REGULAR", 2.0)[0]
+    assert presurge("2026-10-24T01:10:00+00:00", 3, 1.5, 80, 12, "DAY", 1.5)[0]   # 데이마켓도 회전율 되면 OK
 
 
 def test_after_movers_catches_slow_cumulative_move(tmp_path):
@@ -380,8 +384,9 @@ def test_burst_sends_signal_or_presurge(tmp_path):
         def orderbook(self, sym):
             return {"asks": []}
     col.c = C()
+    col._rt_shares = {"PENX": 1e6}
     lv = {"signals": ["burst"], "metrics": {"price": 1.2, "chg": 20.0, "dollar_3m": 9e4, "dollar_today": 3e5,
-                                            "vol_x": 8, "grade": "A", "grade_why": []}}
+                                            "vol_x": 8, "vol_3m": 3e4, "grade": "A", "grade_why": []}}
     t4 = datetime(2026, 10, 23, 8, 0, tzinfo=timezone.utc)                # 정규장 중 → 짧은 신호만 (급등 전조는 정규장엔 안 감)
     col._alert(st, t4, "REGULAR", "PENX", 7, "[]", json.dumps({"dd60": -80, "vol_ratio": 60}), lv, 0, ["⚡ 실시간"])
     assert sent.msgs[-1][0].startswith(("📶 거래 터짐", "🚨 급등 전조"))
