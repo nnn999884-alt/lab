@@ -26,6 +26,34 @@ from ..trading.control import Control
 log = logging.getLogger(__name__)
 STATIC = Path(__file__).parent / "static"
 
+# 2026-11-05: 급등 후보(/api/precursor)는 한 번 계산에 1초 남짓인데 화면마다 3초씩 요청해 처리 중 스레드가
+# 540개까지 쌓이고 메모리 4GB 에서 멈췄다 → 같은 주소 요청은 TTL 초 동안 결과를 같이 쓰고, 계산 중이면 기다렸다 받는다.
+SHARED_TTL = {"/api/precursor": 2.5, "/api/condscan": 10, "/api/chart30": 30, "/api/bigruns": 60, "/api/research": 30,
+              "/api/runners": 30, "/api/detections": 5, "/api/symbol": 3, "/api/symbol_extra": 10}
+_shared_lock = threading.Lock()
+_shared_val: dict = {}            # key → (시각, 결과)
+_shared_key_locks: dict = {}
+
+
+def _shared(key: str, ttl: float, fn):
+    import time
+    with _shared_lock:
+        hit = _shared_val.get(key)
+        if hit and time.monotonic() - hit[0] < ttl:
+            return hit[1]
+        kl = _shared_key_locks.setdefault(key, threading.Lock())
+    with kl:                                      # 같은 key 는 한 번에 하나만 계산
+        with _shared_lock:
+            hit = _shared_val.get(key)
+            if hit and time.monotonic() - hit[0] < ttl:
+                return hit[1]
+        val = fn()
+        with _shared_lock:
+            if len(_shared_val) > 300:            # 종목별 주소가 쌓이지 않게
+                _shared_val.clear()
+            _shared_val[key] = (time.monotonic(), val)
+        return val
+
 
 class Data:
     def __init__(self, cfg):
@@ -591,6 +619,7 @@ def _reports(state_dir: str, limit: int = 30) -> list[dict]:
 
 class Handler(BaseHTTPRequestHandler):
     data: Data = None  # 서버 생성 시 주입
+    timeout = 60       # 끊긴 연결(CLOSE_WAIT)을 붙잡고 스레드가 남지 않게
 
     def log_message(self, fmt, *args):
         log.debug(fmt, *args)
@@ -659,6 +688,8 @@ class Handler(BaseHTTPRequestHandler):
                                         "FROM vsignals v WHERE status != 'EXPIRED' ORDER BY (status='OPEN') DESC, opened DESC LIMIT ?", (n("limit", 100),)),
             "/api/daily": lambda: d.daily(qs.get("s", "")[:12], n("n", 90)),
             "/api/precursor": lambda: __import__("pennybot.precursor", fromlist=["ranked"]).ranked(d.market_db, n("limit", 80)),
+            "/api/condscan": lambda: __import__("pennybot.condscan", fromlist=["scan"]).scan(
+                d.market_db, qs.get("n", "추세 돌파")[:20], d.cfg.state_dir),
             "/api/symbol": lambda: d.symbol(qs.get("s", "")[:12]),
             "/api/symbol_extra": lambda: d.symbol_extra(qs.get("s", "")[:12]),
             "/api/profile": lambda: d.profile(qs.get("s", "")[:12]),
@@ -673,6 +704,8 @@ class Handler(BaseHTTPRequestHandler):
         }
         if u.path in routes:
             try:
+                if u.path in SHARED_TTL:                 # 무거운 화면: 같은 요청이 몰리면 한 번만 계산해 같이 쓴다
+                    return self._json(_shared(u.path + "?" + (u.query or ""), SHARED_TTL[u.path], routes[u.path]))
                 return self._json(routes[u.path]())
             except Exception as e:
                 log.exception("API 오류 %s", u.path)

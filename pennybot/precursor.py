@@ -26,10 +26,23 @@ DAILY_LABELS = {
     "volatile": "고변동", "bleed": "거래 마름", "cheap": "동전주", "wake": "거래 깨어남",
 }
 PATTERN_LABELS = {"compress": "응축", "accum": "매집 의심", "base": "바닥 다지기"}
-MAX_TURNOVER = 1000.0        # 하루 회전율이 이보다 크면 발행주식 수가 틀린 것으로 본다 (%)
+TOP_RECENT_SEC = 60           # 목록 맨 위 1~3번 자격: 이 초 안에 체결이 있었던 종목 (2026-11-05: 9초 → 60초)
+MAX_TURNOVER = 1000.0       # 하루 회전율이 이보다 크면 발행주식 수가 틀린 것으로 본다 (%)
 ACTIVE_MIN_DOLLAR_3M = 1e5      # 최근 3분 거래대금이 이 이상이면 '지금 움직임' 후보로 남긴다
 ACTIVE_MIN_VOL_X = 5.0          # 1시간 거래량이 평소의 이 배 이상
+ACTIVE_MIN_TURN_3M = 0.1         # '지금 움직임' 탭: 최근 3분 회전율(%)이 이 이상
 ACTIVE_MIN_DAY_VOL_RATIO = 50.0 # 전날 거래량 대비 이 배 이상
+# '지금 움직임' 판정은 세션마다 따로 (2026-11-04: 정규장 기준을 프리에도 써서 프리 새벽에 한 종목도 안 나왔다).
+# (3분 거래대금 최소 $, 3분 회전율 최소 %, 1시간 거래량 평소 대비 최소 배) — 거래대금은 꼭, 회전율·거래량 배수는 '둘 중 하나'.
+# 이미 하루 종일 달리는 종목은 '평소'가 높아져 거래량 배수가 1 근처로 나오기 때문에(CRIS +96%: 3분 $38만인데 1.1배) 둘 다 요구하면 안 됨.
+ACTIVE_BY_SESSION = {"DAY": (1e4, 0.05, 5.0), "PRE": (2e4, 0.1, 5.0), "REGULAR": (1e5, 0.1, 5.0), "AFTER": (2e4, 0.1, 5.0)}
+
+
+def is_moving(live_m: dict, turnover_3m: float | None, session: str | None = None) -> bool:
+    """'지금 움직임' 탭에 넣을 종목인가 (정지 종목은 호출하는 쪽에서 뺀다)."""
+    d_min, t_min, x_min = ACTIVE_BY_SESSION.get(session or live_m.get("session") or "REGULAR", ACTIVE_BY_SESSION["REGULAR"])
+    return ((live_m.get("vol_3m") or 0) > 0 and (live_m.get("dollar_3m") or 0) >= d_min
+            and ((turnover_3m or 0) >= t_min or (live_m.get("vol_x") or 0) >= x_min))
 
 
 def times(v: float | None) -> str:
@@ -157,6 +170,15 @@ def live(minute_bars: list[tuple], prev_close: float, now: datetime | None = Non
     last3 = [b for b in minute_bars if ts(b) > now - timedelta(minutes=3)]
     m["vol_3m"] = sum(b[5] for b in last3)
     m["dollar_3m"] = sum(b[4] * b[5] for b in last3)
+    # 30분 고저폭 · 최근 5분 거래량 / 그 앞 20분 (2026-11-05 분봉 65만 시점 연구, momo_flags 참고)
+    last30 = [b for b in minute_bars if ts(b) > now - timedelta(minutes=30)]
+    if last30 and min(b[3] for b in last30) > 0:
+        m["range30"] = (max(b[2] for b in last30) / min(b[3] for b in last30) - 1) * 100
+    v5 = sum(b[5] for b in minute_bars if ts(b) > now - timedelta(minutes=5))
+    v20 = [b[5] for b in minute_bars if now - timedelta(minutes=25) < ts(b) <= now - timedelta(minutes=5)]
+    if len(v20) >= 10:
+        base = sum(v20) / 20
+        m["vol5_x"] = (v5 / 5) / base if base else (99.0 if v5 else 0.0)
     if (m.get("vol_x") or 0) >= 3 and m["active_min_60"] >= 5:
         out["signals"].append("wake")
     if (m["ret60"] or 0) >= 3 and (m["ret15"] or 0) >= 1.5:
@@ -178,23 +200,57 @@ def money_at(bars: list[tuple], k: int, prev_close: float, shares: float | None)
     return (bars[k][4] / prev_close - 1) * 100 >= 5 and (d3 >= MONEY_3M or TURN_3M <= turn3 <= MAX_TURNOVER)
 
 
-def alert_grade(ts: str, tier_: int, price: float | None, vol_ratio: float | None) -> tuple[str, list[str]]:
-    """급등 전조 알림 등급 (장중 재학습 결과, 첫 1분 터짐 476건): 프리 06~09시 터짐(+30% 먼저 41% vs 정규장 8%),
-    ★★★, $5 미만, 전날 거래량 50배+ 일수록 이어지는 경우가 많았다. 둘 이상이면 A, 하나면 B, 없으면 C.
-    (06~09시는 더는 필수 조건이 아니라 등급에만 보너스로 반영 — presurge() 참고)"""
+# '지금 크게 움직이는 중' 표시 (2026-11-05, 분봉 176거래일 $5 이하 65만 시점: 다음 30분 안 +15% 도달률).
+# 확률만 높여 줄 뿐 그 시점에 사서 이기는 규칙은 아님 (익절 10%/손절 5% 로 사면 모든 칸이 비용만큼 손해).
+#   30분 고저폭 20%↑ : 정규장 13.5% (평소 0.6%, 23배) · 프리 8.9% (평소 3.4%) · 데이 0.9% (평소 0.2%)
+#   최근 5분 거래량이 그 앞 20분의 8배↑ : 프리 10.4% (3배) · 정규장 1.6% (2.8배)
+MOMO_RANGE30 = 20.0
+MOMO_VOL5_X = 8.0
+
+
+def momo_flags(m: dict, session: str | None = None) -> list[str]:
+    out = []
+    if (m.get("range30") or 0) >= MOMO_RANGE30:
+        out.append(f"30분 변동폭 {m['range30']:.0f}%")
+    if (session or m.get("session")) in ("PRE", "REGULAR") and (m.get("vol5_x") or 0) >= MOMO_VOL5_X:
+        out.append(f"5분 거래량 {times(m['vol5_x'])}")
+    return out
+
+
+def alert_grade(ts: str, tier_: int, price: float | None, vol_ratio: float | None, turn3: float | None = None,
+                shares: float | None = None, dollar_3m: float | None = None,
+                momo: list[str] | None = None) -> tuple[str, list[str]]:
+    """알림 등급 A/B/C (2026-11-03 기준 교체). 거래 터짐 12,064건 연구 결과:
+    · A = 프리 동부 07:00~09:30 + 3분 회전율 1%↑ + 3분 거래대금 $10만↑ — 8,103개 조합 중 세 시기 모두 수익이 난 유일한 조합
+      (135건, +30% 도달 53%, 익절 +30%/손절 −15% 순수익 +3.8%).
+    · B = 3분 회전율 1%↑ 이거나, 프리 07~09:30 + 유통주식 1,000만 주 미만 (회전율 ≥3% 는 +30% 도달 23%, 소형주 18%).
+    · C = 나머지.
+    (옛 기준 '전날 거래량 50배·★★★' 은 변별력이 약해서 뺐다 — 급등 전조 조건 presurge() 에는 그대로 있음)
+    tier_·price·vol_ratio 는 옛 호출 모양과 맞추려고 받기만 한다."""
     from .sessions import ET
     t = datetime.fromisoformat(ts).astimezone(ET)
+    pre_win = 7 <= t.hour + t.minute / 60 < 9.5
+    hot = (turn3 or 0) >= 1
+    small = bool(shares) and shares < 1e7
     why = []
-    if 6 <= t.hour < 9:
-        why.append("프리 06~09시")
-    if tier_ == 3:
-        why.append("★★★")
-    if (vol_ratio or 0) >= 50:
-        why.append("전날 거래량 50배+")
-    return ("A" if len(why) >= 2 else "B" if why else "C"), why
+    if pre_win:
+        why.append("프리 07~09:30")
+    if hot:
+        why.append(f"3분 회전율 {turn3:.1f}%")
+    if small:
+        why.append("유통 1,000만주 미만")
+    if (dollar_3m or 0) >= 1e5:
+        why.append("3분 $10만↑")
+    why += momo or []
+    if pre_win and hot and (dollar_3m or 0) >= 1e5:
+        return "A", why
+    if hot or (pre_win and small) or momo:
+        return "B", why
+    return "C", why
 
 
-MIN_BURST_TURN3 = 0.5      # '📶 거래 터짐' 알림을 보내는 최소 3분 회전율(%). 터짐 12,064건: 하루 75→24건, +30% 도달 9.4→17.1%
+# '📶 거래 터짐' 알림을 보내는 최소 3분 회전율(%). 터짐 12,064건: 하루 75→24건, +30% 도달 9.4→17.1%
+MIN_BURST_TURN3 = 0.5
 
 
 def presurge(ts: str, tier_: int, price: float | None, vol_ratio: float | None, chg: float | None,
@@ -276,7 +332,7 @@ def signal_text(sym: str, name: str | None, lv: dict, session_ko: str, tags: lis
     from .trading.messages import money_s, pct, px
     m = lv["metrics"]
     return "\n".join(x for x in [
-        _head("📶 거래 터짐", sym, name),
+        _head("📶 거래 터짐", sym, name, f" · {m['grade']}등급" if m.get("grade") else ""),
         rise_line(m.get("chg")),
         f"💵 {px(m.get('price'))} ({pct(m.get('chg'))}) · {session_ko}",
         f"📊 3분 {money_s(m.get('dollar_3m'))} · 오늘 {money_s(m.get('dollar_today'))}",
@@ -450,6 +506,69 @@ def alert_buttons(sym: str, dashboard: str | None) -> list:
     return [row]
 
 
+# 급등 A/B 가 한 번 붙은 종목은 그날 하루(거래일: 동부 20:00 데이마켓 시작 ~ 다음 날 20:00) 칩을 붙여 둔다 (자리는 고정 안 함)
+
+
+def _pins_path(db_path: str):
+    from pathlib import Path
+    return Path(db_path).with_name("hot_pins.json")
+
+
+def _trade_day(ts: datetime) -> str:
+    from .sessions import ET
+    return (ts.astimezone(ET) + timedelta(hours=4)).date().isoformat()      # 동부 20:00 → 다음 날 0시로 본다
+
+
+def _load_pins(db_path: str) -> dict:
+    """{종목: {"grade","ts","why"}} — 오늘(거래일) 급등 A/B 가 붙었던 종목."""
+    import json
+    try:
+        raw = json.loads(_pins_path(db_path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    today = _trade_day(datetime.now(timezone.utc))
+    out = {}
+    for sym, v in (raw or {}).items():
+        try:
+            if _trade_day(datetime.fromisoformat(v["ts"])) == today and v.get("grade") in ("A", "B"):
+                out[sym] = v
+        except (KeyError, ValueError, TypeError):
+            continue
+    return out
+
+
+def _save_pins(db_path: str, pins: dict) -> None:
+    import json
+    import os
+    p = _pins_path(db_path)
+    try:
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(json.dumps(pins, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, p)
+    except OSError:
+        pass
+
+
+def _halted_now(con) -> set[str]:
+    """지금 거래정지 중인 종목 (LULD 등: 정지 시각 ≤ 지금 < 재개 시각, 재개 시각이 없으면 정지 후 20분까지)."""
+    now = datetime.now(timezone.utc)
+    out = set()
+    try:
+        rows = con.execute("SELECT symbol, halt_ts, resume_ts FROM halts WHERE halt_ts >= ?",
+                           ((now - timedelta(days=1)).strftime("%Y-%m-%d"),)).fetchall()
+    except Exception:
+        return out
+    for sym, h, rs in rows:
+        try:
+            t0 = datetime.fromisoformat(h)
+            t1 = datetime.fromisoformat(rs) if rs else t0 + timedelta(minutes=20)
+            if t0 <= now < t1:
+                out.add(sym)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
 def ranked(db_path: str, limit: int = 50, only_active: bool = True) -> dict:
     """최신 기준일의 전조 목록 (일봉 점수 + 장중 증상), 장중 증상 켜진 것 → 점수 순."""
     import json
@@ -523,8 +642,9 @@ def ranked(db_path: str, limit: int = 50, only_active: bool = True) -> dict:
         if r["steady"]:
             r["tier"] = max(r["tier"], 2)
             r["patterns"] = r["patterns"] + ["꾸준히 거래"]
+    pins = _load_pins(db_path)
     if only_active:
-        rows = [r for r in rows if r.get("new") or r["live"]
+        rows = [r for r in rows if r.get("new") or r["live"] or r["symbol"] in pins
                 or (r["live_m"].get("dollar_3m") or 0) >= ACTIVE_MIN_DOLLAR_3M
                 or (r["live_m"].get("vol_x") or 0) >= ACTIVE_MIN_VOL_X
                 or (r["metrics"].get("vol_ratio") or 0) >= ACTIVE_MIN_DAY_VOL_RATIO]
@@ -534,6 +654,8 @@ def ranked(db_path: str, limit: int = 50, only_active: bool = True) -> dict:
     def _ranks(vals: list[float]) -> list[int]:
         return [1 + sum(1 for w in vals if w > v) for v in vals]       # 동점은 같은 순위
 
+    live_now: set[str] = set()                     # 최근 TOP_RECENT_SEC 초 안에 체결이 있었던 종목
+
     def _flow_ranks() -> None:
         fresh = {}
         try:
@@ -542,28 +664,38 @@ def ranked(db_path: str, limit: int = 50, only_active: bool = True) -> dict:
                 cut = (datetime.now(timezone.utc) - timedelta(seconds=9)).isoformat()
                 fresh = {a: (b or 0.0, c or 0.0) for a, b, c in c3.execute(
                     "SELECT symbol, vol_3s, amt_3s FROM live_tick WHERE ts >= ?", (cut,))}
+                # 맨 위 1~3번 자격: 최근 TOP_RECENT_SEC 초 안에 체결 (live_tick.ts = 마지막 체결 시각). 9초는 너무 짧아
+                # 방금 몇 초 쉰 활발한 종목이 빠졌다 (2026-11-05 사용자 지적)
+                cut2 = (datetime.now(timezone.utc) - timedelta(seconds=TOP_RECENT_SEC)).isoformat()
+                live_now.update(a for (a,) in c3.execute("SELECT symbol FROM live_tick WHERE ts >= ?", (cut2,)))
             finally:
                 c3.close()
         except sqlite3.OperationalError:
             pass                                   # 수집기가 아직 새 열을 안 만든 경우: 3분 값만 쓴다
 
-        def per(r, kind):
+        live_now.update(a for a, (b, c_) in fresh.items() if b > 0 or c_ > 0)
+
+        def sh_of(r):
             sh = shares.get(r["symbol"])
+            if sh and (r["metrics"].get("volume") or 0) / sh * 100 > MAX_TURNOVER:
+                return None                        # 발행주식 수를 믿을 수 없음(액면병합 전 기준 등)
+            return sh
+
+        def per(r, kind):
+            sh = sh_of(r)
             v3, a3 = fresh.get(r["symbol"], (0.0, 0.0))
             lm = r["live_m"]
             return {"s_amt": a3, "s_vol": v3, "s_turn": v3 / sh * 100 if sh else 0.0,
                     "m_amt": lm.get("dollar_3m") or 0.0, "m_vol": lm.get("vol_3m") or 0.0,
                     "m_turn": (lm.get("vol_3m") or 0) / sh * 100 if sh else 0.0}[kind]
+        # 2026-11-05: 회전율(발행주식 대비) 순위만 쓴다. 거래대금·거래량은 큰 종목이 늘 위로 와서 뺐다
+        # ($0.1 짜리와 $1 짜리가 같은 거래대금이어도 무게가 다르다 — 사용자 요청). 발행주식을 모르면 거래대금 순위로 대신.
         for pre in ("s", "m"):
-            tot = [0] * len(rows)
-            for kind in ("amt", "vol", "turn"):
-                for n, rk in enumerate(_ranks([per(r, f"{pre}_{kind}") for r in rows])):
-                    tot[n] += rk
-            if pre == "s":                         # 3초 합계에 3분 거래대금 순위도 한 항목으로 더한다 (2026-11-02 요청)
-                for n, rk in enumerate(_ranks([per(r, "m_amt") for r in rows])):
-                    tot[n] += rk
-            for r, t in zip(rows, tot):
-                r["flow_rank_3s" if pre == "s" else "flow_rank"] = t
+            tr = _ranks([per(r, f"{pre}_turn") for r in rows])
+            am = _ranks([per(r, f"{pre}_amt") for r in rows])
+            known = [bool(sh_of(r)) for r in rows]
+            for r, t, a, k in zip(rows, tr, am, known):
+                r["flow_rank_3s" if pre == "s" else "flow_rank"] = t if k else len(rows) + a
 
     _flow_ranks()
 
@@ -606,6 +738,54 @@ def ranked(db_path: str, limit: int = 50, only_active: bool = True) -> dict:
                 tg = None
             r["filing_tags"] = json.loads(tg[0]) if tg else []
             r["filing_info"] = json.loads(tg[1]) if tg and tg[1] else {}
+        # 지금 급등 전조 조건을 채운 종목(hot)과 그 등급(A/B/C), 3초 거래 순위 1~3위(flow_top)를 표시 — 대시보드에서 눈에 띄게 한다.
+        now_iso = datetime.now(timezone.utc).isoformat()
+        pins_dirty = False
+        # 맨 위 1~3번 = 지금 체결이 있는 종목(최근 TOP_RECENT_SEC 초) 중 3분 회전율이 가장 큰 3개 (2026-11-05 변경).
+        # 체결 있는 종목이 3개 미만이면 모자란 만큼은 아래 흐름 순위 순서대로 채운다.
+        halted = _halted_now(con)
+        # 2026-11-05: 3분 거래대금 → 3분 회전율(상대값) 순으로 변경. 발행주식을 모르는 종목은 뒤로
+        by_amt = sorted((r for r in rows if r["symbol"] in live_now and r["symbol"] not in halted),
+                        key=lambda r: (-(r.get("turnover_3m") or -1), -(r["live_m"].get("dollar_3m") or 0)))[:3]
+        top_syms = [r["symbol"] for r in by_amt] + [r["symbol"] for r in rows if r["symbol"] not in live_now
+                                                    and r["symbol"] not in halted][:3 - len(by_amt)]
+        top_set = set(top_syms)
+        for i, r in enumerate(rows):
+            r["flow_top"] = r["symbol"] in top_set
+            m_ = r["live_m"]                       # '지금 움직임' 탭: 하루 단위 신호(live)는 거의 전부 켜져 있어서 따로 본다
+            r["halted"] = r["symbol"] in halted
+            r["moving"] = r["symbol"] not in halted and is_moving(m_, r.get("turnover_3m"))
+            lm = r["live_m"]
+            if lm.get("price") is None:
+                continue
+            ok, why = presurge(now_iso, r.get("tier") or 0, r.get("close"), (r.get("metrics") or {}).get("vol_ratio"),
+                               lm.get("chg"), None, r.get("turnover_3m"))
+            r["hot"], r["hot_why"] = ok, why
+            r["grade"] = alert_grade(now_iso, r.get("tier") or 0, None, None, r.get("turnover_3m"), r.get("shares"),
+                                     lm.get("dollar_3m"))[0]
+            if r["hot"] and r["grade"] in ("A", "B"):          # 급등 A/B 가 붙은 종목은 기록해 둔다
+                old = pins.get(r["symbol"])
+                if not old or old["grade"] != "A" or r["grade"] == "A":
+                    pins[r["symbol"]] = {"grade": r["grade"] if not old or r["grade"] == "A" else old["grade"],
+                                         "ts": old["ts"] if old else now_iso, "why": r["hot_why"]}
+                    pins_dirty = True
+        # 맨 위 1~3번 = 지금 거래 흐름 1~3위 (계속 고정), 그 아래 = 급등 조건 충족 종목, 나머지는 흐름 순 (안정 정렬)
+        for r in rows:                             # 조건이 풀렸어도 오늘 A/B 가 붙었던 종목은 칩을 유지한다 (자리는 일반 순위)
+            pin = pins.get(r["symbol"])
+            if pin and not r.get("hot"):
+                r["hot"], r["grade"], r["pinned"] = True, pin["grade"], True
+                r["hot_why"] = ["조건 충족 후 유지"] + list(pin.get("why") or [])
+        if pins_dirty:
+            _save_pins(db_path, pins)
+        # 맨 위 1~3번 → 지금 급등 조건을 채운 종목 → 나머지(흐름 순). 예전에 A/B 가 붙었던 종목(pinned)은 칩만 남고
+        # 자리는 일반 순위를 따라 움직인다 (자리를 고정하지 않음).
+        rows.sort(key=lambda r: (0, top_syms.index(r["symbol"])) if r.get("flow_top") else
+                  (1, 0) if r.get("hot") and not r.get("pinned") else (2, 0))
+        from .condscan import _epoch_min, trend_of
+        for r in rows:                             # 추세(5분봉 MA5/MA20): 올라가는 중인지 내려가는 중인지
+            raw = con.execute("SELECT ts, open, high, low, close, volume FROM bars_1m WHERE symbol=? ORDER BY ts DESC LIMIT 300",
+                              (r["symbol"],)).fetchall()
+            r["trend"] = trend_of([(_epoch_min(x[0]), *x[1:]) for x in reversed(raw)]) if raw else None
         for r in rows[:80]:                        # 카드 미니 차트: 최근 30일 [o, h, l, c, v]
             bs = con.execute("SELECT open, high, low, close, volume FROM daily_bars WHERE symbol=? AND d<=? "
                              "ORDER BY d DESC LIMIT 30", (r["symbol"], d0)).fetchall()

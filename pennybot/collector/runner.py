@@ -33,7 +33,7 @@ log = logging.getLogger(__name__)
 FEED_EVENTS = {"ATM_NEW", "ATM_TERMINATED", "PUBLIC_OFFERING", "REGISTERED_DIRECT", "PRIVATE_PLACEMENT",
                "SECURITIES_PURCHASE_AGREEMENT", "WARRANT_REPRICE", "WARRANT_INDUCEMENT", "CONVERTIBLE", "EQUITY_LINE",
                "OFFERING_TERMINATED", "REGISTRATION_WITHDRAWN", "BUYBACK", "COMPLIANCE_REGAINED", "FDA_APPROVAL",
-               "MATERIAL_CONTRACT", "DELISTING_NOTICE", "REVERSE_SPLIT", "TAKEDOWN", "GOING_CONCERN"}
+               "MATERIAL_CONTRACT", "DELISTING_NOTICE", "REVERSE_SPLIT", "TAKEDOWN", "GOING_CONCERN", "LARGE_HOLDER"}
 
 RANKINGS = [  # (type, duration)
     ("MARKET_TRADING_AMOUNT", "realtime"),
@@ -43,7 +43,10 @@ RANKINGS = [  # (type, duration)
     ("TOP_GAINERS", "1d"),
     ("TOP_LOSERS", "1d"),
 ]
-EDGAR_FORMS = ["4", "8-K", "6-K", "424B4", "424B5", "424B3", "S-1", "F-1", "S-3", "F-3", "RW", "EFFECT"]
+# SCHEDULE 13D: 5% 이상 대량지분 취득 (2024-12 이후 EDGAR 양식 이름, 피드에서는 대상 회사가 'Subject' 행).
+# 2026-11-05 검증(SEC 인덱스 2년치 423건): 다음날 시가 매수 3일 평균은 대조보다 +2~3%p 였지만 상위 1% 빼면 −1.4% —
+# 매수 규칙이 아니라 '누가 지분을 샀다'는 참고 표시로만 쓴다.
+EDGAR_FORMS = ["4", "8-K", "6-K", "424B4", "424B5", "424B3", "S-1", "F-1", "S-3", "F-3", "RW", "EFFECT", "SCHEDULE 13D"]
 MAX_CANDLE_PAGES = 8   # 200봉 × 8 = 약 26시간 (하루 4 세션 전체)
 
 
@@ -352,7 +355,8 @@ class Collector:
         if session == CLOSED:
             self._maybe_research_refresh(now)
             return
-        every = timedelta(seconds=c.ranking_poll_live_seconds) if session != AFTER else timedelta(minutes=c.ranking_poll_minutes)
+        # 애프터마켓도 1분마다 (11/03 MERC: 애프터에 터졌는데 10분 간격이라 순위 변화를 늦게/못 봄). CLOSED 는 위에서 이미 빠짐.
+        every = timedelta(seconds=c.ranking_poll_live_seconds)
         if self._due("rankings", now, every):
             self._run("rankings", self.poll_rankings, now, trade_date, session)
             self._run("watch", self.select_watch, now, trade_date)
@@ -428,6 +432,7 @@ class Collector:
         for market in self.cfg.markets:
             for s in self.c.stocks_all(market) or []:
                 listed[s["symbol"]] = {"market": market, "name": s.get("name", "")}
+        self._listed = listed                            # 순위에 새로 뜬 종목을 감시 목록에 바로 넣을 때 쓴다 (poll_rankings)
         prices = {p["symbol"]: float(p["lastPrice"]) for p in self.c.prices(sorted(listed))}
         self.universe = {sym: {**info, "last": prices[sym]} for sym, info in listed.items()
                          if sym in prices and self.cfg.min_price <= prices[sym] <= self.cfg.max_price}
@@ -565,6 +570,7 @@ class Collector:
                     "ranked_at": res.get("rankedAt"),
                 })
         self.store.put_rankings(rows)
+        self._admit_from_rankings(rows, now)
         names = {"MARKET_TRADING_AMOUNT": "시장 거래대금", "TOSS_SECURITIES_TRADING_AMOUNT": "토스 거래대금",
                  "MARKET_TRADING_VOLUME": "시장 거래량", "TOSS_SECURITIES_TRADING_VOLUME": "토스 거래량",
                  "TOP_GAINERS": "급등률", "TOP_LOSERS": "급락률"}
@@ -582,6 +588,33 @@ class Collector:
                         nm = (self.universe.get(sym) or {}).get("name") or ""
                         self._event(now, sym, f"rank:{typ}", f"📈 {sym} {nm} {names.get(typ, typ)} {moved}".replace("  ", " "), rk)
             self._rank_prev[typ] = ranks
+
+    def _admit_from_rankings(self, rows: list[dict], now: datetime) -> None:
+        """감시 목록(유니버스)은 몇 시간에 한 번만 새로 만들어서, 그 사이에 새로 뜬 종목은 놓친다
+        (11/03 MERC: 전날 $0.126 → $0.37, 급등률 순위 2~7위였는데 목록에 없어 알림 0건). 가격대가 아니라 **조건**으로 넣는다:
+        급등률·거래량·거래대금 순위(급락률 제외)에서 admit_rank_max 위 안에 든 상장 종목이고 현재가가 수집 가격대 안이면
+        바로 목록에 넣는다 — 이후 감시·실시간 구독·알림이 다 같이 따라온다. 순위는 1분마다(애프터 포함) 갱신된다."""
+        listed = getattr(self, "_listed", None) or {}
+        new = {}
+        for r in rows:
+            s = r["symbol"]
+            if s in self.universe or s in new or s not in listed:
+                continue
+            if r.get("type") == "TOP_LOSERS" or (r.get("rank") or 0) > self.cfg.admit_rank_max:
+                continue
+            if self.cfg.min_price <= (r["last"] or 0) <= self.cfg.max_price:
+                new[s] = {**listed[s], "last": r["last"]}
+        if not new:
+            return
+        self.universe.update(new)
+        log.info("순위에서 감시 목록에 새로 편입 %d종목: %s", len(new), ", ".join(sorted(new)[:12]))
+        try:
+            info = self.c.stocks(sorted(new)) or []
+            self.store.put_stock_info([{"symbol": s["symbol"], "name": s.get("name"),
+                                        "shares": float(s["sharesOutstanding"]) if s.get("sharesOutstanding") else None,
+                                        "list_date": s.get("listDate"), "updated": now.date().isoformat()} for s in info])
+        except Exception as e:
+            log.warning("새 편입 종목 정보 실패: %s", e)
 
     def poll_steady_flow(self, now: datetime, trade_date, session: str) -> None:
         """한 번에 크게 안 터지고 계속 거래가 붙는 종목('사부작사부작') — poll_rankings 가 이미 채우는
@@ -776,6 +809,9 @@ class Collector:
                     if not info and detail.items:
                         from ..filing_detail import extract
                         info = extract(detail.form, detail.items, "")
+                if f["form"] == "SCHEDULE 13D":           # 정정(13D/A)은 빼고 첫 취득 보고만 (정정은 검증에서 효과 없음)
+                    from ..dilution import Event
+                    evs.append(Event("LARGE_HOLDER", 0, f["form"], f["accepted"].date(), f["accession"]))
                 direction = (1 if sum(e.direction for e in evs) > 0 else -1 if sum(e.direction for e in evs) < 0
                              else 0) if evs else (1 if buy and buy > 0 else 0)
                 rows.append({"accession": f["accession"], "cik": f["cik"], "symbol": sym, "form": f["form"],
@@ -1080,7 +1116,10 @@ class Collector:
                 rows.append(r)
         day_start = self.cal.bounds(trade_date, DAY)
         start = iso(day_start[0]) if day_start else iso(now - timedelta(hours=12))
-        prev_alert = dict(self.store.query("SELECT symbol, alerted FROM precursor_live WHERE d0=? AND alerted IS NOT NULL", (d0,)))
+        # 오늘(데이마켓 시작 뒤) 알림만 — 데이·프리·정규장의 d0 는 전 영업일이라 어제 애프터장 알림까지 같은 d0 로 잡혀
+        # 오늘 하루 종일 그 종목 알림이 막혔다 (2026-11-05: 11/04 d0 알림 52건 중 28건이 전날 애프터장)
+        prev_alert = dict(self.store.query("SELECT symbol, alerted FROM precursor_live WHERE d0=? AND alerted IS NOT NULL AND alerted>=?",
+                                           (d0, start)))
         out = []
         for sym, score, sig, met, close in rows:
             try:
@@ -1113,7 +1152,7 @@ class Collector:
                 lv["signals"].append("burst")
                 lv["metrics"]["grade"], lv["metrics"]["grade_why"] = alert_grade(
                     today[k][0], tiers[sym], close, json.loads(met or "{}").get("vol_ratio"))
-            fire = (burst and sym not in prev_alert and not self._alerted(self.store, d0, sym)
+            fire = (burst and sym not in prev_alert and not self._alerted(self.store, d0, sym, start)
                     and not (self._rt and self._rt.healthy))   # 실시간 체결이 살아 있으면 알림은 실시간 쪽이 맡는다
             out.append({"d0": d0, "symbol": sym, "ts": iso(now), "signals": json.dumps(lv["signals"]),
                         "metrics": json.dumps(lv["metrics"]), "alerted": iso(now) if fire else prev_alert.get(sym)})
@@ -1137,9 +1176,12 @@ class Collector:
         self.store.put_precursor_live(out)
 
     @staticmethod
-    def _alerted(store, d0: str, sym: str):
+    def _alerted(store, d0: str, sym: str, since: str | None = None):
+        """since(그날 데이마켓 시작) 뒤에 나간 알림 시각. since 를 안 주면 d0 전체."""
         r = store.query("SELECT alerted FROM precursor_live WHERE d0=? AND symbol=? AND alerted IS NOT NULL", (d0, sym))
-        return r[0][0] if r else None
+        if not r or (since and r[0][0] < since):
+            return None
+        return r[0][0]
 
     def _keep_watch(self, d0: str, trade_date, all_rows: dict) -> set:
         """오르고 빠졌다고 감시에서 빼지 않는다: 오늘 알림 나간 종목 · 오늘 전일 대비 +30% 찍은 종목 ·
@@ -1270,7 +1312,7 @@ class Collector:
         evs = [r[0] for r in store.query("SELECT ts FROM events WHERE symbol=? AND kind='reaccel' AND ts>=? ORDER BY ts", (sym, start))]
         if len(evs) >= 5 or (evs and now - datetime.fromisoformat(evs[-1]) < timedelta(minutes=20)):
             return False
-        alerted = self._alerted(store, d0, sym)
+        alerted = self._alerted(store, d0, sym, start)
         since = max([x for x in (start, alerted, evs[-1] if evs else None) if x])  # 직전 알림 뒤의 고점부터 다시 센다
         r = reaccel(today, since)
         if not r:
@@ -1323,8 +1365,8 @@ class Collector:
 
     def _alert(self, store, now, session, sym, score, sig, met, lv, tier_, extra_tags) -> None:
         """거래 터짐 한 건: 급등 전조 조건(presurge)이면 '🚨 급등 전조' 전체, 아니면 '📶 거래 터짐' 짧은 신호 (세션 상관없이)."""
-        from ..precursor import (MIN_BURST_TURN3, TIER_LABEL, alert_buttons, alert_text, ask_depth, presurge, runner_tag,
-                                 signal_text)
+        from ..precursor import (MIN_BURST_TURN3, TIER_LABEL, alert_buttons, alert_grade, alert_text, ask_depth, momo_flags,
+                                 presurge, runner_tag, signal_text)
         r = (getattr(self, "_runner_cache", None) or (None, {}))[1].get(sym)
         if r and r["days"]:                              # 며칠 전 급등주면 알림에 표시
             extra_tags = [runner_tag(r)] + list(extra_tags)
@@ -1334,6 +1376,8 @@ class Collector:
         _shares = (_sh[0][0] if _sh and _sh[0][0] else None) or self._rt_shares.get(sym)
         turn3 = (m.get("vol_3m") or 0) / _shares * 100 if _shares else None
         m["turn3"] = turn3
+        m["grade"], m["grade_note"] = alert_grade(iso(now), tier_, None, dm.get("vol_ratio"), turn3, _shares, m.get("dollar_3m"),
+                                                  momo_flags(m, session))
         m["presurge"], why = presurge(iso(now), tier_, m.get("price") and m["price"] / (1 + (m.get("chg") or 0) / 100),
                                       dm.get("vol_ratio"), m.get("chg"), session, turn3)
         if not m["presurge"]:        # 조건(전날 대비 +5%↑ & $5 미만·전날 거래량 50배+·★★★ 중 하나)을 못 채우면 '급등 전조'가 아니라 거래 터짐
@@ -1350,7 +1394,7 @@ class Collector:
                                    buttons=alert_buttons(sym, link))
             log.info("거래 터짐 신호 %s (%s)", sym, session)
             self._event(now, sym, "burst", f"📶 {sym} 거래 터짐 ({m.get('chg', 0):+.1f}% · 3분 ${m.get('dollar_3m', 0) / 1e3:.0f}K · "
-                        f"{session} · 회전 {m['turn3'] if m.get('turn3') is not None else 0:.2f}%)",
+                        f"{session} · 회전 {m['turn3'] if m.get('turn3') is not None else 0:.2f}% · {m.get('grade', '-')}등급)",
                         m.get("chg"), store=store)
             return
         m["grade_why"] = why
@@ -1381,7 +1425,8 @@ class Collector:
                                buttons=alert_buttons(sym, link))
         log.info("급등 전조 알림 %s (%s)", sym, " · ".join(m["grade_why"]))
         self._event(now, sym, "precursor", f"🚨 {sym} 급등 전조 ({' · '.join(m['grade_why'])} · "
-                    f"{m.get('chg', 0):+.1f}% · 3분 ${m.get('dollar_3m', 0) / 1e3:.0f}K · {session})", m.get("chg"), store=store)
+                    f"{m.get('chg', 0):+.1f}% · 3분 ${m.get('dollar_3m', 0) / 1e3:.0f}K · {session} · {m.get('grade', '-')}등급)",
+                    m.get("chg"), store=store)
 
     # ---------- 실시간: 웹소켓 체결 → 최근 60초 거래대금·회전율·평소 대비 거래량 → 바로 알림 (등락률은 안 봄) ----------
     def _rt_set(self, symbols) -> None:
@@ -1453,15 +1498,15 @@ class Collector:
         v60 = sum(v for _, _, v in w)
         sh = self._rt_shares.get(sym)
         try:
-            after = self.cal.classify(self.clock())[1] == "AFTER"
+            sess = self.cal.classify(self.clock())[1]
         except Exception:
-            after = False
-        min_d = getattr(self.cfg, "rt_min_dollar_after", 2e4) if after else self.cfg.rt_min_dollar
+            sess = "REGULAR"
+        min_d = (getattr(self.cfg, "rt_min_dollar_by_session", None) or {}).get(sess, self.cfg.rt_min_dollar)
         if not (d60 >= min_d or (sh and d60 >= self.cfg.rt_min_turn_dollar
                                  and self.cfg.rt_min_turnover <= v60 / sh * 100 <= 1000)):
             return
         base = sum(v for k, v in mins.items() if m - 31 <= k <= m - 2) / 30   # 직전 30분 분당 평균 (지금 분·직전 분 제외)
-        surge = getattr(self.cfg, "rt_surge_after", 2.5) if after else self.cfg.rt_surge
+        surge = (getattr(self.cfg, "rt_surge_by_session", None) or {}).get(sess, self.cfg.rt_surge)
         if sym in self._rt_seeded:
             if v60 < surge * max(base, 1.0):
                 return
@@ -1522,6 +1567,11 @@ class Collector:
                     self._rt_alert(store, *job[1:])
             except Exception as e:
                 log.warning("실시간 처리 실패 %s: %s", job[:2], str(e)[:160])
+                if not getattr(self, "_rt_tb_seen", None):
+                    self._rt_tb_seen = set()
+                if (job[0], str(e)[:60]) not in self._rt_tb_seen:       # 같은 오류의 상세 위치는 처음 한 번만 남긴다 (원인 추적용)
+                    self._rt_tb_seen.add((job[0], str(e)[:60]))
+                    log.exception("실시간 처리 실패 상세 %s", job[:2])
 
     def _vopen_refresh(self, store) -> None:
         by: dict = {}
@@ -1592,7 +1642,7 @@ class Collector:
         log.info("실시간 거래 터짐 %s 60초 $%.0f 회전율 %s", sym, d60, f"{turn:.2f}%" if turn is not None else "-")
         if kind == "flow2":
             tag = f"🔁 2차 거래대금 재유입 · {tag}"
-            self._event(now, sym, "flow2", f"🔁 {sym} 2차 거래대금 재유입 (앞선 파동 뒤 다시 붙음)", d60)
+            self._event(now, sym, "flow2", f"🔁 {sym} 2차 거래대금 재유입 (앞선 파동 뒤 다시 붙음)", d60, store=store)   # store 필수: 이 스레드 전용 연결
         self._fast_confirm(now, trade_date, session, store, d0, sym, pc, check=False, tags=[tag])
 
     def _watch_now(self, symbols, store=None) -> None:
@@ -1737,7 +1787,7 @@ class Collector:
             return False                                 # 거래가 얇음
         self._fast_hot[1].add(sym)                       # 다음 1분 감시·가상 매매에 넣는다
         self._promote(sym, now)
-        if self._alerted(store, d0, sym):                # 오늘 이미 알림 → 눌렸다 다시 붙는 거면 재가속 알림
+        if self._alerted(store, d0, sym, start):         # 오늘 이미 알림 → 눌렸다 다시 붙는 거면 재가속 알림
             self._reaccel_check(store, now, session, d0, sym, today, pc, shares, start)
             return True
         row = store.query("SELECT symbol, score, signals, metrics, close FROM precursor_daily WHERE d0=? AND symbol=?", (d0, sym))

@@ -26,8 +26,13 @@ log = logging.getLogger(__name__)
 # 전부 403 으로 막음(RSS 뿐 아니라 사이트 자체). AccessWire 는 accessnewswire.com 으로 바뀌면서 RSS 경로를
 # robots.txt 에서 통째로 Disallow 함(404). 셋 다 URL을 고친다고 되는 게 아니라 접근 자체가 막혀 있어서 뺐다.
 # PRNewswire 만 살아 있음을 확인(20건 수신). 새 피드를 추가하기 전엔 python -m pennybot.news 류로 먼저 확인할 것.
+# 전체 피드는 최신 20건뿐이라 발표가 몰리면 밀려난다 → 업종별 피드(각 20건)를 같이 본다 (11/03 확인: 전부 200, 같은 발표는 id 로 중복 제거).
+# GlobeNewswire·BusinessWire 는 봇 접속을 403 으로 막아서 쓰지 않는다 (우회하지 않음).
+_PRN = "https://www.prnewswire.com/rss/{0}-latest-news/{0}-latest-news-list.rss"
 DEFAULT_FEEDS = [
     "https://www.prnewswire.com/rss/news-releases-list.rss",
+    *[_PRN.format(c) for c in ("financial-services", "health", "technology", "energy", "consumer-products-retail",
+                                "heavy-industry-manufacturing", "telecommunications", "automotive", "entertainment-media")],
 ]
 
 _TICKER = re.compile(r"\(?\b(NASDAQ|Nasdaq|NYSE American|NYSE Arca|NYSE MKT|NYSE|AMEX|NasdaqCM|NasdaqGM|NasdaqGS)"

@@ -172,6 +172,51 @@ def cmd_audit(cfg: Config, days: int) -> None:
     print(text(report(cfg.trading.db_path, cfg.collector.db_path, days), days))
 
 
+def cmd_alert_stats(cfg: Config, days: int) -> None:
+    """알림이 난 뒤 실제 성적(종류·세션·등급별)과 모의 체결 비용(세션별)."""
+    import sqlite3
+    from . import alertperf, tradecost
+    db = cfg.collector.db_path
+    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    con.row_factory = sqlite3.Row
+    mq = lambda sql, a=(): [dict(r) for r in con.execute(sql, a).fetchall()]
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    try:
+        rs = alertperf.rows(mq, None, since, limit=100000)
+    finally:
+        pass
+    print(alertperf.breakdown_text(alertperf.breakdown(rs), days))
+    con.close()
+    print()
+    print(tradecost.text(tradecost.report(cfg.trading.db_path, db, days), days))
+
+
+def cmd_rule_eval(cfg: Config, rule: str, freeze: str | None, since: str | None, days: int) -> None:
+    """알림 규칙 검증 (읽기 전용): 선택 기간 vs 한 번도 안 본 확인 기간, 적중률과 순수익을 같이."""
+    from . import ruleeval
+    if rule not in ruleeval.RULES:
+        raise SystemExit(f"모르는 규칙: {rule} (있는 규칙: {', '.join(ruleeval.RULES)})")
+    freeze = freeze or ruleeval.RULE_FROZEN.get(rule, "9999-12-31")
+    since = since or (datetime.now(timezone.utc) - timedelta(days=min(days, 120))).date().isoformat()
+    print(f"1분봉에서 터짐을 다시 뽑는 중 ({since} 이후, 몇 분 걸림) ...", flush=True)
+    events = ruleeval.extract(cfg.collector.db_path, since)
+    print(f"터짐 {len(events)}건\n")
+    print(ruleeval.text(ruleeval.evaluate(events, rule, freeze), rule, freeze))
+
+
+def cmd_overnight(cfg: Config, since: str | None, days: int) -> None:
+    """조용한 거래량 폭발 후보와 데이마켓 실제 가격 기준 결과 (읽기 전용)."""
+    from . import overnight
+    since = since or (datetime.now(timezone.utc) - timedelta(days=min(days, 400))).date().isoformat()
+    print(overnight.text(overnight.evaluate(cfg.collector.db_path, since)))
+
+
+def cmd_halt_resume(cfg: Config, since: str | None) -> None:
+    """급락 중 거래정지 → 재개 직후 매수했다면 (재개 첫 가격 vs 1분 뒤, 읽기 전용)."""
+    from . import haltresume
+    print(haltresume.text(haltresume.events(cfg.collector.db_path, since)))
+
+
 def cmd_signal_audit(cfg: Config, days: int, gap: int, horizon: int) -> None:
     from .signalaudit import report, save, text
     rep = report(cfg.trading.db_path, cfg.collector.db_path, days, gap, horizon)
@@ -634,11 +679,13 @@ def _release_lock(path) -> None:
 def main() -> None:
     ap = argparse.ArgumentParser(description="미국 페니주 자동매매 (토스증권)")
     ap.add_argument("command", nargs="?", default="collect",
-                    choices=["check", "accounts", "collect", "summarize", "audit", "signal-audit", "trade", "dashboard",
+                    choices=["check", "accounts", "collect", "summarize", "audit", "signal-audit", "alert-stats", "trade", "dashboard",
                              "probe-orders", "backtest", "research", "bigruns", "chart30", "trigger", "anatomy",
                              "telegram-setup", "tunnel", "screen", "run", "backfill-daily", "backfill-minutes",
-                             "vacuum-db"])
+                             "vacuum-db", "rule-eval", "overnight", "halt-resume"])
     ap.add_argument("--config", default="config.yaml")
+    ap.add_argument("--rule", default="session-score", help="rule-eval: 검증할 규칙 이름 (ruleeval.RULES)")
+    ap.add_argument("--freeze", help="rule-eval: 이 날(YYYY-MM-DD) 이후를 '한 번도 안 본 확인 기간'으로 (기본: 규칙별 고정일)")
     ap.add_argument("--once", action="store_true", help="collect/run: 한 번만 실행")
     ap.add_argument("--date", help="summarize: 미국 영업일 YYYY-MM-DD")
     ap.add_argument("--port", type=int, default=8050, help="dashboard 포트")
@@ -713,6 +760,10 @@ def _dispatch(cfg, args) -> None:
         "summarize": lambda: cmd_summarize(cfg, args.date),
         "audit": lambda: cmd_audit(cfg, args.days),
         "signal-audit": lambda: cmd_signal_audit(cfg, args.days, args.gap_minutes, args.horizon),
+        "alert-stats": lambda: cmd_alert_stats(cfg, args.days),
+        "rule-eval": lambda: cmd_rule_eval(cfg, args.rule, args.freeze, args.since, args.days),
+        "overnight": lambda: cmd_overnight(cfg, args.since, args.days),
+        "halt-resume": lambda: cmd_halt_resume(cfg, args.since),
         "trade": lambda: cmd_trade(cfg, args.once),
         "dashboard": lambda: cmd_dashboard(cfg, args.port, args.demo),
         "probe-orders": lambda: cmd_probe_orders(cfg, args.symbol, args.yes_real_order),

@@ -55,9 +55,58 @@ def outcome(mq, rq, sym: str, ts: str) -> dict | None:
         elif res is None and b["high"] >= p0 * WIN:
             res = "win"
     day_hi = max(b["high"] for b in bars)
+    cut = (datetime.fromisoformat(ts) + timedelta(minutes=180)).isoformat()      # 알림 뒤 3시간 안의 성적 (세션이 끝나도 이어서)
+    w3 = [b for b in after if b["ts"] <= cut]
     return {"date": d, "price": p0, "prev_close": pc, "chg_at": (p0 / pc - 1) * 100 if pc else None,
             "last": after[-1]["close"] if after else p0, "last_ts": bars[-1]["ts"], "high": hi, "high_ts": hi_ts, "low": lo,
-            "result": res, "hit30": bool(pc and day_hi >= pc * RUN30)}
+            "result": res, "hit30": bool(pc and day_hi >= pc * RUN30),
+            "h3_last": (w3[-1]["close"] / p0 - 1) * 100 if w3 else None,
+            "h3_high": (max(b["high"] for b in w3) / p0 - 1) * 100 if w3 else None,
+            "h3_low": (min(b["low"] for b in w3) / p0 - 1) * 100 if w3 else None}
+
+
+def session_of(ts: str) -> str:
+    """알림 시각(UTC ISO) → 미국 세션 (동부시간 기준: 데이 20~04 · 프리 04~09:30 · 정규 09:30~16 · 애프터 16~20)."""
+    t = datetime.fromisoformat(ts).astimezone(ET)
+    m = t.hour * 60 + t.minute
+    return "DAY" if m >= 1200 or m < 240 else "PRE" if m < 570 else "REG" if m < 960 else "AFTER"
+
+
+def grade_of(text: str) -> str:
+    """알림 이벤트 글에 적힌 등급 (11/03 부터 기록). 없으면 '-'."""
+    import re
+    m = re.search(r"([ABC])등급", text or "")
+    return m.group(1) if m else "-"
+
+
+def breakdown(rs: list[dict]) -> dict:
+    """알림 종류 × 세션 × 등급별: 건수 · 3시간 뒤 평균 · 3시간 최고 평균 · 3시간 최저 평균 · 당일 +30% 비율 · 적중(+20% 먼저) 비율."""
+    out: dict = {}
+    for r in rs:
+        if r.get("price") is None or r["kind"] == "old":
+            continue
+        key = (r["kind"], session_of(r["ts"]), grade_of(r.get("text")))
+        x = out.setdefault(key, {"n": 0, "h3n": 0, "last": 0.0, "high": 0.0, "low": 0.0, "hit30": 0, "win": 0, "loss": 0})
+        x["n"] += 1
+        x["hit30"] += bool(r["hit30"])
+        x["win"] += r["result"] == "win"
+        x["loss"] += r["result"] == "loss"
+        if r.get("h3_last") is not None:
+            x["h3n"] += 1
+            x["last"] += r["h3_last"]
+            x["high"] += r["h3_high"]
+            x["low"] += r["h3_low"]
+    return out
+
+
+def breakdown_text(bd: dict, days: int) -> str:
+    lines = [f"알림 성적 (최근 {days}일, 알림 때 가격 기준) — 종류 · 세션 · 등급",
+             "종류      세션   등급   건수  3시간뒤  최고   최저   당일+30%  +20%먼저/−10%먼저"]
+    for (k, s, g), x in sorted(bd.items(), key=lambda kv: (kv[0][0], -kv[1]["n"])):
+        n3 = x["h3n"] or 1
+        lines.append(f"{k:9s} {s:6s} {g:3s} {x['n']:5d}  {x['last'] / n3:+6.1f}% {x['high'] / n3:+6.1f}% {x['low'] / n3:+6.1f}% "
+                     f"{x['hit30'] / x['n'] * 100:6.0f}%   {x['win']}/{x['loss']}")
+    return "\n".join(lines)
 
 
 def rows(mq, rq, since: str, until: str | None = None, limit: int = 300) -> list[dict]:

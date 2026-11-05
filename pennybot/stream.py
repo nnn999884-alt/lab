@@ -235,6 +235,10 @@ class TossStream:
                 for r in rej:
                     if isinstance(r, dict):
                         bad |= {str(s).upper() for s in (r.get("codes") or ([r["symbol"]] if r.get("symbol") else []))}
+                        # 실제 응답 모양: {'target': 'trade:us:VSME', 'code': 'stock-not-found'} — 종목은 target 마지막 칸 (11/03 확인)
+                        t = str(r.get("target") or "")
+                        if t.startswith(("trade:", "orderbook:", "quote:")) and t.count(":") >= 2:
+                            bad.add(t.rsplit(":", 1)[1].upper())
                 bad.discard(str(self.account).upper())
                 if bad - self._rejected:
                     with self._lock:

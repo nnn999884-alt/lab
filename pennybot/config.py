@@ -108,6 +108,10 @@ class CollectorConfig:
     pre_open_watch: bool = True      # 03:55 ET: 데이마켓에서 움직인 종목을 '프리 개장 주목' 으로 다시 알리고 실시간 구독 고정
     rt_min_dollar_after: float = 2e4
     rt_surge_after: float = 2.5
+    # 실시간 '거래 터짐' 알림 기준은 세션마다 따로 (2026-11-04): 60초 거래대금 최소 $ · 직전 30분 분당 평균 대비 거래량 배수.
+    # 데이·프리는 거래가 얇아서 정규장 기준($5만·3.5배)으로는 거의 안 걸린다. 정규장·애프터는 예전 값 그대로. 첫 추정치 — 며칠 보며 조정.
+    rt_min_dollar_by_session: dict = field(default_factory=lambda: {"DAY": 2e4, "PRE": 3e4, "REGULAR": 5e4, "AFTER": 2e4})
+    rt_surge_by_session: dict = field(default_factory=lambda: {"DAY": 2.5, "PRE": 3.0, "REGULAR": 3.5, "AFTER": 2.5})
     rt_min_dollar_3m: float = 0.0
     second_wave_min_minutes: int = 5
     second_wave_max_drop_pct: float = 8.0
@@ -141,6 +145,7 @@ class CollectorConfig:
     short_daily_poll_minutes: int = 60   # FINRA·SSR·Reg SHO 일별 파일 (나오면 한 번만 저장)
     news_feeds: list = field(default_factory=list)   # 비우면 news.DEFAULT_FEEDS
     universe_refresh_hours: int = 24
+    admit_rank_max: int = 30             # 급등률·거래량·거래대금 순위 이 등수 안에 들면 감시 목록에 바로 편입 (11/03, 조건 기반)
     research_auto: bool = True       # 휴장 중(주말 포함) 틈틈이 python -m pennybot research 를 자동으로 다시 돌려 과거 급등주 패턴(분석 탭)을 최신화
     research_refresh_days: int = 7   # 이 날짜 간격으로 (휴장 중에만 시작, 장중엔 안 건드림)
     db_cleanup: bool = True          # 하루에 한 번 오래된 원시 데이터를 지워 market.db 가 무한정 커지는 것을 막음
@@ -222,7 +227,7 @@ class TradingConfig:
     max_position_usd: float = 300.0
     max_position_pct: float = 0.05       # 계좌의 5%
     risk_per_trade_pct: float = 0.01     # 손절 시 손실 계좌의 1%
-    max_open_positions: int = 8
+    max_open_positions: int = 12        # 11/02: 8→12 (전체 동시 보유 한도에 막힌 신호가 많았음)
     max_daily_loss_usd: float = 150.0
     max_weekly_loss_usd: float = 400.0   # 최근 7일 실현 손실이 이만큼이면 신규 매수 중단 (0 = 끔)
     loss_streak_stop: int = 4            # N연속 손실이면 (0 = 끔)
@@ -301,12 +306,17 @@ class TradingConfig:
                      "sessions": ["AFTER", "REGULAR"], "stop_loss_pct_override": 0.0,
                      "take_profit_pct": 10.0, "stop_loss_pct": 8.0, "scale_out_pct": 1.0, "trail_pct": 0.0,
                      "gap_risk_pct": 25.0},
+        # 2026-11-03 모의 거래 손익으로 정리: rebound 는 데이마켓 6건 −$15.2(승률 17%)·정규장 갭 −$17.8, 애프터만 +$41.6 → 애프터만.
         "rebound": {"enabled": False, "budget_pct": 0.30, "max_positions": 2, "max_candidates": 2,
+                    "block_sessions": ["DAY", "REGULAR"],
                     "take_profit_pct": 12.0, "stop_loss_pct": 50.0, "gap_risk_pct": 25.0},
-        "surge": {"enabled": False, "budget_pct": 0.30, "max_positions": 2, "max_candidates": 2,
+        # surge: 데이 +$10.9(9건)·정규장 +$7.2·프리 +$4.2 로 플러스라 동시 보유 한도 2→4 (한도에 막힌 신호가 가장 많았음)
+        "surge": {"enabled": False, "budget_pct": 0.30, "max_positions": 4, "max_candidates": 2,
                   "take_profit_pct": 20.0, "stop_loss_pct": 50.0, "scale_out_pct": 0.5, "trail_pct": 5.0,
                   "gap_risk_pct": 25.0},
-        "pump": {"enabled": False, "budget_pct": 0.20, "max_positions": 2, "max_candidates": 2,
+        # pump: 애프터 8건 −$23.8(승률 13%), 정규장 6건 +$13.0 → 애프터 매수 차단, 한도 2→3
+        "pump": {"enabled": False, "budget_pct": 0.20, "max_positions": 3, "max_candidates": 2,
+                 "block_sessions": ["AFTER"],
                  "entry_discount_pct": 0.5, "min_day_change": 50.0, "min_dollar": 1e6, "min_vol_ratio": 5.0,
                  "pullback_pct": 5.0, "min_session_minutes": 30,
                  "take_profit_pct": 20.0, "stop_loss_pct": 50.0, "scale_out_pct": 0.5, "trail_pct": 5.0,
@@ -316,7 +326,7 @@ class TradingConfig:
         # (정규장 승률 63~64%·중앙값 +5~7%, 프리마켓 승률 62~67%·중앙값 +9~12%). 데이·애프터마켓은 표본이
         # 적어 그리드를 넓히면 결과가 뒤집혀(오버핏) 제외. stop/horizon 은 그리드가 두 번 다 상한을 그대로
         # 골라서(그 이상은 안 보여줘서 모름) 정확한 최적치가 아니라 두 그리드 결과의 중간값으로 보수적으로 잡음.
-        "session_pop": {"enabled": True, "budget_pct": 0.15, "max_positions": 2,
+        "session_pop": {"enabled": True, "budget_pct": 0.15, "max_positions": 3,
                         "trigger_pct": 15.0, "stop_loss_pct_override": 0.0, "take_profit_pct_override": 0.0,
                         "gap_risk_pct": 25.0,
                         "by_session": {

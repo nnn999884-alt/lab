@@ -143,10 +143,14 @@ def test_virtual_position_closes_at_after_hours_end(tmp_path):
 def test_alert_grade():
     from pennybot.precursor import alert_grade
     t7 = "2026-10-23T11:10:00+00:00"
-    assert alert_grade(t7, 3, 1.5, 80) == ("A", ["프리 06~09시", "★★★", "전날 거래량 50배+"])
-    assert alert_grade("2026-10-23T08:10:00+00:00", 2, 3.0, 10) == ("C", [])
-    assert alert_grade("2026-10-23T08:10:00+00:00", 2, 1.0, 80) == ("B", ["전날 거래량 50배+"])
-    assert alert_grade("2026-10-23T08:10:00+00:00", 2, 8.0, 10)[0] == "C"
+    # A = 프리 07~09:30 ET + 3분 회전율 1%↑ + 3분 거래대금 $10만↑
+    assert alert_grade(t7, 0, None, None, 2.0, 5e6, 2e5)[0] == "A"
+    assert alert_grade(t7, 0, None, None, 2.0, 5e6, 5e4)[0] == "B"                 # 거래대금 부족 → B
+    assert alert_grade(t7, 0, None, None, 0.2, 5e6, 2e5)[0] == "B"                 # 프리 + 유통 1,000만주 미만
+    assert alert_grade(t7, 0, None, None, 0.2, 5e7, 2e5)[0] == "C"                 # 프리지만 회전율 낮고 대형
+    assert alert_grade("2026-10-23T14:10:00+00:00", 0, None, None, 2.0, 5e7, 2e5)[0] == "B"   # 프리 밖이어도 회전율 1%↑ → B
+    assert alert_grade("2026-10-23T14:10:00+00:00", 3, 1.5, 80)[0] == "C"          # 옛 기준(★★★·거래량 50배)만으로는 C
+    assert alert_grade("2026-10-23T08:10:00+00:00", 0, None, None, 2.0, 5e6, 2e5)[0] == "B"   # 04:10 ET 는 프리 07~09:30 밖
 
 
 def test_daily_list_text(tmp_path):
@@ -287,6 +291,31 @@ def test_realtime_trigger_uses_volume_not_price(tmp_path):
     assert col._rt_q.empty()
     col._on_trade("NEWX", 1.0, 100000, t)                                 # 평소 거래량을 아직 안 채운 종목 → 안 보냄
     assert col._rt_q.empty()
+
+
+def test_realtime_burst_thresholds_differ_by_session(tmp_path, monkeypatch):
+    """같은 거래($3.5만·평소 35배)라도 프리(최소 $3만)는 알림, 정규장(최소 $5만)은 안 보냄 — 세션별 기준 (11/04)."""
+    col, st, sent = make(tmp_path)
+    t = 1_800_000_000.0
+    for sym in ("PRE1", "REG1", "DAY1"):
+        col._rt_seeded.add(sym)
+        for k in range(30):
+            col._rt_min.setdefault(sym, {})[int(t // 60) - 31 + k] = 1000.0
+
+    from types import SimpleNamespace
+
+    def at(session):                                             # 테스트용 수집기는 cal 이 None (→ 정규장 취급) 이라 통째로 끼운다
+        monkeypatch.setattr(col, "cal", SimpleNamespace(classify=lambda now: ("2026-11-04", session)))
+
+    at("PRE")
+    col._on_trade("PRE1", 1.0, 35000, t)
+    assert col._rt_q.get_nowait()[:2] == ("alert", "PRE1")
+    at("REGULAR")
+    col._on_trade("REG1", 1.0, 35000, t)
+    assert col._rt_q.empty()                                     # 정규장은 $5만부터
+    at("DAY")
+    col._on_trade("DAY1", 1.0, 25000, t)                         # 데이는 $2만부터
+    assert col._rt_q.get_nowait()[:2] == ("alert", "DAY1")
 
 
 def test_rank_scan_subscribes_newcomers(tmp_path):
@@ -559,3 +588,67 @@ def test_settings_toggle_strategy_and_alerts(tmp_path):
     assert sent.msgs == []                                                # 가상 매매 알림 꺼짐
     assert settings.load(str(tmp_path))["vaccount"] == {"capital": 10000, "per_trade": 1000}
     assert settings.save(str(tmp_path), {"vaccount": {"capital": "5000"}, "bogus": 1})["vaccount"]["capital"] == 5000
+
+
+def test_ranking_admits_symbol_outside_universe(tmp_path):
+    """순위(급등률 등) 상위 조건을 채운 종목은 감시 목록에 없어도 상장 종목이고 가격대 안이면 바로 편입 (11/03 MERC 사례)."""
+    col, st, sent = make(tmp_path)
+
+    class C:
+        def stocks(self, syms):
+            return [{"symbol": s, "name": s, "sharesOutstanding": "1000000", "listDate": "2020-01-01"} for s in syms]
+    col.c = C()
+    col.universe = {"OLD": {"market": "NASDAQ", "name": "old", "last": 1.0}}
+    col._listed = {"MERC": {"market": "NASDAQ", "name": "머서"}, "BIG": {"market": "NYSE", "name": "큰회사"},
+                   "OLD": {"market": "NASDAQ", "name": "old"}, "TINY": {"market": "NASDAQ", "name": "tiny"},
+                   "DEEP": {"market": "NASDAQ", "name": "deep"}, "LOSE": {"market": "NASDAQ", "name": "lose"}}
+    now = datetime(2026, 11, 3, 0, 0, tzinfo=timezone.utc)
+    col._admit_from_rankings([
+        {"symbol": "MERC", "last": 0.25, "type": "TOP_GAINERS", "rank": 2},
+        {"symbol": "BIG", "last": 50.0, "type": "TOP_GAINERS", "rank": 1},          # 가격대 밖
+        {"symbol": "TINY", "last": 0.01, "type": "TOP_GAINERS", "rank": 3},         # 가격대 밖
+        {"symbol": "DEEP", "last": 1.0, "type": "TOP_GAINERS", "rank": 80},         # 순위 조건 못 채움
+        {"symbol": "LOSE", "last": 1.0, "type": "TOP_LOSERS", "rank": 1},           # 급락 순위는 제외
+        {"symbol": "NOTLISTED", "last": 1.0, "type": "TOP_GAINERS", "rank": 1}], now)
+    assert set(col.universe) == {"OLD", "MERC"} and col.universe["MERC"]["last"] == 0.25
+    assert st.query("SELECT shares FROM stock_info WHERE symbol='MERC'")[0][0] == 1000000
+
+
+def test_rt_alert_flow2_runs_on_worker_thread_connection(tmp_path):
+    """2차 재유입(flow2) 이벤트 기록이 메인 스레드 DB 연결을 쓰면 '실시간 처리 실패(SQLite … same thread)' 로 알림이 통째로 사라진다
+    (10/26~11/03 969건). 실시간 스레드 전용 연결(store)만 써야 한다."""
+    import threading
+    col, st, sent = make(tmp_path)
+    st.put_precursor_daily([{"d0": "2026-10-22", "symbol": "PENX", "score": 7, "close": 1.0, "created": "x", "signals": "[]",
+                             "metrics": json.dumps({"dd60": -80, "vol_ratio": 60})}])
+    st.put_daily_bars([{"symbol": "PENX", "d": "2026-10-22", "open": 1, "high": 1, "low": 1, "close": 1.0, "volume": 1}])
+
+    class C:
+        def candles(self, sym, interval, count, before=None):
+            return {"candles": [{"timestamp": (T0 + timedelta(minutes=k)).isoformat(), "openPrice": 1, "highPrice": 1.1,
+                                 "lowPrice": 1, "closePrice": 1.08, "volume": 3000} for k in range(3)]}
+
+        def orderbook(self, sym):
+            return {"asks": []}
+
+    class Cal:
+        def classify(self, now):
+            return (None, "PRE")
+
+        def bounds(self, d, s):
+            return None
+    col.c, col.cal = C(), Cal()
+    col.clock = lambda: T0 + timedelta(minutes=3)
+    col._rt_shares = {"PENX": 1e6}
+    errors = []
+
+    def worker():
+        s2 = Store(col.cfg.db_path)                      # 실시간 스레드가 자기 연결을 만드는 것과 같다
+        try:
+            col._rt_alert(s2, "PENX", 80000.0, 70000.0, 1.08, "flow2")
+        except Exception as e:
+            errors.append(e)
+    t = threading.Thread(target=worker)
+    t.start()
+    t.join()
+    assert not errors, errors

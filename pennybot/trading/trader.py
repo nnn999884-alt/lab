@@ -983,6 +983,8 @@ class Trader:
             strat = self.strategies.get(strategy_name)
             if not strat or session not in strat.SESSIONS:
                 return False
+            if session in (getattr(strat, "p", None) or {}).get("block_sessions", ()):   # 설정으로 막은 세션 (손실 큰 조합 정리)
+                return False
             return self._entry_window(now, trade_date) if session == DAY else True
 
         blocked_by_session = {(p.strategy, p.symbol) for p in plans if p.ok and not buy_window_ok(p.strategy)}

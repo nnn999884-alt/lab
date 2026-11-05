@@ -128,3 +128,19 @@ def test_stream_market_falls_back_to_rest():
     s.connected = True
     s._message("orderbook:us:PEN", {"bids": [{"price": "2", "volume": "1"}], "asks": [{"price": "2.1", "volume": "1"}]})
     assert m.book("PEN").bid == 2 and m.hits == 1
+
+
+def test_rejected_symbols_in_real_toss_shape_are_dropped():
+    """실제 거부 응답은 {'target': 'trade:us:VSME', 'code': 'stock-not-found'} 모양 — 이걸 못 읽어서 같은 종목을 계속
+    다시 구독하며 경고가 886번 났다 (10/26~10/30)."""
+    frames = [TimeoutError, TimeoutError,
+              {"type": "subscriptions", "subscribed": [],
+               "rejected": [{"target": "trade:us:BAD", "code": "stock-not-found", "message": "x"},
+                            {"target": "orderbook:us:BAD", "code": "stock-not-found", "message": "x"}]},
+              TimeoutError]
+    s, conns, clock = make(frames, ping_interval=1.5)
+    s.pin(["BAD", "OK"])
+    with pytest.raises(ConnectionError):
+        s._session()
+    last = json.loads([x for x in conns[0].sent if x != "PING"][-1])
+    assert {"type": "trade:us", "codes": ["OK"]} in last and {"type": "orderbook:us", "codes": ["OK"]} in last
