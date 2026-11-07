@@ -604,6 +604,29 @@ table.ca-tbl tr.off .ca-fill { opacity: .35; }
 .scr-sym .scr-name { display: inline-block; max-width: 150px; font-size: 11.5px; font-weight: 500; letter-spacing: 0; vertical-align: bottom;
   font-family: "Pretendard Variable", Pretendard, -apple-system, "Segoe UI", "Noto Sans KR", sans-serif; }
 @media (max-width: 700px) { .nm { max-width: 120px; } }
+/* ---------- 휴대폰 정리 (2026-11-07): 맨 위 줄이기 · 종목 카드 3줄 ---------- */
+@media (max-width: 700px) {
+  /* 요약 숫자: 작게, 설명 줄 숨김 */
+  .kpis { margin-bottom: 6px; }
+  .kpi { flex: 0 0 34%; padding: 7px 10px !important; }
+  .kpi .k { font-size: 10.5px; } .kpi .v { font-size: 13px; } .kpi .n { display: none; }
+  /* '지금 봇이 보는 것': 접어 두고 제목 누르면 펼침 */
+  .pick-wrap { padding: 10px 12px !important; margin-bottom: 6px; }
+  .pick-wrap h2 { margin: 0; cursor: pointer; font-size: 13.5px; }
+  .pick-wrap h2::after { content: " ▸ 펼치기"; color: var(--text-3); font-size: 11px; font-weight: 500; }
+  .pick-wrap.m-open h2::after { content: " ▾ 접기"; }
+  .pick-wrap:not(.m-open) #pick-body, .pick-wrap:not(.m-open) #reasons-wrap { display: none; }
+  .card.brief-wrap > summary { padding: 8px 12px; }
+  /* 종목 카드 */
+  .pc-it { padding: 10px 12px; gap: 8px; align-items: center; }
+  .pc-top { gap: 6px; } .pc-top b { font-size: 15px; }
+  .pc-name { font-size: 12px; margin-top: 1px; }
+  .pc-badges { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin-top: 4px; }
+  .pc-badges .pc-meta { margin: 0; font-size: 11px; }
+  .pc-r { min-width: 74px; }
+  .pc-r .pc-chg { font-size: 15px; font-weight: 700; margin: 0; }
+  .pc-r .pc-px { font-size: 12px; font-weight: 500; color: var(--text-2); margin-top: 2px; }
+}
 .cs-dots { display: inline-flex; gap: 3px; flex-wrap: wrap; max-width: 170px; vertical-align: middle; }
 .cs-dots i { width: 9px; height: 9px; border-radius: 50%; background: var(--line); display: inline-block; }
 .cs-dots i.y { background: var(--good); } .cs-dots i.s { background: transparent; border: 1.5px solid var(--text-3); width: 6px; height: 6px; }
@@ -1993,6 +2016,12 @@ applyTabs();
 /* ---------- 오늘 브리핑 ---------- */
 try { if (localStorage.getItem("briefOpen") === "1") $("brief-wrap").open = true; } catch (e) {}
 $("brief-wrap").addEventListener("toggle", () => { try { localStorage.setItem("briefOpen", $("brief-wrap").open ? "1" : "0"); } catch (e) {} });
+// 휴대폰: '지금 봇이 보는 것' 접기·펼치기 (넓은 화면에선 늘 펼쳐짐 — CSS 가 휴대폰에서만 숨김)
+try { if (localStorage.getItem("pickOpen") === "1") $("pick-wrap").classList.add("m-open"); } catch (e) {}
+$("pick-wrap").querySelector("h2").addEventListener("click", () => {
+  const o = $("pick-wrap").classList.toggle("m-open");
+  try { localStorage.setItem("pickOpen", o ? "1" : "0"); } catch (e) {}
+});
 async function loadBrief() {
   const b = await api("/api/briefing");
   if (unchanged("brief", b)) return;
@@ -2559,21 +2588,24 @@ function drawPreCards(box, rows) {
     const chg = (x.now || {}).chg;
     const it = mk("div", "pc-it" + (x.live.length ? " live" : "") + (chg > 0 ? " h-up" : chg < 0 ? " h-dn" : ""));
     it.style.setProperty("--heat", Math.min(1, Math.abs(chg || 0) / 30).toFixed(2));
+    // 휴대폰 카드 3줄 (2026-11-07): ① 티커 · 등락률(크게) ② 회사명 · 현재가 ③ 표시(급등·★·🧬·지금 신호) + 회전율 — 한 줄에 몰아 잘리던 것
     const l = mk("div", "pc-l");
-    const top = mk("div", "pc-top"); top.append(mk("b", "mono", x.symbol), mk("span", "nm", x.name || ""));
-    if (x.hot && x.grade !== "C") top.append(mk("span", "ev-kind k-pre", "급등 " + (x.grade || "")));
-    if (x.new) top.append(mk("span", "tg tg-live", "NEW"));
-    if (DNA_SET.has(x.symbol)) top.append(mk("span", "tg tg-tier", "🧬"));
-    top.append(trendEl(x));
-    if (x.tier) top.append(mk("span", "tg tg-tier", "★".repeat(x.tier)));
-    x.live_labels.slice(0, 1).forEach(lb => top.append(mk("span", "tg tg-live", lb.replace(/^[^\p{L}]+/u, ""))));
-    l.append(top);
-    const m = [`전날 ${val("vr", x)}`];
+    const top = mk("div", "pc-top"); top.append(mk("b", "mono", x.symbol), trendEl(x));
+    l.append(top, mk("div", "pc-name", x.name || ""));
+    const badges = mk("div", "pc-badges");
+    if (x.hot && x.grade !== "C") badges.append(mk("span", "ev-kind k-pre", "급등 " + (x.grade || "")));
+    x.live_labels.slice(0, 1).forEach(lb => badges.append(mk("span", "tg tg-live", lb.replace(/^[^\p{L}]+/u, ""))));
+    if (x.new) badges.append(mk("span", "tg tg-live", "NEW"));
+    if (x.tier) badges.append(mk("span", "tg tg-tier", "★".repeat(x.tier)));
+    if (DNA_SET.has(x.symbol)) badges.append(mk("span", "tg tg-tier", "🧬"));
+    const m = [];
     if (x.turnover_today != null) m.push(`회전 ${val("tt", x)}`);
-    if ((x.live_m || {}).vol_x != null) m.push(`1시간 ${val("vx", x)}`);
-    const tg = [...(x.filing_tags || []).map(t => t.replace(/ \d\d\/\d\d(\/\d\d)?$/, "")), ...(x.patterns || [])].slice(0, 2);
-    l.append(mk("div", "pc-meta", m.join(" · ") + (tg.length ? " · " + tg.join(" · ") : "")));
-    const r = mk("div", "pc-r"); r.append(mk("div", "mono pc-px", val("px", x)), mk("div", "mono pc-chg " + (tone(chg) || "flat"), val("chg", x)));
+    m.push(`전날 ${val("vr", x)}`);
+    const tg = [...(x.filing_tags || []).map(t => t.replace(/ \d\d\/\d\d(\/\d\d)?$/, "")), ...(x.patterns || [])].slice(0, 1);
+    badges.append(mk("span", "pc-meta", m.join(" · ") + (tg.length ? " · " + tg[0] : "")));
+    l.append(badges);
+    const r = mk("div", "pc-r");
+    r.append(mk("div", "mono pc-chg " + (tone(chg) || "flat"), val("chg", x)), mk("div", "mono pc-px", val("px", x)));
     it.append(l, r); it.onclick = () => { lookup(x.symbol); showTab("symbol"); };
     list.appendChild(it);
   });
