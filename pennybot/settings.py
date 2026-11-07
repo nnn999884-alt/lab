@@ -7,7 +7,7 @@ from pathlib import Path
 
 DEFAULTS = {
     "strategies": {"S1": True, "S2": True, "S3": True, "S4": True, "S5": True, "S6": True},
-    "alerts": {"presurge": True, "burst": True, "early20": True, "after_move": True, "bottom_bounce": True, "steady": True, "halt": True, "pre_open": True, "vtrade": True, "briefing": True, "perf": True, "reaccel": True, "approach": True},
+    "alerts": {"presurge": True, "burst": True, "early20": True, "after_move": True, "bottom_bounce": True, "steady": False, "halt": True, "pre_open": True, "vtrade": True, "briefing": True, "perf": True, "reaccel": True, "approach": True, "early_watch": True, "absorb": True, "dna": True, "fast": True, "miss": True, "spike_start": True, "day_open": True, "slow_climb": True},
     "realtime": True,
     "vaccount": {"capital": 10000, "per_trade": 1000},
 }
@@ -15,7 +15,15 @@ ALERT_KO = {"presurge": "🚨 급등 전조", "burst": "📶 거래 터짐 신�
             "bottom_bounce": "🌊 바닥 찍고 재반등 (2차 파동 초입)",
             "steady": "🫧 꾸준히 거래 붙음 (사부작 지속 관심)",
             "halt": "🛑 뉴스 대기 거래정지", "pre_open": "🌅 프리 개장 주목 목록",
-            "vtrade": "🧪 가상 매매 (주문·체결·매도)", "briefing": "🗞 장 시작 전 브리핑 (03:45 ET)", "perf": "📊 장 마감 알림 성과 요약", "reaccel": "🔁 재가속 (급등 뒤 눌렸다 다시 붙음)", "approach": "👀🎯 이전 고점 접근·임박 (며칠 전 급등주, 넘기 전)"}
+            "vtrade": "🧪 가상 매매 (주문·체결·매도)", "briefing": "🗞 장 시작 전 브리핑 (03:45 ET)", "perf": "📊 장 마감 알림 성과 요약", "reaccel": "🔁 재가속 (급등 뒤 눌렸다 다시 붙음)", "approach": "👀🎯 이전 고점 접근·임박 (며칠 전 급등주, 넘기 전)",
+            "early_watch": "👀 초기 경보 (10분 +3%, 점수 높음·공시 뒤 · 매수 없음)",
+            "absorb": "🧲 물량 흡수 (매수호가에서 나오는 매도를 다 받아 줌 · 검증 전)",
+            "dna": "🧬 급등 체질 감시 정리 (장 끝나고 하루 한 번)",
+            "fast": "⚡ 빠른 알림 (첫 거래량 터지는 60초 안 · 정규장 · 소형주 · 매수 신호 아님)",
+            "miss": "📝 놓친 급등주 복기 (장 끝나고 하루 한 번 · +30% 간 종목을 빨리·늦게·놓침으로)",
+            "spike_start": "🚀 급등 시작 (1분새 +4%, 아직 전날 대비 +10% 전 · 거래 붙음)",
+            "day_open": "🌙 데이마켓 개장 갭 상승 목록 (20:30 ET 한 번 · 추격 금지)",
+            "slow_climb": "🐢 천천히 오름 (1분 급등 없이 +20% 넘음 · 오늘 대금 $100만↑ · 감시용)"}
 
 
 def path(state_dir: str) -> Path:

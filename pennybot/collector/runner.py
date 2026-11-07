@@ -47,7 +47,22 @@ RANKINGS = [  # (type, duration)
 # 2026-11-05 검증(SEC 인덱스 2년치 423건): 다음날 시가 매수 3일 평균은 대조보다 +2~3%p 였지만 상위 1% 빼면 −1.4% —
 # 매수 규칙이 아니라 '누가 지분을 샀다'는 참고 표시로만 쓴다.
 EDGAR_FORMS = ["4", "8-K", "6-K", "424B4", "424B5", "424B3", "S-1", "F-1", "S-3", "F-3", "RW", "EFFECT", "SCHEDULE 13D"]
-MAX_CANDLE_PAGES = 8   # 200봉 × 8 = 약 26시간 (하루 4 세션 전체)
+AFTER_MOVE_ALERT_PCT = 20.0   # '애프터마켓 누적 변동' 텔레그램은 정규장 종가 대비 이만큼 오른 것만 (나머지는 기록만)
+EARLY20_MIN_TURN10 = 0.5   # '정규장 전 +20% 돌파' 알림: 직전 10분 회전율(%) 최소 (2026-11-05)
+MAX_CANDLE_PAGES = 8  # 200봉 × 8 = 약 26시간 (하루 4 세션 전체)
+
+
+def win60(wins: dict, now_t: float) -> dict:
+    """종목별 최근 60초 체결 창(deque[(초, 가격, 수량)]) → {종목: (60초 수량, 60초 대금)}. 빈 창은 (0, 0)."""
+    out = {}
+    for k, w in list(wins.items()):
+        v = a = 0.0
+        for t, p, q in list(w):
+            if now_t - t <= 60:
+                v += q
+                a += p * q
+        out[k] = (v, a)
+    return out
 
 
 def iso(ts: datetime) -> str:
@@ -83,6 +98,13 @@ class Collector:
         self._fast_hot: tuple = (None, set())     # (기준일, 랭킹 훑기로 새로 잡은 종목) → 실시간 구독·1분 감시·가상 매매에 넣는다
         # 실시간 체결 (웹소켓)
         self._rt = None                           # TossStream (체결만)
+        # 같은 웹소켓에서 호가 30종목도 받아 → 🧲 물량 흡수 판정 + state/ticks.db 기록
+        from ..absorb import AbsorbTracker, TickLog
+        self._absorb = AbsorbTracker()
+        self._ticks = TickLog(_P(cfg.db_path).parent / "ticks.db")
+        self._ab_fired: dict = {}                 # 종목 → 마지막 흡수 알림 시각 (30분에 한 번)
+        self._dna: tuple = (None, [])              # (일봉 기준일, 🧬 급등 체질 감시 종목) — dna.py
+        self._ticks_flush = 0.0
         self._rt_syms: set = set()                # 지금 구독할 종목
         self._rt_win: dict = {}                   # 종목 → deque[(초, 가격, 수량)] 최근 60초
         self._rt_min: dict = {}                   # 종목 → {분: 수량} 최근 40분 (평소 거래량)
@@ -303,6 +325,9 @@ class Collector:
         if self._due("universe", now, timedelta(hours=c.universe_refresh_hours)) or not self.universe:
             self._run("universe", self.refresh_universe, now)
 
+        if self._due("dna", now, timedelta(minutes=30)):
+            self._run("dna", self.refresh_dna)
+            self._run("miss", self.refresh_miss)
         if self._due("status", now, timedelta(seconds=15)):
             self._run("status", self.write_status, now, session)
         if c.db_cleanup and self._due("db_cleanup", now, timedelta(hours=24)):
@@ -346,6 +371,7 @@ class Collector:
             self._run("precursor_daily", self.ensure_precursor_daily, trade_date, session)
             if c.pre_open_watch and session == DAY:
                 self._run("pre_open", self.pre_open_watch, now, trade_date)
+                self._run("day_open", self.day_open_watch, now, trade_date)
             if session == DAY:
                 self._run("briefing", self.send_briefing, now, trade_date)
             if session in (DAY, PRE, REGULAR) and self._due("precursor_live", now, timedelta(seconds=60)):
@@ -380,9 +406,14 @@ class Collector:
         if self.cfg.realtime_alerts and self.cfg.precursor:
             from .. import stream
             if stream.available():
-                self._rt = stream.TossStream(self.c, None, channels=("trade",), on_trade=self._on_trade).start()
+                # 한 연결에 구독 100건: 체결 70종목 + 호가 30종목(맨 앞 = 가장 활발한 종목). 토스는 같은 키로 연결을 2개 열면
+                # 서로 끊어 버린다(2026-11-05 확인: 둘 다 몇 초마다 '서버가 연결을 닫음').
+                books = getattr(self.cfg, "rt_book_symbols", 30)
+                self._rt = stream.TossStream(self.c, None, channels=("trade",), on_trade=self._on_trade,
+                                             on_book=self._on_book, book_max=books).start()
                 threading.Thread(target=self._rt_worker, name="rt-alert", daemon=True).start()
-                log.info("실시간 체결 알림 켜짐 (웹소켓, 최대 %d종목)", self._rt.max_symbols)
+                log.info("실시간 체결 알림 켜짐 (웹소켓, 체결 최대 %d종목 + 호가 %d종목 → 물량 흡수·ticks.db)",
+                         self._rt.max_symbols, books)
             else:
                 log.warning("websocket-client 패키지가 없어 실시간 알림 없이 1분 확인만 씁니다")
         while True:
@@ -472,18 +503,33 @@ class Collector:
         (store or self.store).put_events([{"ts": iso(now), "symbol": sym, "kind": kind, "text": text, "value": value}])
 
     def poll_prices(self, now: datetime, trade_date, session: str) -> None:
-        prev = {s: v.get("last") for s, v in self.universe.items()}
+        # '1분새 급등' 비교 기준 = 약 1분 전 가격 (조회 주기가 20초여도 1분 변화로 판단)
+        hist = getattr(self, "_px_hist", None)
+        if hist is None:
+            hist = self._px_hist = []
+        hist.append((now, {s: v.get("last") for s, v in self.universe.items()}))   # 이번 조회 직전 가격
+        old = [h for h in hist if (now - h[0]).total_seconds() >= 40]
+        prev = old[-1][1] if old else hist[0][1]
+        del hist[:max(0, len(old) - 1)]                  # 기준 하나만 남기고 정리
         rows = []
+        tt = getattr(self, "_trade_ts", None)
+        if tt is None:
+            tt = self._trade_ts = {}
         for p in self.c.prices(sorted(self.universe)):
             rows.append({"symbol": p["symbol"], "ts": iso(now), "trade_date": trade_date.isoformat(),
                          "session": session, "last": float(p["lastPrice"]), "price_ts": p.get("timestamp")})
+            if p.get("timestamp"):
+                tt[p["symbol"]] = p["timestamp"]           # 마지막 체결 시각 → 안 바뀌면 1분봉 다시 안 받음
             if p["symbol"] in self.universe:
                 self.universe[p["symbol"]]["last"] = float(p["lastPrice"])
         self.store.put_prices(rows)
         from ..trading.strategies import SESSION_KO
+        if session in (PRE, REGULAR):
+            for r in rows:
+                self._slow_climb_check(now, trade_date, session, r["symbol"], r["last"], prev.get(r["symbol"]))
         for r in rows:
             a = prev.get(r["symbol"])
-            if a and a >= 0.2 and r["last"]:
+            if a and a >= 0.05 and r["last"]:            # 11/07: 0.2→0.05 (RBNE $0.14 +130% 를 아예 못 봄)
                 chg = (r["last"] / a - 1) * 100
                 kind = "spike_up" if chg >= 4 else "spike_dn" if chg <= -7 else None
                 if not kind or not self._event_due(now, r["symbol"], kind):
@@ -508,6 +554,94 @@ class Collector:
                 if kind == "spike_up":
                     self._promote(r["symbol"], now)
                     self._watch_now([r["symbol"]])
+                    self._spike_start_alert(now, session, r["symbol"], r["last"], chg, d)
+
+    # 🚀 급등 시작 (2026-11-07): '1분새 +4%' 기록(spike_up) 중 아직 전날 대비 +10% 전이고 거래가 붙은 것만 알림.
+    # 10/26~11/06 spike_up 첫 건 검증 — 2분 대금 $20만↑: 1시간 안 +10% 먼저 44%·−5% 먼저 17% (앞 50/17, 뒤 40/17),
+    # 주식 2천만↓ + $5만↑: 43/24 (앞 38/28, 뒤 47/21). 그날 +30% 감 9~15% (평소 1.1%). 놓친 급등주 상당수가 이 기록만 있고 알림이 없었음.
+    SPIKE_MAX_CHG = 10.0
+    SPIKE_MIN_DOLLAR = 2e5
+    SPIKE_SMALL_SHARES = 2e7
+    SPIKE_SMALL_DOLLAR = 5e4
+
+    def _prev_close(self, sym: str) -> float | None:
+        c = getattr(self, "_pc_cache", None)
+        d0 = (self.store.query("SELECT MAX(d) FROM daily_bars") or [[None]])[0][0]
+        if not c or c[0] != d0:
+            c = self._pc_cache = (d0, dict(self.store.query("SELECT symbol, close FROM daily_bars WHERE d=? AND close>0", (d0,))))
+        return c[1].get(sym)
+
+    def _spike_start_alert(self, now, session, sym, price, chg1, dollar2) -> bool:
+        pc = self._prev_close(sym)
+        if not pc or not price:
+            return False
+        day_chg = (price / pc - 1) * 100
+        sh = self._rt_shares.get(sym) or (self.store.query("SELECT shares FROM stock_info WHERE symbol=?", (sym,)) or [[None]])[0][0]
+        small = bool(sh and sh <= self.SPIKE_SMALL_SHARES)
+        if day_chg >= self.SPIKE_MAX_CHG or not (dollar2 >= self.SPIKE_MIN_DOLLAR or (small and dollar2 >= self.SPIKE_SMALL_DOLLAR)):
+            return False
+        sent = getattr(self, "_spike_sent", None)
+        if sent is None:
+            sent = self._spike_sent = {}
+        if sent.get(sym) == now.date():
+            return False
+        sent[sym] = now.date()
+        from ..trading.messages import money_s
+        from ..trading.strategies import SESSION_KO
+        name = (self.universe.get(sym) or {}).get("name") or ""
+        self._event(now, sym, "spike_start", f"🚀 {sym} 급등 시작 1분 {chg1:+.1f}% (전날 대비 {day_chg:+.1f}%) 2분 {money_s(dollar2)}", day_chg)
+        if self.notifier and self._on("spike_start"):
+            self.notifier.send("\n".join([
+                f"🚀 급등 시작 · {sym}" + (f"({name})" if name else "") + f" · {SESSION_KO.get(session, session)}",
+                f"💵 ${price:.4g} · 1분 {chg1:+.1f}% · 전날 대비 {day_chg:+.1f}% · 2분 거래대금 {money_s(dollar2)}"
+                + (f" · 주식 {sh / 1e6:.1f}M" if sh else ""),
+                "아직 +10% 전 — 이런 순간 1시간 안 +10% 먼저 44% · −5% 먼저 17% (11/07 검증, 표본 9거래일). 매수 신호 아님"]))
+        log.info("급등 시작 %s 1분 %+.1f%% 전날 대비 %+.1f%% 2분 $%.0f", sym, chg1, day_chg, dollar2)
+        return True
+
+    # 🐢 천천히 오름 (2026-11-07): 1분 급등 없이 하루 종일 올라 급등 알림에 안 걸리는 종목(DNUT·ANGI 등) 놓침 방지.
+    # 프리·정규장에 전날 대비 +20% 를 처음 넘는 순간, 직전 1분 변화 +4% 미만(급등 아님) · 오늘 누적 대금 $100만↑.
+    # 10/20~11/06 검증: 그날 +30% 23% (평소 1.1%) · 그 자리 매수는 +10% 먼저 15% / −7% 먼저 12% = 본전 → 감시용, 매수 신호 아님.
+    SLOW_CHG = 20.0
+    SLOW_MIN_DOLLAR = 1e6
+
+    def _slow_climb_check(self, now, trade_date, session, sym, last, prev1) -> bool:
+        pc = self._prev_close(sym)
+        if not pc or not last or last < pc * (1 + self.SLOW_CHG / 100):
+            return False
+        sent = getattr(self, "_slow_sent", None)
+        if sent is None:
+            sent = self._slow_sent = {}
+        if sent.get(sym) == trade_date:
+            return False
+        sent[sym] = trade_date                           # 오늘은 한 번만 판단 (넘은 첫 순간)
+        if not prev1 or prev1 >= pc * (1 + self.SLOW_CHG / 100):
+            return False                                 # 이미 넘어 있던 것(재시작 직후 등)은 '넘는 순간'이 아님
+        if (last / prev1 - 1) * 100 >= 4:
+            return False                                 # 1분 급등으로 넘은 것 = 급등 알림 쪽
+        b = self.cal.bounds(trade_date, DAY)
+        start = b[0] if b else now - timedelta(hours=12)
+        try:
+            cs = (self.c.candles(sym, "1m", 500) or {}).get("candles", [])
+        except Exception:
+            return False
+        dol = sum(float(cd["volume"]) * float(cd["closePrice"]) for cd in cs
+                  if datetime.fromisoformat(cd["timestamp"].replace("Z", "+00:00")) > start)
+        if dol < self.SLOW_MIN_DOLLAR:
+            return False
+        from ..trading.messages import money_s
+        from ..trading.strategies import SESSION_KO
+        chg = (last / pc - 1) * 100
+        name = (self.universe.get(sym) or {}).get("name") or ""
+        self._event(now, sym, "slow_climb", f"🐢 {sym} 천천히 오름 {chg:+.0f}% (오늘 {money_s(dol)})", chg)
+        self._watch_now([sym])
+        if self.notifier and self._on("slow_climb"):
+            self.notifier.send("\n".join([
+                f"🐢 천천히 오름 · {sym}" + (f"({name})" if name else "") + f" · {SESSION_KO.get(session, session)}",
+                f"💵 ${last:.4g} · 전날 대비 {chg:+.0f}% · 오늘 거래대금 {money_s(dol)} · 1분 급등 없이 꾸준히 올라옴",
+                "이런 종목 그날 +30% 23% (평소 1.1%) · 지금 사면 +10% 먼저 15% / −7% 먼저 12% (본전). 감시용, 매수 신호 아님"]))
+        log.info("천천히 오름 %s %+.0f%% 대금 $%.0f", sym, chg, dol)
+        return True
 
     def poll_after_movers(self, now: datetime, trade_date) -> None:
         """애프터마켓은 거래가 천천히 쌓여서 1분 급등(spike_up, +4%) 기준엔 잘 안 걸린다 — 정규장 종가 대비
@@ -531,7 +665,8 @@ class Collector:
                 continue
             if self.store.query("SELECT 1 FROM events WHERE symbol=? AND kind='after_move' AND ts>=?", (sym, start)):
                 continue
-            if self.notifier and self._on("after_move"):
+            # 11/07: 알림은 +20%↑ 오른 것만 (하루 ~77건 → ~3건). 10/26~11/06: 내림 알림 다음날 +30% 3% · +10~20% 14% · +20%↑ 39%
+            if chg >= AFTER_MOVE_ALERT_PCT and self.notifier and self._on("after_move"):
                 from ..precursor import after_move_text
                 self.notifier.send(after_move_text(sym, (self.universe.get(sym) or {}).get("name"), chg, last))
             self._event(now, sym, "after_move", f"🌆 {sym} 애프터마켓 누적 {chg:+.1f}% (정규장 종가 대비)", chg)
@@ -747,6 +882,32 @@ class Collector:
         self._watch_buckets = buckets
         log.info("감시 종목 %d개 (수급 %d · 새 수급 %d · 순환 %d)",
                  len(picked), buckets["rank"], buckets["flow"], buckets["rotation"])
+
+    def _rt_covers(self, sym: str) -> bool:
+        """이 종목을 지금 웹소켓 체결로 보고 있나 (연결 살아 있고 구독 칸 안)."""
+        return bool(self._rt and self._rt.healthy and sym in self._rt_syms)
+
+    _SKIP = object()
+    CS_REFRESH_SECONDS = 600     # 체결이 없어도 이 간격으로는 한 번 새로 받음 (혹시 놓친 체결 대비)
+
+    def _candles_if_traded(self, sym: str):
+        """1분봉 200개. 지난번 받은 뒤로 체결이 없으면(현재가 체결 시각·웹소켓 체결 그대로) 토스에 안 묻고 _SKIP.
+        (11/07: 데이마켓에 차트 한도 초과 3,693번 → 1분 감시가 90~100초에 한 바퀴. 거래 없는 종목까지 매분 200봉씩 받았음)
+        실패하면 None."""
+        cache = getattr(self, "_cs_cache", None)
+        if cache is None:
+            cache = self._cs_cache = {}
+        sig = ((getattr(self, "_trade_ts", None) or {}).get(sym), (getattr(self, "_rt_tick_t", None) or {}).get(sym))
+        hit = cache.get(sym)
+        if hit and sig[0] and hit[0] == sig and time.time() - hit[1] < self.CS_REFRESH_SECONDS:
+            return self._SKIP
+        try:
+            cs = (self.c.candles(sym, "1m", 200) or {}).get("candles", [])
+        except Exception as e:
+            log.debug("전조 1분봉 실패 %s: %s", sym, e)
+            return None
+        cache[sym] = (sig, time.time(), cs)
+        return cs
 
     def sync_candles(self, now: datetime) -> None:
         counts: dict[str, int] = {}
@@ -1121,12 +1282,14 @@ class Collector:
         prev_alert = dict(self.store.query("SELECT symbol, alerted FROM precursor_live WHERE d0=? AND alerted IS NOT NULL AND alerted>=?",
                                            (d0, start)))
         out = []
+        skipped = 0
         for sym, score, sig, met, close in rows:
-            try:
-                cs = (self.c.candles(sym, "1m", 200) or {}).get("candles", [])
-            except Exception as e:
-                log.debug("전조 1분봉 실패 %s: %s", sym, e)
+            cs = self._candles_if_traded(sym)
+            if cs is None:
                 continue
+            if cs is self._SKIP:
+                skipped += 1
+                cs = self._cs_cache[sym][2]
             bars = sorted((iso(datetime.fromisoformat(cd["timestamp"].replace("Z", "+00:00"))), float(cd["openPrice"]),
                            float(cd["highPrice"]), float(cd["lowPrice"]), float(cd["closePrice"]), float(cd["volume"]))
                           for cd in cs)
@@ -1135,15 +1298,23 @@ class Collector:
             lv["metrics"]["session"] = session
             # big300 비교(+20%대 그친 날 vs +300% 간 날): 정규장 열리기 전(프리·다크마켓)에 이미 +20% 찍은 종목이
             # 그날 +300% 까지 간 비율 17.3% (정규장에서 처음 +20% 찍은 종목은 2.6%) — 평소 대비 5.2배, 하루 한 번만 기록
-            if session in (PRE, DAY) and (lv["metrics"].get("chg") or 0) >= 20 and not self.store.query(
+            # 2026-11-05: 직전 10분 회전율 EARLY20_MIN_TURN10 %↑ 일 때만 (하루 17건 → 5.5건, 그 뒤 +30% 더 간 비율
+            # 10~11월 16% → 27%, 6~9월 7% → 10%). 거래 없이 호가만 튄 +20% 를 거른다.
+            sh_ = shares.get(sym)
+            turn10 = sum(b[5] for b in today[-10:]) / sh_ * 100 if sh_ else None
+            if session in (PRE, DAY) and (lv["metrics"].get("chg") or 0) >= 20 \
+                    and turn10 is not None and turn10 >= EARLY20_MIN_TURN10 and not self.store.query(
                     "SELECT 1 FROM events WHERE symbol=? AND kind='early20' AND ts>=?", (sym, start)):
                 if self.notifier and self._on("early20"):
                     from ..precursor import early20_text
                     self.notifier.send(early20_text(sym, (self.universe.get(sym) or {}).get("name"),
                                                      lv["metrics"]["chg"], lv["metrics"].get("price"),
-                                                     SESSION_KO.get(session, session)))
+                                                     SESSION_KO.get(session, session), turn10)
+                                       + self._chase_line(self.store, sym, lv["metrics"].get("price")))
                 self._event(now, sym, "early20", f"🌙 {sym} 정규장 전 +20% 돌파 ({SESSION_KO.get(session, session)})",
                            lv["metrics"]["chg"])
+            if session in (PRE, REGULAR):
+                self._early_watch(now, session, sym, score, today, shares.get(sym), start)
             # 알림 = 1분 거래(회전율 0.5%+ 또는 $5만+, +5%↑)가 처음 터진 그 분 (최근 3분 안 — 재시작 직후 지난 신호로 몰려 오지 않게).
             # 정규장에 처음 터진 건 거의 안 이어져서(10/23 정규장 알림 65건 중 의미 있게 움직인 것 2건) 알림 없이 기록만.
             k = signal_k(today, close, shares.get(sym))
@@ -1153,19 +1324,23 @@ class Collector:
                 lv["metrics"]["grade"], lv["metrics"]["grade_why"] = alert_grade(
                     today[k][0], tiers[sym], close, json.loads(met or "{}").get("vol_ratio"))
             fire = (burst and sym not in prev_alert and not self._alerted(self.store, d0, sym, start)
-                    and not (self._rt and self._rt.healthy))   # 실시간 체결이 살아 있으면 알림은 실시간 쪽이 맡는다
+                    and not self._rt_covers(sym))   # 실시간 체결로 보는 종목만 실시간 쪽이 맡는다
+            # (11/07: 예전엔 웹소켓이 살아 있으면 무조건 넘겼는데 웹소켓은 70종목뿐이라, 칸 밖 종목은 신호가 떠도 알림이
+            #  아무 데서도 안 나갔음 — SGRX +178%·XELB·OFAL·SMTK·HAO·AMOD 등 거래 몰린 놓침 31건 중 다수)
             out.append({"d0": d0, "symbol": sym, "ts": iso(now), "signals": json.dumps(lv["signals"]),
                         "metrics": json.dumps(lv["metrics"]), "alerted": iso(now) if fire else prev_alert.get(sym)})
             if fire:
                 self._alert(self.store, now, session, sym, score, sig, met, lv, tiers[sym],
                             (["랭킹 진입"] if sym in ranked_in else []) + (["빠른 포착"] if sym in hot else []))
-            elif (sym in keep or sym in prev_alert) and not (self._rt and self._rt.healthy):
+            elif (sym in keep or sym in prev_alert) and not self._rt_covers(sym):
                 self._reaccel_check(self.store, now, session, d0, sym, today, close, shares.get(sym), start)
-            if sym in self._rb_levels and len(today) > 2 and not (self._rt and self._rt.healthy):
+            if sym in self._rb_levels and len(today) > 2 and not self._rt_covers(sym):
                 self._approach_bars(now, session, sym, today, close)
                 self._bottom_bounce_check(self.store, now, session, sym, today[-1][4], close)
             if self.cfg.vsignal and session != AFTER:      # 가상 매매는 알림과 따로: 1분 거래 터짐 → 아래 지정가
                 self._vtrade(now, d0, sym, score, close, today, shares.get(sym), session, start)
+        if skipped:
+            log.debug("1분 감시 %d종목 중 %d종목은 체결 없어 1분봉 안 받음", len(rows), skipped)
         # 구독 우선: 오늘 알림·+30% → 감시 상위 → 며칠 전 급등주 (최근 것부터)
         old = sorted((s for s in keep if s in runners and s not in self._keep_today), key=lambda s: runners[s]["days"])
         first = [x[0] for x in rows if x[0] in keep and x[0] not in old]
@@ -1335,7 +1510,8 @@ class Collector:
                 pass
             oh = self._overhead(store, sym, r["price"])
             self.notifier.send(reaccel_text(sym, (self.universe.get(sym) or {}).get("name"), r, pc, SESSION_KO.get(session, session), n,
-                                            d2, [oh] if oh else None), buttons=alert_buttons(sym, link))
+                                            d2, [oh] if oh else None) + self._chase_line(store, sym, r["price"]),
+                               buttons=alert_buttons(sym, link))
         return True
 
     def _overhead(self, store, sym: str, price) -> str | None:
@@ -1363,6 +1539,31 @@ class Collector:
             return f" (과거 {s['n']}건 적중률 {s['win'] / s['n'] * 100:.0f}% · 당일 +30% {s['hit30'] / s['n'] * 100:.0f}%)"
         return " (연구: +30% 선도달 약 50%)"
 
+    CHASE_RUN_PCT = 10.0     # 30분 저점 대비 이만큼 이미 오른 뒤 알림 = 추격 (11/07: 이 구간 알림 −5% 먼저 61%, +10% 먼저 17%)
+
+    def _run_up(self, store, sym, price) -> tuple[float | None, int]:
+        """최근 30분 1분봉 저점 대비 지금 몇 % 올랐나 · 저점 뒤 양봉 수."""
+        try:
+            since = iso(datetime.now(timezone.utc) - timedelta(minutes=30))
+            b = store.query("SELECT open, low, close FROM bars_1m WHERE symbol=? AND ts>=? ORDER BY ts", (sym, since))
+        except Exception:
+            return None, 0
+        if len(b) < 3:
+            return None, 0
+        lo = min(x[1] for x in b if x[1]) if any(x[1] for x in b) else None
+        px = price or b[-1][2]
+        if not lo or not px:
+            return None, 0
+        li = max(i for i, x in enumerate(b) if x[1] == lo)
+        return (px / lo - 1) * 100, sum(1 for x in b[li:] if x[2] and x[0] and x[2] > x[0])
+
+    def _chase_line(self, store, sym, price) -> str:
+        run, greens = self._run_up(store, sym, price)
+        if run is None or run < self.CHASE_RUN_PCT:
+            return ""
+        return (f"\n⚠️ 이미 30분 저점 대비 +{run:.0f}% (양봉 {greens}개) — 늦은 알림·추격 주의: "
+                f"이 구간 알림은 과거 61% 가 −5% 먼저 (+10% 먼저 17%). 눌림 기다리기")
+
     def _alert(self, store, now, session, sym, score, sig, met, lv, tier_, extra_tags) -> None:
         """거래 터짐 한 건: 급등 전조 조건(presurge)이면 '🚨 급등 전조' 전체, 아니면 '📶 거래 터짐' 짧은 신호 (세션 상관없이)."""
         from ..precursor import (MIN_BURST_TURN3, TIER_LABEL, alert_buttons, alert_grade, alert_text, ask_depth, momo_flags,
@@ -1381,7 +1582,10 @@ class Collector:
         m["presurge"], why = presurge(iso(now), tier_, m.get("price") and m["price"] / (1 + (m.get("chg") or 0) / 100),
                                       dm.get("vol_ratio"), m.get("chg"), session, turn3)
         if not m["presurge"]:        # 조건(전날 대비 +5%↑ & $5 미만·전날 거래량 50배+·★★★ 중 하나)을 못 채우면 '급등 전조'가 아니라 거래 터짐
-            if self.notifier and self._on("burst") and (turn3 or 0) >= MIN_BURST_TURN3:   # 회전율 낮은 터짐은 기록만 (알림 과다, 11/02)
+            late = (self._run_up(store, sym, m.get("price"))[0] or 0) >= self.CHASE_RUN_PCT
+            if late:                 # 이미 많이 오른 뒤의 '거래 터짐'은 보내지 않고 기록만 (설거지 방지, 11/07)
+                log.info("거래 터짐 %s: 이미 30분 저점 대비 +%.0f%% 라 알림 생략", sym, self._run_up(store, sym, m.get("price"))[0])
+            if self.notifier and self._on("burst") and (turn3 or 0) >= MIN_BURST_TURN3 and not late:   # 회전율 낮은 터짐은 기록만 (알림 과다, 11/02)
                 link = None
                 try:
                     link = self.link() if self.link else None
@@ -1421,7 +1625,8 @@ class Collector:
                                           + ([oh] if (oh := self._overhead(store, sym, m.get("price"))) else [])
                                           + ([TIER_LABEL[tier_]] if tier_ else []) + extra_tags
                                           + (["호가 얇음"] if (m.get("ask10") or 9e18) < (m.get("dollar_3m") or 0) else [])
-                                          + (json.loads(tg[0][0]) if tg else []) + pats),
+                                          + (json.loads(tg[0][0]) if tg else []) + pats)
+                               + self._chase_line(store, sym, m.get("price")),
                                buttons=alert_buttons(sym, link))
         log.info("급등 전조 알림 %s (%s)", sym, " · ".join(m["grade_why"]))
         self._event(now, sym, "precursor", f"🚨 {sym} 급등 전조 ({' · '.join(m['grade_why'])} · "
@@ -1432,20 +1637,117 @@ class Collector:
     def _rt_set(self, symbols) -> None:
         """구독할 종목 (1분 감시 목록 + 랭킹 훑기로 새로 잡은 종목). 새 종목은 1분봉으로 평소 거래량을 채운다."""
         hot = self._fast_hot[1] if self._fast_hot[0] else set()
-        want = list(dict.fromkeys(list(hot) + list(symbols)))
+        # 순서: 지금(30분 안) 순위에 보인 활발한 종목, 최근 본 순 → 🧬 급등 체질 감시(상위 dna_rt_max) → 나머지 감시 목록 + 예전 활발 종목.
+        # (11/07: 하루 동안 순위에 든 종목이 87~123개라 70칸을 넘는데 순서 없는 set 이라 방금 뜬 종목이 잘릴 수 있었음)
+        seen = getattr(self, "_fast_seen", None) or {}
+        cut = time.time() - 1800
+        recent = sorted((s for s in hot if seen.get(s, 0) >= cut), key=lambda s: -seen.get(s, 0))
+        stale = [s for s in hot if seen.get(s, 0) < cut]
+        # 지금 실시간 체결이 붙는 종목(최근 5분 웹소켓 대금 $2만↑, 큰 순)은 계속 앞에, 식은 종목은 뒤로 → 칸 밖이면 1분 조회(REST)로
+        m = int(time.time() // 60)
+        act = {s: sum(v for k, v in d.items() if k >= m - 4) for s, d in list(self._rt_dmin.items())}
+        active = sorted((s for s, v in act.items() if v >= 2e4), key=lambda s: -act[s])
+        quiet = {s for s in self._rt_syms if act.get(s, 0) < 2e4}
+        dna = self._dna[1][:getattr(self.cfg, "dna_rt_max", 20)]
+        rest = [s for s in list(symbols) if s not in quiet] + [s for s in list(symbols) if s in quiet]
+        want = list(dict.fromkeys(recent + active + dna + rest + stale))
         if self._rt:
             want = want[:self._rt.max_symbols]
             self._rt.pin(want)
+            self._rt.pin_books(want)                     # 앞쪽(랭킹 훑기로 잡은 활발한 종목 먼저) book_max 개만 호가도
         for s in want:
             if s not in self._rt_seeded:
                 self._rt_seeded.add(s)
                 self._rt_q.put(("seed", s))
         self._rt_syms = set(want)
 
+    def _table_ok(self, name: str) -> bool:
+        return bool(self.store.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)))
+
+    def refresh_miss(self) -> int:
+        """📝 놓친 급등주 복기: 일봉 마지막 날(d)의 애프터장까지 끝난 뒤 하루 한 번 → miss_review 에 쌓고 텔레그램 정리."""
+        from .. import miss
+        d = (self.store.query("SELECT MAX(d) FROM daily_bars") or [[None]])[0][0]
+        if not d or d == getattr(self, "_miss_d", None):
+            return 0
+        now_et = self.clock().astimezone(ET)
+        if now_et.date().isoformat() == d and now_et.hour < 20:
+            return 0                                     # 그날 애프터장(20시 ET)이 끝나야 1분봉이 다 모임
+        self._miss_d = d
+        done = self._table_ok("miss_review") and self.store.query("SELECT 1 FROM miss_review WHERE d=? LIMIT 1", (d,))
+        d, rows = miss.review(self.store.db, d)
+        if not rows:
+            return 0
+        miss.save(self.store.db, d, rows)
+        if not done and self.notifier and self._on("miss"):
+            self.notifier.send(miss.summary_text(d, rows, miss.history(self.store.db)))
+        log.info("📝 놓친 급등주 복기 %s: %d종목 (놓침 %d)", d, len(rows), sum(1 for r in rows if r["verdict"] == "miss"))
+        return len(rows)
+
+    def refresh_dna(self) -> list[str]:
+        """🧬 급등 체질 감시 목록: 일봉 마지막 날이 바뀌면 다시 뽑아 dna_watch 에 저장하고 실시간 구독 앞쪽에 넣는다."""
+        from .. import dna
+        d0 = (self.store.query("SELECT MAX(d) FROM daily_bars") or [[None]])[0][0]
+        if not d0 or d0 == self._dna[0]:
+            return []
+        d0, rows = dna.compute(self.store.db, d0)
+        prev = dna.previous(self.store.db, d0)
+        new_list = not self.store.query("SELECT 1 FROM dna_watch WHERE d0=? LIMIT 1", (d0,)) if self._table_ok("dna_watch") else True
+        dna.save(self.store.db, d0, rows)
+        self._dna = (d0, [r["symbol"] for r in rows])
+        # 장 끝나고 일봉이 새로 들어와 목록이 처음 바뀐 때 한 번 텔레그램 정리 (수집기 재시작 때는 같은 날 다시 안 보냄)
+        if new_list and self.notifier and self._on("dna"):
+            names = {s: (self.universe.get(s) or {}).get("name") for s in self._dna[1]}
+            self.notifier.send(dna.summary_text(d0, rows, prev, names, self.store.db))
+        if self._rt:
+            self._rt_set(list(self._rt_syms))
+        log.info("🧬 급등 체질 감시 %d종목 (%s 일봉): %s", len(rows), d0, ", ".join(self._dna[1][:15]))
+        return self._dna[1]
+
+    def _on_book(self, sym: str, bids: list, asks: list, t: float | None = None) -> None:
+        """두 번째 웹소켓(호가) 스레드에서 호가마다: 매수 1호가 추적(물량 흡수) + 5단계까지 기록(종목당 1초에 1번)."""
+        t = t if t is not None else time.time()
+        if bids:
+            self._absorb.book(sym, t, bids[0][0], bids[0][1])
+        self._ticks.add_book(t, sym, json.dumps(bids[:5]), json.dumps(asks[:5]))
+
+    def _absorb_alert(self, store, sym: str, ev: dict) -> bool:
+        """🧲 물량 흡수 알림 (실시간 스레드). 발행주식 대비 너무 작은 흡수(0.05% 미만)는 기록만."""
+        from ..absorb import absorb_text
+        from ..trading.strategies import SESSION_KO
+        now = self.clock()
+        _, session = self.cal.classify(now)
+        if session not in (DAY, PRE, REGULAR, AFTER):
+            return False
+        sh = self._rt_shares.get(sym)
+        turn = ev["hit_vol"] / sh * 100 if sh else None
+        if turn is not None and turn < 0.05:
+            return False
+        name = (self.universe.get(sym) or {}).get("name")
+        last = (self._rt_px.get(sym) or (None, None))[1]
+        self._event(now, sym, "absorb", f"🧲 {sym} 물량 흡수 ${ev['price']:g} 매도 ${ev['dollar'] / 1e3:.0f}K 받아 줌 "
+                    f"(보이던 잔량 {ev['x']:.0f}배)", ev["dollar"], store=store)
+        if self.notifier and self._on("absorb"):
+            self.notifier.send(absorb_text(sym, name, ev, last, SESSION_KO.get(session, session), turn)
+                               + self._chase_line(store, sym, last))
+        log.info("물량 흡수 %s $%g 매도 $%.0f (잔량 %.1f배, %.0f초)", sym, ev["price"], ev["dollar"], ev["x"], ev["held"])
+        return True
+
     def _on_trade(self, sym: str, price: float, vol: float, t: float | None = None) -> None:
         """웹소켓 스레드에서 체결마다. 무거운 일(1분봉 조회·알림·정리)은 큐로 넘긴다."""
         from collections import deque
         t = t if t is not None else time.time()
+        tk = getattr(self, "_rt_tick_t", None)
+        if tk is None:
+            tk = self._rt_tick_t = {}
+        tk[sym] = int(t)                                 # 웹소켓 마지막 체결 (초) → 1분봉 다시 받을지 판단
+        self._ticks.add_trade(t, sym, price, vol)
+        ev = self._absorb.trade(sym, t, price, vol)
+        if ev:
+            self._ticks.add_absorb(t, sym, ev)
+            if t - self._ab_fired.get(sym, 0.0) >= 1800:
+                self._ab_fired[sym] = t
+                self._rt_q.put(("absorb", sym, ev))
         for o in self._vorders.get(sym, ()):            # 걸려 있는 가상 지정가: 체결가가 지정가 이하로 찍히면 바로 체결
             if not o.get("_filling") and o["entry"] and price <= o["entry"]:
                 o["_filling"] = True
@@ -1491,6 +1793,7 @@ class Collector:
                     self._rb_sent.update({(sym, s_) for s_ in range(1, stage + 1)})   # 2단계면 1단계도 건너뜀
                     self._rt_q.put(("approach", sym, price, stage, d60))
                     break
+        self._fast_check(sym, t, price, w, mins, m)
         if t - self._rt_fired.get(sym, 0) < getattr(self.cfg, "rt_cooldown_seconds", 600) \
                 or not self._settings.get().get("realtime", True):
             return
@@ -1529,6 +1832,64 @@ class Collector:
         self._rt_fired[sym] = t
         self._rt_q.put(("alert", sym, d60, v60, price, kind))
 
+    # ⚡ 빠른 알림 (2026-11-07): 첫 거래량 터지는 1분 안에 바로. 1분봉 10/15~11/06 검증에서 나머지 조합은 다 손해였고
+    # '발행주식 2천만↓ + 60초 대금 $5만↑ + 정규장 + 아직 30분 저점 대비 +8% 미만'만 앞뒤 기간 둘 다 본전 이상
+    # (+10% 먼저 15% · −5% 먼저 22% · 30분 뒤 중앙 +0.2%). 매수 신호 아님 — 남보다 빨리 보는 용도.
+    FAST_MAX_SHARES = 2e7
+    FAST_MIN_DOLLAR = 5e4
+    FAST_MIN_UP = 2.0          # 60초 안 상승 %
+    FAST_MIN_VX = 5.0          # 60초 거래량 ÷ 직전 30분 분당 평균
+    FAST_MAX_RUN = 8.0         # 30분 저점 대비 이미 이만큼 오르면 '빠른' 아님
+
+    def _fast_check(self, sym, t, price, w, mins, m) -> None:
+        sh = self._rt_shares.get(sym)
+        if not sh or sh > self.FAST_MAX_SHARES or not w or sym not in self._rt_seeded:
+            return
+        sent = getattr(self, "_fast_sent", None)
+        if sent is None:
+            sent = self._fast_sent = {}
+        day = datetime.fromtimestamp(t, timezone.utc).date()
+        if sent.get(sym) == day:
+            return
+        d60 = sum(p * v for _, p, v in w)
+        if d60 < self.FAST_MIN_DOLLAR:
+            return
+        p0 = w[0][1]
+        up = (price / p0 - 1) * 100 if p0 else 0
+        if up < self.FAST_MIN_UP:
+            return
+        base = sum(v for k, v in mins.items() if m - 31 <= k <= m - 2) / 30
+        vx = sum(v for _, _, v in w) / max(base, 1.0)
+        if vx < self.FAST_MIN_VX:
+            return
+        try:
+            if self.cal.classify(self.clock())[1] != REGULAR:
+                return
+        except Exception:
+            return
+        sent[sym] = day
+        self._rt_q.put(("fast", sym, price, d60, up, vx))
+
+    def _fast_alert(self, store, sym, price, d60, up, vx) -> bool:
+        run, greens = self._run_up(store, sym, price)
+        if run is not None and run >= self.FAST_MAX_RUN:
+            log.info("빠른 알림 %s 생략: 이미 30분 저점 대비 +%.0f%%", sym, run)
+            return False
+        now = self.clock()
+        sh = self._rt_shares.get(sym)
+        name = (self.universe.get(sym) or {}).get("name") or ""
+        turn = d60 / price / sh * 100 if sh and price else None
+        self._event(now, sym, "fast", f"⚡ {sym} 빠른 알림 60초 +{up:.1f}% ${d60 / 1e3:.0f}K 거래량 {vx:.0f}배", up, store=store)
+        if self.notifier and self._on("fast"):
+            lines = [f"⚡ 빠른 알림 · {sym}" + (f"({name})" if name else ""),
+                     f"💵 ${price:.4g} · 60초 +{up:.1f}% · 60초 대금 ${d60 / 1e3:.0f}K · 거래량 평소 {vx:.0f}배"
+                     + (f" · 회전율 {turn:.2f}%" if turn is not None else ""),
+                     f"30분 저점 대비 +{run:.0f}% — 아직 초입" if run is not None else "막 터짐 — 아직 초입",
+                     "검증: 이런 순간 +10% 먼저 15% · −5% 먼저 22% (본전 수준). 남보다 빨리 보는 용도, 매수 신호 아님"]
+            self.notifier.send("\n".join(lines))
+        log.info("빠른 알림 %s 60초 +%.1f%% $%.0f 거래량 %.0f배", sym, up, d60, vx)
+        return True
+
     def _rt_worker(self) -> None:
         import queue
         store = Store(self.cfg.db_path)                  # 스레드 전용 연결
@@ -1538,13 +1899,27 @@ class Collector:
             if self._rt_px and time.time() - self._rt_flush >= 3:
                 try:
                     acc, self._rt_acc = self._rt_acc, {}
+                    w60 = win60(self._rt_win, time.time())
+                    px = list(self._rt_px.items())
                     store.put_live_ticks([{"symbol": k, "ts": v[0], "last": v[1],
-                                           "vol_3s": acc.get(k, (0.0, 0.0))[0], "amt_3s": acc.get(k, (0.0, 0.0))[1]}
-                                          for k, v in list(self._rt_px.items())])
+                                           "vol_3s": acc.get(k, (0.0, 0.0))[0], "amt_3s": acc.get(k, (0.0, 0.0))[1],
+                                           "vol_60s": w60.get(k, (0.0, 0.0))[0], "amt_60s": w60.get(k, (0.0, 0.0))[1]}
+                                          for k, v in px])
+                    # 3초 동안 체결이 없던 종목도 60초 값은 줄어들어야 한다 (오래된 체결이 창 밖으로 빠짐)
+                    seen = {k for k, _ in px}
+                    with store.db:
+                        store.db.executemany("UPDATE live_tick SET vol_60s=?, amt_60s=? WHERE symbol=?",
+                                             [(v_, a_, k) for k, (v_, a_) in w60.items() if k not in seen])
                 except Exception:
                     pass
                 self._rt_px.clear()
                 self._rt_flush = time.time()
+            if time.time() - self._ticks_flush >= 3:     # 체결·호가·흡수 기록 → state/ticks.db
+                self._ticks_flush = time.time()
+                try:
+                    self._ticks.flush()
+                except Exception as e:
+                    log.warning("ticks.db 기록 실패: %s", str(e)[:120])
             if time.time() - last_refresh >= 5:          # 보유 중 가상 포지션 목록 (실시간 정리용) + 그 종목 구독
                 self._vopen_refresh(store)
                 last_refresh = time.time()
@@ -1563,6 +1938,10 @@ class Collector:
                     now = self.clock()
                     _, session = self.cal.classify(now)
                     self._approach(store, now, session, job[1], job[2], job[3], job[4], None)
+                elif job[0] == "absorb":
+                    self._absorb_alert(store, job[1], job[2])
+                elif job[0] == "fast":
+                    self._fast_alert(store, *job[1:])
                 else:
                     self._rt_alert(store, *job[1:])
             except Exception as e:
@@ -1620,6 +1999,36 @@ class Collector:
             end = datetime.fromisoformat(cd["timestamp"].replace("Z", "+00:00")).timestamp()
             k = int((end - 30) // 60)
             mins[k] = max(mins.get(k, 0.0), float(cd["volume"]))
+
+    def _early_watch(self, now, session, sym, score, today, shares, start, store=None) -> bool:
+        """👀 초기 경보 (알림만, 매수 없음): 10분 +3%·1분 회전율 0.05%·양봉이 그날 처음 나온 직후(최근 3분)인데
+        프리장이면서 전날 일봉 점수 9↑ 이거나, 1시간 안에 공시·뉴스가 있던 종목. 하루 한 번."""
+        from ..precursor import EARLY_MIN_SCORE, early_watch, early_watch_text
+        from ..trading.strategies import SESSION_KO
+        store = store or self.store
+        hit = early_watch(today, shares)
+        if not hit or hit[0] < len(today) - 3:
+            return False
+        if store.query("SELECT 1 FROM events WHERE symbol=? AND kind='early_watch' AND ts>=?", (sym, start)):
+            return False
+        cut = iso(now - timedelta(minutes=60))
+        info = store.query("SELECT form FROM filings WHERE symbol=? AND accepted>=? ORDER BY accepted DESC LIMIT 1", (sym, cut))
+        why = f"1시간 안 공시 {info[0][0]}" if info else None
+        if not why and store.query("SELECT 1 FROM news WHERE symbol=? AND published>=? LIMIT 1", (sym, cut)):
+            why = "1시간 안 보도자료"
+        if not why and session == PRE and (score or 0) >= EARLY_MIN_SCORE:
+            why = f"전날 일봉 점수 {score}"
+        if not why:
+            return False
+        _, up, turn = hit
+        price = today[-1][4]
+        name = (self.universe.get(sym) or {}).get("name")
+        self._event(now, sym, "early_watch", f"👀 {sym} 초기 경보 10분 +{up:.1f}% ({why})", up, store=store)
+        if self.notifier and self._on("early_watch"):
+            self.notifier.send(early_watch_text(sym, name, up, turn, price, SESSION_KO.get(session, session), why)
+                               + self._chase_line(store, sym, price))
+        log.info("초기 경보 %s 10분 +%.1f%% 회전율 %.2f%% (%s)", sym, up, turn, why)
+        return True
 
     def _rt_alert(self, store, sym: str, d60: float, v60: float, price: float, kind: str = "burst") -> None:
         from ..trading.messages import money_s
@@ -1716,6 +2125,47 @@ class Collector:
         log.info("프리 개장 주목 %d종목: %s", len(rows), ", ".join(r[0] for r in rows))
         return [r[0] for r in rows]
 
+    def day_open_watch(self, now: datetime, trade_date) -> list[str]:
+        """🌙 데이마켓 개장(20:00 ET) 30분 뒤 한 번: 장 마감 뒤 뉴스로 개장부터 +10% 넘게 갭 상승하고 거래가 붙은 종목 목록.
+        놓친 급등주 복기(11/07): 놓친 것의 16% 가 데이마켓 개장 직후 갭으로 시작. 하지만 이 종목들을 그 자리에서 사면
+        −10% 먼저 85% (+20% 먼저 13%) — 그날 +30% 는 44% 가 찍지만 갭에서 이미 다 오른 것. 그래서 '추격 금지 · 눌림·재가속 지켜보기' 목록."""
+        from ..trading.messages import money_s, pct, px
+        t = now.astimezone(ET)
+        if not (t.hour == 20 and t.minute >= 30) or getattr(self, "_day_open_sent", None) == trade_date:
+            return []
+        self._day_open_sent = trade_date
+        d0 = (self.store.query("SELECT MAX(d) FROM daily_bars") or [[None]])[0][0]
+        pcs = dict(self.store.query("SELECT symbol, close FROM daily_bars WHERE d=? AND close>0", (d0,)))
+        cands = [(s, v.get("name") or "", v["last"], (v["last"] / pcs[s] - 1) * 100) for s, v in self.universe.items()
+                 if pcs.get(s) and v.get("last") and v["last"] >= pcs[s] * 1.10]
+        cands.sort(key=lambda r: -r[3])
+        rows = []
+        b = self.cal.bounds(trade_date, DAY)
+        start = b[0] if b else now - timedelta(minutes=30)
+        for s, n, p, c in cands[:40]:
+            try:                                         # 데이 개장 뒤 거래대금만
+                cs = (self.c.candles(s, "1m", 60) or {}).get("candles", [])
+                d = sum(float(cd["volume"]) * float(cd["closePrice"]) for cd in cs
+                        if datetime.fromisoformat(cd["timestamp"].replace("Z", "+00:00")) > start)
+            except Exception:
+                continue
+            if d >= 5e4:
+                rows.append((s, n, p, c, d))
+        rows.sort(key=lambda r: -r[4])
+        rows = rows[:15]
+        if not rows:
+            return []
+        self._watch_now([r[0] for r in rows])
+        for s, n, p, c, d in rows:
+            self._event(now, s, "day_gap", f"🌙 {s} 데이마켓 개장 갭 {c:+.0f}% ({money_s(d)})", c)
+        if self.notifier and self._on("day_open"):
+            self.notifier.send("\n".join(["🌙 데이마켓 개장 갭 상승 — 장 마감 뒤 뉴스로 +10%↑ 시작, 거래 붙음 (거래대금 순)", "──────────────"]
+                                         + [f"{s} {n} · {px(p)} ({pct(c)}) · {money_s(d)}" for s, n, p, c, d in rows]
+                                         + ["", "⚠️ 추격 금지 — 이 자리에서 사면 −10% 먼저 85% (11/07 검증). 그날 +30% 는 44% 가 찍음:",
+                                            "실시간 구독에 넣었으니 눌렸다 다시 붙는 재가속 알림을 기다리세요"]))
+        log.info("데이 개장 갭 %d종목: %s", len(rows), ", ".join(r[0] for r in rows))
+        return [r[0] for r in rows]
+
     # ---------- 랭킹 훑기: 거래대금·거래량 실시간 랭킹에 새로 든 종목을 바로 실시간 구독 ----------
     def _fast_loop(self) -> None:
         store = Store(self.cfg.db_path)                  # 스레드 전용 연결
@@ -1750,8 +2200,15 @@ class Collector:
                 s = r.get("symbol")
                 if s in self.universe and s not in seen:
                     seen.append(s)
+        last = getattr(self, "_fast_seen", None)
+        if last is None:
+            last = self._fast_seen = {}
+        tnow = time.time()
+        for s in seen:
+            last[s] = tnow                               # 지금 순위에 있는 종목 = 방금 본 시각
         new = [s for s in seen if s not in self._rt_syms and s not in self._fast_hot[1]]
-        if new:
+        dropped = [s for s in seen if s not in self._rt_syms and s in self._fast_hot[1]]   # 순위에 다시 떴는데 칸에서 밀려나 있던 종목
+        if new or dropped:
             self._fast_hot[1].update(new)
             for s in new:
                 self._promote(s, now)

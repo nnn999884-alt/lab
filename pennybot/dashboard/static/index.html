@@ -565,7 +565,7 @@ table.ca-tbl tr.off .ca-fill { opacity: .35; }
 .sym-page .sc table.scr td.num, .sym-page .sc table.scr th.num { text-align: right; }
 .sc-num { display: none; }
 @media (max-width: 1100px) {
-  #main-tabs { order: 1; } .det-wrap, .pre-wrap { order: 2; } #side-tabs { order: 3; margin-top: 14px; } .feed-wrap, .fil-wrap, .vs-wrap { order: 4; }
+  #main-tabs { order: 1; } .det-wrap, .pre-wrap, .dna-wrap { order: 2; } #side-tabs { order: 3; margin-top: 14px; } .feed-wrap, .fil-wrap, .vs-wrap { order: 4; }
   .home-side .feed-wrap .feed, .home-side .fil-wrap .feed { max-height: 70vh; }
 }
 @media (max-width: 700px) {
@@ -596,7 +596,10 @@ table.ca-tbl tr.off .ca-fill { opacity: .35; }
 /* 티커 옆 회사명 */
 .nm { color: var(--text-3); font-size: 12px; font-weight: 500; min-width: 0; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: inherit; }
 .dc-id { flex-wrap: nowrap !important; } .dc-id .ev-kind, .dc-id .chip { flex: none; }
-.pc-top { flex-wrap: nowrap !important; } .pc-top .tg { flex: none; }
+.pc-top { flex-wrap: nowrap !important; } .pc-top .tg, .pc-top .ev-kind { flex: none; }
+/* 추세 표시(▲ 상승 등): 좁은 화면에서 '▲/상승' 두 줄로 꺾이고 글씨가 티커 크기로 커지던 것 → 태그와 같은 크기·한 줄 (2026-11-05) */
+.pc-top > .pos, .pc-top > .neg, .pc-top > .flat, .pc-top > .muted { flex: none; white-space: nowrap; font-size: 11px; font-weight: 600; line-height: 1; font-family: inherit; }
+.pc-top .nm { flex: 0 1 auto; }
 .scr-sym { display: flex; align-items: baseline; gap: 7px; white-space: nowrap; }
 .scr-sym .scr-name { display: inline-block; max-width: 150px; font-size: 11.5px; font-weight: 500; letter-spacing: 0; vertical-align: bottom;
   font-family: "Pretendard Variable", Pretendard, -apple-system, "Segoe UI", "Noto Sans KR", sans-serif; }
@@ -668,12 +671,13 @@ table.ca-tbl tr.off .ca-fill { opacity: .35; }
     </details>
     <div class="home-cols">
     <div class="ptabs m-tabs" id="m-tabs" role="tablist">
-      <button data-p="det-wrap">감지</button><button data-p="pre-wrap">후보</button><button data-p="feed-wrap">신호</button><button data-p="fil-wrap">공시</button><button data-p="vs-wrap">매매</button>
+      <button data-p="det-wrap">감지</button><button data-p="pre-wrap">후보</button><button data-p="dna-wrap">체질</button><button data-p="feed-wrap">신호</button><button data-p="fil-wrap">공시</button><button data-p="vs-wrap">매매</button>
     </div>
       <div class="home-main">
     <div class="ptabs" id="main-tabs" role="tablist">
       <button data-p="det-wrap"><i class="ic ic-target" aria-hidden="true"></i>조기 감지 <span class="pt-n" id="pt-det"></span></button>
       <button data-p="pre-wrap"><i class="ic ic-list" aria-hidden="true"></i>급등 후보 <span class="pt-n" id="pt-pre"></span></button>
+      <button data-p="dna-wrap">🧬 급등 체질 <span class="pt-n" id="pt-dna"></span></button>
     </div>
     <section class="card det-wrap">
       <div class="pre-head">
@@ -722,6 +726,14 @@ table.ca-tbl tr.off .ca-fill { opacity: .35; }
         과거 +500% 급등 직전에 비교군보다 훨씬 흔했던 증상. 낙폭과대(60일 고점 −50%↓) 2점 · 급등 이력(60일 안 하루 +30%) 2점 ·
         거래량 폭발(전날 평소의 3배+) +2점 · 거래량 상승(1.5배+)·고변동(변동폭 10%+·갭 하락·폭락)·거래 마름(10일 −10% + 거래량 절반↓)·동전주($2 미만) 각 1점 (최대 10).
         60일 고점 근처는 0점. 장중(1분마다, 5점 이상): 거래 급증 = 최근 1시간 분당 거래량 3배+, 매수세 유입 = 1시간 +3%·15분 +1.5%, +10% 돌파. 거래 급증+매수세 유입이면 텔레그램 알림.<br>보라 = SEC 공시 태그(ATM 진행·워런트 행사가·최근 공모/공모 대기·액면병합 날짜·상폐 기한·전환사채·현금), 청록 = 일봉 패턴(응축: 최근 10일 변동폭이 평소의 60% 이하·박스 30% 이내 / 매집 의심: 20일 동안 오른 날 거래량이 내린 날의 1.5배+인데 가격은 안 오름 / 바닥 다지기: 크게 빠진 뒤 최근 5일 저점이 앞 5일 저점보다 안 깨짐). 회전율 = 거래량 ÷ 발행주식.</details>
+    </section>
+    <section class="card dna-wrap">
+      <h2>🧬 급등 체질 감시 <span class="sub" id="dna-sub">매일 일봉으로 다시 뽑음</span></h2>
+      <div class="tablewrap" style="max-height:60vh;overflow:auto"><table id="dna-tbl"></table></div>
+      <details class="sub" style="margin-top:8px"><summary>조건 설명</summary>
+        크게 급등했던 예시 종목(RETO·SDOT·JL·VEEE·YIBO·ZCMD)의 급등 44건 직전 공통점: 발행주식 500만 주 이하 · 60일 중 바닥(하위 10%) ·
+        60일 안에 이미 +30% 급등한 날이 있음(반복 급등주) · 직전 5일 하락 · $20 이하. 전 종목 일봉에서 다음 날 +50% 도달 2.3%(평소 0.44% 의 5배).
+        매수 규칙이 아니라 감시용 — 위쪽 종목부터 실시간 체결·호가 구독을 먼저 받고, 1분 회전율이 붙으면 위로 올라옵니다.</details>
     </section>
       </div>
       <aside class="home-side">
@@ -1965,12 +1977,12 @@ try { for (const k in PT) PT[k] = localStorage.getItem("pt:" + k) || PT[k]; } ca
 function applyTabs() {
   const groups = NARROW.matches ? ["m-tabs"] : ["main-tabs", "side-tabs"];
   const on = new Set(groups.map(g => PT[g]));
-  ["det-wrap", "pre-wrap", "feed-wrap", "fil-wrap", "vs-wrap"].forEach(p => document.querySelector("." + p).classList.toggle("p-hide", !on.has(p)));
+  ["det-wrap", "pre-wrap", "dna-wrap", "feed-wrap", "fil-wrap", "vs-wrap"].forEach(p => document.querySelector("." + p).classList.toggle("p-hide", !on.has(p)));
   for (const g in PT) $(g).querySelectorAll("button").forEach(b => b.setAttribute("aria-selected", b.dataset.p === PT[g]));
 }
 for (const g in PT) $(g).querySelectorAll("button").forEach(b => b.onclick = () => {
   PT[g] = b.dataset.p;
-  if (g === "m-tabs") { if (["det-wrap", "pre-wrap"].includes(b.dataset.p)) PT["main-tabs"] = b.dataset.p; else PT["side-tabs"] = b.dataset.p; }
+  if (g === "m-tabs") { if (["det-wrap", "pre-wrap", "dna-wrap"].includes(b.dataset.p)) PT["main-tabs"] = b.dataset.p; else PT["side-tabs"] = b.dataset.p; }
   try { for (const k in PT) localStorage.setItem("pt:" + k, PT[k]); } catch (e) {}
   applyTabs();
   if (g === "m-tabs") window.scrollTo({ top: Math.min(window.scrollY, $("m-tabs").offsetTop - 56), behavior: "smooth" });
@@ -2491,7 +2503,7 @@ async function loadCond() {
   });
 }
 async function loadPre() {
-  const fresh = await api("/api/precursor?limit=200");
+  const fresh = await api("/api/precursor?limit=300&all=1");   // 움직이는 종목이 위, 그 아래 점수순 (11/07: 장 끝나면 86개만 남던 것)
   if (unchanged("pre", fresh)) return;
   preData = fresh;
   const r = preData;
@@ -2551,6 +2563,7 @@ function drawPreCards(box, rows) {
     const top = mk("div", "pc-top"); top.append(mk("b", "mono", x.symbol), mk("span", "nm", x.name || ""));
     if (x.hot && x.grade !== "C") top.append(mk("span", "ev-kind k-pre", "급등 " + (x.grade || "")));
     if (x.new) top.append(mk("span", "tg tg-live", "NEW"));
+    if (DNA_SET.has(x.symbol)) top.append(mk("span", "tg tg-tier", "🧬"));
     top.append(trendEl(x));
     if (x.tier) top.append(mk("span", "tg tg-tier", "★".repeat(x.tier)));
     x.live_labels.slice(0, 1).forEach(lb => top.append(mk("span", "tg tg-live", lb.replace(/^[^\p{L}]+/u, ""))));
@@ -2583,9 +2596,8 @@ function drawPre() {
   if (preFilter === "new") {
     rows = [...rows].sort((p, q) => String(q.created || "").localeCompare(String(p.created || "")));
   }
-  if (preFilter === "live" && preSort.k === "auto") {      // 지금 움직임: 3분 회전율(발행주식 대비)이 큰 종목이 위 (2026-11-05)
-    rows = [...rows].sort((p, q) => ((q.turnover_3m ?? -1) - (p.turnover_3m ?? -1))
-      || (((q.live_m || {}).dollar_3m || 0) - ((p.live_m || {}).dollar_3m || 0)));
+  if (preFilter === "live" && preSort.k === "auto") {      // 지금 움직임: 최근 1분 회전율이 큰 종목이 위 (2026-11-05)
+    rows = [...rows].sort((p, q) => ((q.turnover_1m ?? -1) - (p.turnover_1m ?? -1)) || ((q.dollar_1m || 0) - (p.dollar_1m || 0)));
   }
   if (preSort.k !== "auto") {
     const col = PRE_COLS.find(c => c[0] === preSort.k), f = col[2];
@@ -2626,6 +2638,7 @@ function drawPre() {
       } else if (k === "sig") {
         if (x.hot && x.grade !== "C") { const b = document.createElement("span"); b.className = "ev-kind k-pre"; b.textContent = "급등 " + (x.grade || ""); b.title = "급등 전조 조건 충족 — " + (x.hot_why || []).join(" · "); td.appendChild(b); }
         if (x.tier) { const b = document.createElement("span"); b.className = "tg tg-tier"; b.textContent = "★".repeat(x.tier); td.appendChild(b); }
+        if (DNA_SET.has(x.symbol)) { const b = document.createElement("span"); b.className = "tg tg-tier"; b.textContent = "🧬"; b.title = "급등 체질 감시 목록 (소형주·60일 바닥·반복 급등주)"; td.appendChild(b); }
         x.live_labels.slice(0, 1).forEach(l => { const b = document.createElement("span"); b.className = "tg tg-live"; b.textContent = l.replace(/^[^\p{L}]+/u, ""); td.appendChild(b); });
         if (!x.tier && !x.live.length && !(x.hot && x.grade !== "C")) td.textContent = "·";
       } else if (k === "tag") {
@@ -2869,9 +2882,43 @@ $("theme-btn").onclick = () => {
 document.documentElement.dataset.theme = "dark";                 // 스크리너는 어두운 화면이 기본
 try { const t = localStorage.getItem("theme"); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
 
+// 🧬 급등 체질 감시 (매일 일봉으로 뽑은 따로 보는 목록, 2026-11-06)
+const DNA_EV = { absorb: "🧲흡수", burst: "📶터짐", precursor: "🚨전조", early_watch: "👀초기", early20: "🌙+20%",
+                 spike_up: "급등", halt: "🛑정지", reaccel: "🔁재가속" };
+let DNA_SET = new Set();
+async function loadDna() {
+  const r = await api("/api/dna"), tbl = $("dna-tbl");
+  if (!tbl) return;
+  const rows = (r && r.rows) || [];
+  $("dna-sub").textContent = r && r.d0 ? `${r.d0} 일봉 기준 · ${rows.length}종목 · 1분 회전율 순` : "아직 없음 (수집기가 30분마다 확인)";
+  const usd = v => v == null ? "-" : v >= 1e6 ? `$${(v / 1e6).toFixed(1)}M` : `$${(v / 1e3).toFixed(0)}K`;
+  table(tbl, [
+    { h: "종목", f: x => `${x.symbol} ${x.name || ""}`.trim() },
+    { h: "현재가", num: 1, f: x => x.now == null ? null : "$" + (+x.now).toPrecision(3) },
+    { h: "어제 종가 대비", num: 1, f: x => fmtPct(x.chg), tone: x => tone(x.chg) },
+    { h: "1분 회전율", num: 1, f: x => x.turnover_1m == null ? null : x.turnover_1m.toFixed(2) + "%" },
+    { h: "1분 대금", num: 1, f: x => x.dollar_1m ? usd(x.dollar_1m) : null },
+    { h: "오늘 신호", wide: 1, f: x => (x.events || []).map(k => DNA_EV[k] || k).join(" ") },
+    { h: "마지막 급등", f: x => x.last_spike ? `${x.last_spike.slice(5).replace("-", "/")}` + (x.last_spike_pct != null ? ` +${Math.round(x.last_spike_pct)}%` : "") + (x.last_spike_days != null ? ` · ${x.last_spike_days}일 전` : "") : "-" },
+    { h: "60일 +30%", num: 1, f: x => x.spikes60 + "번" },
+    { h: "5일", num: 1, minor: 1, f: x => fmtPct(x.r5, 0), tone: x => tone(x.r5) },
+    { h: "발행주식", num: 1, minor: 1, f: x => (x.shares / 1e6).toFixed(1) + "M" },
+  ], rows, "아직 목록이 없습니다");
+  const was = DNA_SET.size;
+  DNA_SET = new Set(rows.map(x => x.symbol));
+  if (DNA_SET.size !== was && preData) drawPre();       // 급등 후보 목록에 🧬 표시 다시 그림
+  const pt = $("pt-dna");
+  if (pt) pt.textContent = rows.filter(x => (x.events || []).length).length || "";
+  tbl.querySelectorAll("tbody tr").forEach((tr, i) => {
+    if (!rows[i]) return;
+    tr.style.cursor = "pointer";
+    tr.onclick = () => { lookup(rows[i].symbol); showTab("symbol"); };
+  });
+}
+
 // 보이는 탭의 데이터만 받는다 (휴대폰 데이터·배터리 절약)
 const TAB_JOBS = {
-  home: () => [loadPick(), loadReasons(), loadBrief(), loadDet(), loadFeed(), loadVs(), loadPre()],
+  home: () => [loadPick(), loadReasons(), loadBrief(), loadDet(), loadFeed(), loadVs(), loadPre(), loadDna()],
   symbol: () => [loadShorts()],
   condscan: () => [loadCond()],
   trade: () => [loadAccount(), loadVTrade(), loadStrategies(), loadTables(), loadEquity()],

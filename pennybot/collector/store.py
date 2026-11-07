@@ -90,6 +90,8 @@ CREATE INDEX IF NOT EXISTS ix_prices_day ON prices (trade_date, session);
 MIGRATIONS = [
     ("live_tick", "vol_3s", "REAL"),      # 최근 3초 체결 수량 (웹소켓 체결 합, 급등 후보 정렬용)
     ("live_tick", "amt_3s", "REAL"),      # 최근 3초 체결 대금
+    ("live_tick", "vol_60s", "REAL"),     # 최근 60초 체결 수량 (3초마다 갱신, 급등 후보 맨 위 1~3번·정렬용)
+    ("live_tick", "amt_60s", "REAL"),     # 최근 60초 체결 대금
     ("filings", "events", "TEXT"),        # 희석 이벤트 (쉼표 구분)
     ("filings", "direction", "INTEGER"),  # +1 호재 / −1 악재 / 0
     ("filings", "amount", "REAL"),        # 공모 금액(달러)

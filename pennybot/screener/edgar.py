@@ -77,7 +77,12 @@ class EdgarClient:
             if wait > 0:
                 time.sleep(wait)
             self._last = time.time()
-        r = self.s.get(url, timeout=15)
+        try:
+            r = self.s.get(url, timeout=15)
+        except (requests.Timeout, requests.ConnectionError):
+            # 11/07: SEC 가 느려 하루 169번 15초 초과 → 그 회차 공시 조회가 통째로 실패. 한 번 더, 더 길게 기다린다
+            time.sleep(1.0)
+            r = self.s.get(url, timeout=(10, 30))
         r.raise_for_status()
         return r
 

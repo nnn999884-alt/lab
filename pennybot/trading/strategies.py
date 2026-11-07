@@ -576,3 +576,7 @@ from .afterdip import AfterDip   # noqa: E402
 ALL[SessionPop.name] = SessionPop
 ALL[DayHandoff.name] = DayHandoff
 ALL[AfterDip.name] = AfterDip
+
+from .wave2 import Wave2B1   # noqa: E402
+
+ALL[Wave2B1.name] = Wave2B1

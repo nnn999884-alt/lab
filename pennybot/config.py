@@ -79,8 +79,8 @@ class TossConfig:
 class CollectorConfig:
     db_path: str = "state/market.db"
     markets: list = field(default_factory=lambda: ["NASDAQ", "NYSE", "AMEX"])
-    min_price: float = 0.20          # 수집은 매매 범위보다 넓게
-    max_price: float = 10.0
+    min_price: float = 0.01          # 수집은 매매 범위보다 넓게 (11/06: 서브페니도 감시, RCT·SHFS 놓침)
+    max_price: float = 20.0          # 11/07: 10→20 (AIOK $13 +123% 놓침)
     price_poll_seconds: int = 60     # 유니버스 전체 현재가 (200개씩 묶음 조회)
     stall_restart_minutes: int = 15  # 메인 루프가 이만큼 통째로 멈추면 프로세스 재시작 (run_forever 가 다시 켬). 0 = 끔
     watch_size: int = 120            # 호가·1분봉을 촘촘히 받을 종목 수
@@ -100,7 +100,7 @@ class CollectorConfig:
     news_poll_minutes: int = 2
     precursor: bool = True           # 급등 전조 점수 (일봉: 장 마감 후 전 종목, 장중: 점수 높은 종목 1분마다)
     precursor_min_score: int = 5     # 장중 감시·알림 대상 일봉 점수 (최대 10)
-    precursor_live_max: int = 80     # 장중 감시 종목 수 상한 (1분에 이만큼 1분봉 조회)
+    precursor_live_max: int = 200    # 장중 감시 종목 수 상한 (11/07: 80→200, 체결 없는 종목은 1분봉을 다시 안 받아 조회 수는 그대로)
     precursor_rank_max: int = 40     # 목록 밖이라도 지금 랭킹(급등률·거래대금·거래량)에 든 종목을 이만큼 더 장중 감시
     fast_scan_seconds: int = 2      # 거래대금·거래량 실시간 랭킹을 이 간격으로 봐서 새로 든 종목을 바로 실시간 구독 (0 = 끔)
     realtime_alerts: bool = True     # 웹소켓 체결로 실시간 알림 (계정당 연결 2개 중 1개 사용, 끊기면 1분 확인으로 대체)
@@ -349,6 +349,13 @@ class TradingConfig:
                       "max_close_loc": 0.15, "max_spread_pct": 1.5, "entry_discount_pct": 0.0,
                       "stop_loss_pct_override": 0.0, "stop_loss_pct": 25.0, "take_profit_pct": 30.0,
                       "exit_after_pre_minutes": 90, "gap_risk_pct": 25.0},
+        # 2026-11-05 '첫 거래량은 패스, 두 번째가 기회' 매매법의 B1(첫날 음봉 → 다음날 거래 소멸 → 첫날 종가 60% 지정가).
+        # 일봉 2년 격자: 앞 1년 +4.9%(승률 64%) / 뒤 1년 +0.3%(55%) — 뒤 기간 본전 근처라 작은 예산으로 모의 검증.
+        "wave2_b1": {"enabled": True, "budget_pct": 0.10, "max_positions": 3,
+                     "max_box": 3.0, "quiet_dollar": 7e5, "quiet_share": 0.8, "min_vol_x": 5.0, "min_dollar": 5e5,
+                     "max_d1_vol": 0.3, "limit_ratio": 0.6, "window_days": 10,
+                     "take_profit_pct": 15.0, "stop_loss_pct": 30.0,
+                     "stop_loss_pct_override": 0.0, "take_profit_pct_override": 0.0, "gap_risk_pct": 30.0},
         "day_handoff": {"enabled": False, "budget_pct": 0.10, "max_positions": 2,
                         "late_window_minutes": 120, "min_vol_ratio": 5.0, "min_dollar": 5e5,
                         "entry_discount_pct": 0.5, "stop_loss_pct_override": 0.0,

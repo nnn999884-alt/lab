@@ -58,7 +58,8 @@ def available() -> bool:
 class TossStream:
     def __init__(self, client, account_seq: str | None = None, *, url: str = WS_URL, connect=None,
                  clock=time.monotonic, ping_interval: float = 60.0, decl_interval: float = 2.0,
-                 max_symbols: int | None = None, channels: tuple = ("orderbook", "trade"), on_trade=None):
+                 max_symbols: int | None = None, channels: tuple = ("orderbook", "trade"), on_trade=None,
+                 on_book=None, name: str = "toss-stream", book_max: int = 0):
         self.c = client
         self.account = str(account_seq) if account_seq else None
         self.url = url
@@ -67,8 +68,14 @@ class TossStream:
         self.ping_interval, self.decl_interval = ping_interval, decl_interval
         self.channels = channels               # 수집기는 체결만 (종목당 1건 → 100종목)
         self.on_trade = on_trade               # 체결마다 on_trade(종목, 가격, 수량) — 실시간 거래대금 알림
+        self.on_book = on_book                 # 호가마다 on_book(종목, bids, asks) — [(가격, 수량)] 위에서부터 (물량 흡수·호가 기록)
+        self.name = name
         per = len(channels)
-        budget = MAX_TOPICS - (1 if self.account else 0)
+        # book_max: channels 와 별도로 호가(orderbook)를 받을 종목 수 (pin_books 로 지정). 토스는 같은 키로 연결 2개를 열면
+        # 서로 끊어 버려서(2026-11-05 확인) 한 연결 안에서 구독 100건을 체결·호가로 나눈다.
+        self.book_max = book_max
+        self._book_pinned: list[str] = []
+        budget = MAX_TOPICS - (1 if self.account else 0) - book_max
         self.max_symbols = min(max_symbols or budget // per, budget // per)   # 종목당 구독 채널 수만큼
         self._lock = threading.Lock()
         self._books: dict[str, tuple[Book, float]] = {}
@@ -88,7 +95,7 @@ class TossStream:
 
     # ---------- 공개 API ----------
     def start(self) -> "TossStream":
-        self._thread = threading.Thread(target=self._run, name="toss-stream", daemon=True)
+        self._thread = threading.Thread(target=self._run, name=self.name, daemon=True)
         self._thread.start()
         return self
 
@@ -110,6 +117,15 @@ class TossStream:
         """보유·주문 중 종목: 항상 구독 (요청 순위보다 우선)."""
         with self._lock:
             self._pinned = {s.upper() for s in symbols}
+
+    def pin_books(self, symbols) -> None:
+        """호가도 받을 종목 (앞에서부터 book_max 개)."""
+        with self._lock:
+            self._book_pinned = [s.upper() for s in symbols]
+
+    def book_desired(self) -> list[str]:
+        with self._lock:
+            return [s for s in self._book_pinned if s not in self._rejected][:self.book_max]
 
     def request(self, symbol: str) -> None:
         """호가를 찾은 종목: 최근 순으로 남는 자리에 구독."""
@@ -169,12 +185,14 @@ class TossStream:
             self._stop.wait(backoff)
             backoff = min(backoff * 2, 60.0)
 
-    def _subscriptions(self, symbols: list[str]) -> list[dict]:
+    def _subscriptions(self, symbols: list[str], books: list[str] = ()) -> list[dict]:
         subs = []
         if self.account:
             subs.append({"type": "personal:order", "codes": [self.account]})
         if symbols:
             subs += [{"type": f"{ch}:us", "codes": symbols} for ch in self.channels]
+        if books and "orderbook" not in self.channels:
+            subs.append({"type": "orderbook:us", "codes": list(books)})
         return subs
 
     def _session(self) -> None:
@@ -193,9 +211,9 @@ class TossStream:
         try:
             while not self._stop.is_set():
                 now = self.clock()
-                want = self.desired()
+                want = (self.desired(), self.book_desired())
                 if want != sent and now - last_decl >= self.decl_interval:
-                    conn.send(json.dumps(self._subscriptions(want)))
+                    conn.send(json.dumps(self._subscriptions(*want)))
                     sent, last_decl = want, now
                 if now - last_ping >= self.ping_interval:
                     conn.send("PING")
@@ -268,6 +286,12 @@ class TossStream:
                      float(asks[0].get("volume") or 0) if asks else 0.0, 0.0)
             with self._lock:
                 self._books[code] = (b, now)
+            if self.on_book:
+                try:
+                    self.on_book(code, [(float(x["price"]), float(x.get("volume") or 0)) for x in bids[:10]],
+                                 [(float(x["price"]), float(x.get("volume") or 0)) for x in asks[:10]])
+                except Exception as e:
+                    log.debug("호가 처리 실패 %s: %s", code, e)
         elif ch == "trade:us":
             if data.get("price") is not None:
                 with self._lock:

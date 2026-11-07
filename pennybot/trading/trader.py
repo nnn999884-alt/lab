@@ -84,6 +84,9 @@ class Trader:
     def __post_init__(self):
         self.risk = Risk(self.tcfg, self.journal, self.control)
         self.strategies = {n: cls(self.tcfg.strategies[n]) for n, cls in ALL.items() if n in self.tcfg.strategies}
+        for s in self.strategies.values():
+            if hasattr(s, "journal"):
+                s.journal = self.journal               # 같은 사건 재진입 막기용 (wave2_b1)
         self.working: dict[str, Working] = {}
         self.exit_reprices: dict[int, int] = {}
         self.entry_reprices: dict[int, int] = {}   # 매수 재호가 횟수 (거래 id → 횟수)
@@ -777,6 +780,12 @@ class Trader:
         scaled, trail = bool(t.get("scaled")), t.get("trail_pct") or 0
         if bid > 0 and bid <= t["stop"] and not self._near_session_transition(now, t["trade_date"]):
             return ("본전 손절" if scaled else "손절"), True, left
+        if getattr(self.strategies.get(t["strategy"]), "SWING", False):
+            # 하루 넘게 들고 가는 전략(wave2_b1): 손절·익절·보유 기한만 본다
+            # (장중 단타용 트레일링·변동없음·던지기·아침 전량 정리는 검증 조건과 달라서 제외)
+            if bid > 0 and t["target"] and bid >= t["target"]:
+                return "익절", False, left
+            return None
         th = getattr(self.tcfg, "trail_from_high_pct", 0) or 0
         if bid > 0 and th and (t.get("entry_price") or 0):
             hw = max(t.get("high_water") or 0, bid)
@@ -909,6 +918,13 @@ class Trader:
             sym = t["symbol"]
             if t["status"] != "OPEN" or (t["remaining"] or 0) <= 0 or sym not in hot:
                 continue
+            if getattr(self.strategies.get(t["strategy"]), "SWING", False):
+                continue                     # 지정가 눌림 매수(스윙)는 추가매수 안 함
+            tried = getattr(self, "_add_on_tried", None)
+            if tried is None:
+                tried = self._add_on_tried = {}
+            if tried.get(sym) and now - tried[sym] < timedelta(minutes=30):
+                continue                     # 안 채워져 취소된 추가매수를 매 분 다시 걸지 않음
             if counts.get(sym, 0) > int(getattr(self.tcfg, "add_on_max_per_symbol", 1)):
                 continue
             if sym in (ctl.get("blocked_symbols") or []):
@@ -941,6 +957,7 @@ class Trader:
                                           scale_out=t.get("scale_out") or 1.0, trail_pct=t.get("trail_pct") or 0.0,
                                           session=session, context={"add_on_of": t["id"]})
             self._submit(tid, sym, "BUY", qty, price, "entry", session, now, reason)
+            tried[sym] = now
             acct.cash -= qty * price
             counts[sym] = counts.get(sym, 0) + 1
 

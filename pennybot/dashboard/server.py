@@ -29,7 +29,7 @@ STATIC = Path(__file__).parent / "static"
 # 2026-11-05: 급등 후보(/api/precursor)는 한 번 계산에 1초 남짓인데 화면마다 3초씩 요청해 처리 중 스레드가
 # 540개까지 쌓이고 메모리 4GB 에서 멈췄다 → 같은 주소 요청은 TTL 초 동안 결과를 같이 쓰고, 계산 중이면 기다렸다 받는다.
 SHARED_TTL = {"/api/precursor": 2.5, "/api/condscan": 10, "/api/chart30": 30, "/api/bigruns": 60, "/api/research": 30,
-              "/api/runners": 30, "/api/detections": 5, "/api/symbol": 3, "/api/symbol_extra": 10}
+              "/api/runners": 30, "/api/detections": 5, "/api/symbol": 3, "/api/symbol_extra": 10, "/api/dna": 3}
 _shared_lock = threading.Lock()
 _shared_val: dict = {}            # key → (시각, 결과)
 _shared_key_locks: dict = {}
@@ -687,9 +687,10 @@ class Handler(BaseHTTPRequestHandler):
             "/api/vsignals": lambda: d.m("SELECT v.*, (SELECT name FROM universe u WHERE u.symbol=v.symbol ORDER BY snapshot_date DESC LIMIT 1) AS name "
                                         "FROM vsignals v WHERE status != 'EXPIRED' ORDER BY (status='OPEN') DESC, opened DESC LIMIT ?", (n("limit", 100),)),
             "/api/daily": lambda: d.daily(qs.get("s", "")[:12], n("n", 90)),
-            "/api/precursor": lambda: __import__("pennybot.precursor", fromlist=["ranked"]).ranked(d.market_db, n("limit", 80)),
+            "/api/precursor": lambda: __import__("pennybot.precursor", fromlist=["ranked"]).ranked(d.market_db, n("limit", 80), only_active=qs.get("all") != "1"),
             "/api/condscan": lambda: __import__("pennybot.condscan", fromlist=["scan"]).scan(
                 d.market_db, qs.get("n", "추세 돌파")[:20], d.cfg.state_dir),
+            "/api/dna": lambda: __import__("pennybot.dna", fromlist=["latest"]).latest(d.market_db),
             "/api/symbol": lambda: d.symbol(qs.get("s", "")[:12]),
             "/api/symbol_extra": lambda: d.symbol_extra(qs.get("s", "")[:12]),
             "/api/profile": lambda: d.profile(qs.get("s", "")[:12]),

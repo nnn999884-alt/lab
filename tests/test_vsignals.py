@@ -480,6 +480,7 @@ def test_poll_steady_flow_flags_persistent_but_not_spiky_symbol(tmp_path):
     랭킹에 거의 안 든 종목은 걸리지 않는다."""
     col, st, sent = make(tmp_path)
     col.universe = {"STDY": {"name": "꾸준이"}, "FLAT": {"name": "평평이"}}
+    col._on = lambda k: True                          # 11/07 부터 기본 꺼짐 — 켰을 때 동작 확인
     base = datetime(2026, 10, 23, 14, 0, tzinfo=timezone.utc)
     rows = []
     for i in range(12):                              # 2시간, 10분 간격
@@ -606,7 +607,7 @@ def test_ranking_admits_symbol_outside_universe(tmp_path):
     col._admit_from_rankings([
         {"symbol": "MERC", "last": 0.25, "type": "TOP_GAINERS", "rank": 2},
         {"symbol": "BIG", "last": 50.0, "type": "TOP_GAINERS", "rank": 1},          # 가격대 밖
-        {"symbol": "TINY", "last": 0.01, "type": "TOP_GAINERS", "rank": 3},         # 가격대 밖
+        {"symbol": "TINY", "last": 0.005, "type": "TOP_GAINERS", "rank": 3},         # 가격대 밖
         {"symbol": "DEEP", "last": 1.0, "type": "TOP_GAINERS", "rank": 80},         # 순위 조건 못 채움
         {"symbol": "LOSE", "last": 1.0, "type": "TOP_LOSERS", "rank": 1},           # 급락 순위는 제외
         {"symbol": "NOTLISTED", "last": 1.0, "type": "TOP_GAINERS", "rank": 1}], now)

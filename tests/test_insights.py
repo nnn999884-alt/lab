@@ -260,10 +260,10 @@ def test_ranked_orders_by_flow_not_by_price_change(tmp_path):
 
 def test_early20_text_format():
     from pennybot.precursor import early20_text
-    text = early20_text("PENX", "펜엑스", 23.4, 1.85, "프리마켓")
+    text = early20_text("PENX", "펜엑스", 23.4, 1.85, "프리마켓", 1.234)
     assert text.startswith("🌙 정규장 전 +20% 돌파 · PENX(펜엑스)")
     assert "$1.85" in text and "+23.4%" in text and "프리마켓" in text
-    assert "5.2배" in text
+    assert "직전 10분 회전율 1.2%" in text and "+30% 더" in text
 
 
 def test_chart_analysis_factors():
