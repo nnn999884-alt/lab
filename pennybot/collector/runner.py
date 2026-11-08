@@ -369,7 +369,7 @@ class Collector:
                 self._run("halts", self.poll_halts)
         if c.precursor:
             self._run("precursor_daily", self.ensure_precursor_daily, trade_date, session)
-            if self._due("rank_model", now, timedelta(hours=6)):
+            if self._due("rank_model", now, timedelta(hours=1)):
                 self._run("rank_model", self.ensure_rank_model, now)
             if c.pre_open_watch and session == DAY:
                 self._run("pre_open", self.pre_open_watch, now, trade_date)
@@ -1141,7 +1141,7 @@ class Collector:
         return n
 
     def ensure_rank_model(self, now: datetime) -> bool:
-        """브리핑 순위 모델이 없거나 30일 지났으면 백그라운드로 다시 학습 (몇 분, 수집은 계속)."""
+        """새 거래일 일봉이 들어왔거나 모델이 없으면 백그라운드로 다시 학습 (2~3분, 수집은 계속)."""
         from .. import rankmodel
         th = getattr(self, "_rank_thread", None)
         if (th and th.is_alive()) or not rankmodel.needs_train(self.cfg.db_path, now):
@@ -1325,12 +1325,16 @@ class Collector:
         shares = dict(self.store.query("SELECT symbol, shares FROM stock_info WHERE shares > 0"))
         tiers = {}
         rows, all_rows = [], {}
+        # 순위 모델(그날 고가 +30% 확률)이 있으면 확률 순으로 감시 — 2026 확인 기간, 상위 200 안에 그날 +30% 종목이
+        # 든 비율 56% → 64%, +100% 종목 68% → 73% (예전: ★등급·점수 순). 모델이 없으면 예전 방식.
+        from .. import rankmodel
+        pr = rankmodel.probs(self.cfg.db_path, d0)
         for r in self.store.query("SELECT symbol, score, signals, metrics, close FROM precursor_daily WHERE d0=?", (d0,)):
             all_rows[r[0]] = r
             tiers[r[0]] = tier(json.loads(r[3] or "{}"), shares.get(r[0]), r[4])
-            if (tiers[r[0]] or r[1] >= self.cfg.precursor_min_score) and json.loads(r[3] or "{}").get("src") != "rank":
+            if (tiers[r[0]] or r[1] >= self.cfg.precursor_min_score or r[0] in pr) and json.loads(r[3] or "{}").get("src") != "rank":
                 rows.append(r)
-        rows.sort(key=lambda r: (-tiers[r[0]], -r[1], -(json.loads(r[3] or "{}").get("vol_ratio") or 0)))
+        rows.sort(key=lambda r: (-pr.get(r[0], -1.0), -tiers[r[0]], -r[1], -(json.loads(r[3] or "{}").get("vol_ratio") or 0)))
         rows = rows[:self.cfg.precursor_live_max]
         hot = set(self._fast_hot[1]) if self._fast_hot[0] == d0 else set()
         have = {x[0] for x in rows}

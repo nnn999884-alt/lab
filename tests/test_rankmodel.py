@@ -55,12 +55,18 @@ def test_train_score_and_briefing(tmp_path, monkeypatch):
     pytest.importorskip("sklearn")
     db, days = _db(tmp_path)
     monkeypatch.setattr(rankmodel, "TRAIN_DAYS", 400)
-    now = datetime(2026, 7, 10, tzinfo=timezone.utc)
+    now = datetime(2026, 7, 25, tzinfo=timezone.utc)   # 가짜 일봉 끝(07-19) 뒤
     assert rankmodel.needs_train(db, now)
     m = rankmodel.train(db, now)
     assert m and m["check"] is None and rankmodel.model_path(db).exists()
-    assert not rankmodel.needs_train(db, now + timedelta(days=5))
-    assert rankmodel.needs_train(db, now + timedelta(days=31))
+    assert not rankmodel.needs_train(db, now + timedelta(days=5))       # 새 일봉 없음
+    assert rankmodel.needs_train(db, now + timedelta(days=31))          # 안전장치: 30일
+    con = sqlite3.connect(db)
+    last = con.execute("SELECT MAX(d) FROM daily_bars").fetchone()[0]
+    con.execute("INSERT INTO daily_bars SELECT symbol, date(?, '+1 day'), open, high, low, close, volume FROM daily_bars WHERE d=?", (last, last))
+    con.commit()
+    con.close()
+    assert rankmodel.needs_train(db, now + timedelta(days=5))           # 새 거래일 들어옴
     con = sqlite3.connect(db)
     con.row_factory = sqlite3.Row
     mq = lambda sql, a=(): [dict(r) for r in con.execute(sql, a).fetchall()]
@@ -86,7 +92,7 @@ def test_retrain_records_check(tmp_path, monkeypatch):
     m2 = rankmodel.train(db, datetime(2026, 9, 1, tzinfo=timezone.utc))
     c = m2["check"]
     assert c and c["from"] > days[150] and c["n"] > 0 and len(m2["history"]) == 1
-    assert "지난 모델 실제 적중" in rankmodel.check_text(m2)
+    assert "실제 적중" in rankmodel.check_text(m2)
 
 
 def test_briefing_text_shows_prob():
@@ -94,3 +100,23 @@ def test_briefing_text_shows_prob():
          "picks": [{"symbol": "ABC", "prob": 23.4, "tier": 2, "close": 1.23, "vol_ratio": 12, "labels": []}]}
     t = briefing.text(b)
     assert "확률 순" in t and "ABC 23% ★★ $1.23" in t and "실제 적중 21%" in t
+
+
+def test_recent_score_sums_last_days():
+    h = [{"from": f"2026-10-{d:02d}", "to": f"2026-10-{d:02d}", "days": 1, "hit": 2, "n": 12, "rule_hit": 1, "rule_n": 12} for d in range(1, 31)]
+    c = rankmodel.recent_score({"history": h}, days=20)
+    assert c["days"] == 20 and c["n"] == 240 and c["hit"] == 40 and c["from"] == "2026-10-11"
+    assert "최근 20거래일 실제 적중 17%" in rankmodel.check_text({"history": h}) and "예전 ★ 규칙 8%" in rankmodel.check_text({"history": h})
+    assert rankmodel.check_text({}) == ""
+
+
+def test_probs_cached_and_empty_without_model(tmp_path, monkeypatch):
+    pytest.importorskip("sklearn")
+    db, days = _db(tmp_path)
+    assert rankmodel.probs(db, days[-1]) == {}                       # 모델 없음
+    monkeypatch.setattr(rankmodel, "TRAIN_DAYS", 400)
+    rankmodel.train(db, datetime(2026, 7, 25, tzinfo=timezone.utc))
+    p1 = rankmodel.probs(db, days[-1])
+    assert p1 and all(0 <= v <= 100 for v in p1.values())
+    monkeypatch.setattr(rankmodel, "score_today", lambda *a: (_ for _ in ()).throw(AssertionError("다시 계산함")))
+    assert rankmodel.probs(db, days[-1]) is p1                       # 캐시

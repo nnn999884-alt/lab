@@ -648,6 +648,9 @@ def _halted_now(con) -> set[str]:
     return out
 
 
+PROB_SHOW = 10.0   # 후보 탭: 움직임이 없어도 순위 모델 확률이 이 % 이상이면 보여 줌
+
+
 def ranked(db_path: str, limit: int = 50, only_active: bool = True) -> dict:
     """최신 기준일의 전조 목록 (일봉 점수 + 장중 증상), 장중 증상 켜진 것 → 점수 순."""
     import json
@@ -721,9 +724,16 @@ def ranked(db_path: str, limit: int = 50, only_active: bool = True) -> dict:
         if r["steady"]:
             r["tier"] = max(r["tier"], 2)
             r["patterns"] = r["patterns"] + ["꾸준히 거래"]
+    try:                                           # 순위 모델 확률 (그날 고가 +30%, 없으면 None)
+        from .rankmodel import probs
+        pr = probs(db_path, d0)
+    except Exception:
+        pr = {}
+    for r in rows:
+        r["prob"] = pr.get(r["symbol"])
     pins = _load_pins(db_path)
     if only_active:
-        rows = [r for r in rows if r.get("new") or r["live"] or r["symbol"] in pins
+        rows = [r for r in rows if r.get("new") or r["live"] or r["symbol"] in pins or (r["prob"] or 0) >= PROB_SHOW
                 or (r["live_m"].get("dollar_3m") or 0) >= ACTIVE_MIN_DOLLAR_3M
                 or (r["live_m"].get("vol_x") or 0) >= ACTIVE_MIN_VOL_X
                 or (r["metrics"].get("vol_ratio") or 0) >= ACTIVE_MIN_DAY_VOL_RATIO]

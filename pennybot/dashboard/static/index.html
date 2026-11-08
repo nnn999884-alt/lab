@@ -2052,7 +2052,7 @@ async function loadBrief() {
   sec(b.model ? "오늘 급등 후보 (+30% 확률 순)" : "오늘 급등 후보", (b.picks || []).slice(0, 6), (li, x) => { line(li, x.symbol,
     `${nm1(x)}$${fmtPx(x.close)}` + (x.tier ? " " + "★".repeat(x.tier) : "") + (x.vol_ratio ? ` · 거래량 ${x.vol_ratio.toFixed(0)}배` : "") + ((x.labels || []).length ? " · " + x.labels.slice(0, 3).join(" · ") : ""),
     x.prob != null ? Math.round(x.prob) + "%" : "★".repeat(x.tier), "gold");
-    if (x.prob != null) li.title = "그날 고가가 전날 종가 +30% 넘을 확률 (일봉 순위 모델, 30일마다 다시 학습)" + (b.model && b.model.check ? "\n" + b.model.check : ""); }, "후보 없음");
+    if (x.prob != null) li.title = "그날 고가가 전날 종가 +30% 넘을 확률 (일봉 순위 모델, 새 거래일마다 다시 학습)" + (b.model && b.model.check ? "\n" + b.model.check : ""); }, "후보 없음");
   sec("고점 재돌파 근접", (b.near || []).slice(0, 6), (li, x) => { line(li, x.symbol, `${nm1(x)}${x.days}일 전 +${Math.round(x.run_chg)}% · 고점 $${fmtPx(x.level)}`, fmtPct(x.dist, 0), x.dist <= 5 ? "pos" : ""); li.title = "최근 20거래일 +50% 급등주가 급등 뒤 최고가까지 남은 거리 (5% 안이면 그날 돌파 79%, 15% 안 + 거래 3배면 51%)"; }, "근접한 종목 없음");
   sec("오늘 액면병합", (b.splits || []).slice(0, 6), (li, s) => line(li, s.symbol, s.name || "", "", ""), "없음");
 }
@@ -2584,6 +2584,7 @@ const PRE_COLS = [
   ["chg", "등락", x => (x.now || {}).chg ?? null, v => v == null ? "-" : fmtPct(v), 1, 1],
   ["tr", "추세", x => ({ up: 2, flat: 1, down: 0 })[(x.trend || {}).d] ?? null, null, 1, 0],
   ["sig", "신호", x => x.live.length * 10 + (x.tier || 0), null, 1, 0],
+  ["pb", "+30% 확률", x => x.prob ?? null, v => v == null ? "-" : Math.round(v) + "%", 1, 1],
   ["vr", "전날 거래량", x => (x.metrics || {}).vol_ratio ?? null, v => v == null ? "-" : v >= 100 ? "100x+" : v.toFixed(1) + "x", 1, 1],
   ["vx", "1시간 거래량", x => (x.live_m || {}).vol_x ?? null, v => v == null ? "-" : v >= 100 ? "100x+" : v.toFixed(1) + "x", 0, 1],
   ["tt", "오늘 회전율", x => x.turnover_today ?? null, v => v == null ? "-" : (v >= 10 ? Math.round(v) : v < 1 ? v.toFixed(2) : v.toFixed(1)) + "%", 1, 1],
@@ -2599,7 +2600,7 @@ PHONE.addEventListener("change", () => { if (preData) drawPre(); });
 function drawPreCards(box, rows) {
   const bar = mk("div", "pc-bar");
   const sel = mk("select", "pc-sort"); sel.setAttribute("aria-label", "정렬");
-  [["auto", "추천순"], ["chg", "등락률"], ["vr", "전날 거래량"], ["tt", "오늘 회전율"], ["vx", "1시간 거래량"], ["px", "현재가"], ["dd", "고점 대비"]]
+  [["auto", "추천순"], ["pb", "+30% 확률"], ["chg", "등락률"], ["vr", "전날 거래량"], ["tt", "오늘 회전율"], ["vx", "1시간 거래량"], ["px", "현재가"], ["dd", "고점 대비"]]
     .forEach(([k, l]) => { const o = mk("option", "", l); o.value = k; o.selected = preSort.k === k; sel.appendChild(o); });
   sel.onchange = () => { preSort = { k: sel.value, dir: sel.value === "dd" ? 1 : -1 }; drawPre(); };
   bar.append(mk("span", "sub", `${rows.length}종목`), sel); box.appendChild(bar);
@@ -2618,6 +2619,7 @@ function drawPreCards(box, rows) {
     if (x.hot && x.grade !== "C") badges.append(mk("span", "ev-kind k-pre", "급등 " + (x.grade || "")));
     x.live_labels.slice(0, 1).forEach(lb => badges.append(mk("span", "tg tg-live", lb.replace(/^[^\p{L}]+/u, ""))));
     if (x.new) badges.append(mk("span", "tg tg-live", "NEW"));
+    if (x.prob != null && x.prob >= 5) badges.append(mk("span", "tg tg-tier", Math.round(x.prob) + "%"));
     if (x.tier) badges.append(mk("span", "tg tg-tier", "★".repeat(x.tier)));
     if (DNA_SET.has(x.symbol)) badges.append(mk("span", "tg tg-tier", "🧬"));
     const m = [];

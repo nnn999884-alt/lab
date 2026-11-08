@@ -192,7 +192,7 @@ def cmd_alert_stats(cfg: Config, days: int) -> None:
 
 
 def cmd_rank_train(cfg: Config) -> None:
-    """브리핑 순위 모델 지금 다시 학습 (수집기는 30일마다 알아서 한다)."""
+    """브리핑 순위 모델 지금 다시 학습 (수집기는 새 거래일마다 알아서 한다)."""
     from . import rankmodel
     m = rankmodel.train(cfg.collector.db_path)
     if not m:
