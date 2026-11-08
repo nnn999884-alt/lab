@@ -120,3 +120,99 @@ def test_probs_cached_and_empty_without_model(tmp_path, monkeypatch):
     assert p1 and all(0 <= v <= 100 for v in p1.values())
     monkeypatch.setattr(rankmodel, "score_today", lambda *a: (_ for _ in ()).throw(AssertionError("다시 계산함")))
     assert rankmodel.probs(db, days[-1]) is p1                       # 캐시
+
+
+# ---------------- 새벽 모델
+
+def test_night_window_and_feats():
+    a0, a1, b1 = rankmodel.night_window("2026-11-05", "2026-11-06")
+    assert a0 == "2026-11-05T21:00:00+00:00" and a1 == "2026-11-06T01:00:00+00:00" and b1 == "2026-11-06T08:45:00+00:00"
+    bars = [("2026-11-05T22:00:00+00:00", 1, 1.2, 1, 1.1, 1000), ("2026-11-06T02:00:00+00:00", 1.1, 1.5, 1.1, 1.4, 5000)]
+    f, last = rankmodel.night_feats(bars, 1.0, 1e6, a1)
+    assert len(f) == len(rankmodel.NIGHT_FEATURES) and last == 1.4
+    assert round(f[0]) == 40 and round(f[1]) == 50 and round(f[4]) == 10 and round(f[-1]) == 40
+    assert rankmodel.night_feats([], 1.0, 1e6, a1) == ([0.0, 0.0, 0.0, -3.0, 0.0, 0.0, 0.0, -3.0, 0.0], 1.0)
+    assert rankmodel.night_feats([("2026-11-06T02:00:00+00:00", .1, .1, .1, .1, 9)], 1.0, 1e6, a1) is None   # 병합 등 가격 불일치
+
+
+def _add_night(db, days, seed=2):
+    """일봉 DB 에 밤사이 1분봉 추가: 데이마켓에 거래가 붙은 종목이 다음 날 정규장 고가 +45%."""
+    rnd = random.Random(seed)
+    con = sqlite3.connect(db)
+    con.execute("CREATE TABLE bars_1m (symbol TEXT, ts TEXT, trade_date TEXT, session TEXT, open REAL, high REAL, low REAL, "
+                "close REAL, volume REAL, PRIMARY KEY (symbol, ts))")
+    syms = [r[0] for r in con.execute("SELECT DISTINCT symbol FROM daily_bars")]
+    for prev, d in zip(days, days[1:]):
+        _, a1, _ = rankmodel.night_window(prev, d)
+        for s in syms:
+            pc = con.execute("SELECT close FROM daily_bars WHERE symbol=? AND d=?", (s, prev)).fetchone()[0]
+            hot = rnd.random() < 0.08
+            con.execute("INSERT INTO bars_1m VALUES (?,?,?,?,?,?,?,?,?)", (s, a1, d, "DAY", pc, pc * 1.02, pc, pc * 1.01, 5e5 if hot else 10))
+            if hot:
+                con.execute("UPDATE daily_bars SET high=? WHERE symbol=? AND d=?", (pc * 1.01 * 1.45, s, d))
+    con.commit()
+    con.close()
+
+
+def test_train_night_score_and_snap(tmp_path, monkeypatch):
+    pytest.importorskip("sklearn")
+    db, days = _db(tmp_path, n_days=120)
+    _add_night(db, days)
+    monkeypatch.setattr(rankmodel, "NIGHT_SINCE", days[70])
+    now = datetime(2026, 5, 10, tzinfo=timezone.utc)
+    m = rankmodel.train_night(db, now)
+    assert m and m["features"] == list(rankmodel.FEATURES + rankmodel.NIGHT_FEATURES) and rankmodel.night_path(db).exists()
+    assert rankmodel.night_check_text(m) == ""
+    con = sqlite3.connect(db)
+    con.row_factory = sqlite3.Row
+    mq = lambda sql, a=(): [dict(r) for r in con.execute(sql, a).fetchall()]
+    sc = rankmodel.score_night(mq, db, days[-2], days[-1])
+    hot = {r[0] for r in con.execute("SELECT symbol FROM bars_1m WHERE trade_date=? AND volume>1000", (days[-1],))}
+    assert sc and sc[0]["symbol"] in hot and all("price" in r for r in sc)
+    # 03:45 전엔 값 없음, 뒤엔 있음
+    b1 = datetime.fromisoformat(rankmodel.night_window(days[-2], days[-1])[2])
+    assert rankmodel.night_probs(db, days[-2], days[-1], b1 - timedelta(minutes=1)) == {}
+    assert rankmodel.night_probs(db, days[-2], days[-1], b1 + timedelta(minutes=1))
+    # 브리핑 때 보낸 후보 기록 → 실제 적중 채점
+    rankmodel.save_snap(db, days[-1], sc)
+    rankmodel.save_snap(db, days[-1], sc)                         # 같은 날 다시 쓰면 덮어씀
+    lv = rankmodel._snap_score(db)
+    assert lv and lv["days"] == 1 and lv["n"] == min(12, len(sc)) and lv["hit"] >= 1
+    assert "브리핑 실제 적중" in rankmodel.night_check_text({"live": lv})
+    con.close()
+
+
+def test_briefing_text_night():
+    b = {"date": "2026-11-09", "model": {"kind": "night", "check": "브리핑 실제 적중 최근 5일 40%"},
+         "picks": [{"symbol": "ABC", "prob": 41.2, "tier": 0, "close": 1.0, "price": 1.35, "night": 35.0, "vol_ratio": 0, "labels": []}]}
+    t = briefing.text(b)
+    assert "+20% 더 갈 확률 순" in t and "ABC 41% $1.35 (밤사이 +35%)" in t and "실제 적중 최근 5일 40%" in t
+
+
+# ---------------- 장중 모델 (5분마다 다시 매김)
+def test_intra_feats_uses_only_past():
+    d = "2026-11-06"
+    _, a1, _ = rankmodel.night_window("2026-11-05", d)
+    T = rankmodel._et(d, "07:00")
+    bars = [(rankmodel._et(d, "05:00"), 1.0, 1.3, 1.0, 1.2, 1000), (rankmodel._et(d, "08:00"), 1.2, 9.0, 1.2, 5.0, 1000)]
+    f, cur = rankmodel.intra_feats(bars, 1.0, 1e6, d, T, a1)
+    assert cur == 1.2 and len(f) == len(rankmodel.INTRA_FEATURES) and max(f) < 200   # 08:00 봉(9달러)은 안 봄
+
+
+def test_train_intra_and_live_probs(tmp_path, monkeypatch):
+    pytest.importorskip("sklearn")
+    db, days = _db(tmp_path, n_days=120)
+    _add_night(db, days)
+    monkeypatch.setattr(rankmodel, "NIGHT_SINCE", days[70])
+    now = datetime(2026, 5, 10, tzinfo=timezone.utc)
+    m = rankmodel.train_intra(db, now)
+    assert m and m["features"] == list(rankmodel.FEATURES + rankmodel.INTRA_FEATURES) and rankmodel.intra_path(db).exists()
+    con = sqlite3.connect(db)
+    hot = {r[0] for r in con.execute("SELECT symbol FROM bars_1m WHERE trade_date=? AND volume>1000", (days[-1],))}
+    con.close()
+    t = datetime.fromisoformat(rankmodel._et(days[-1], "06:02"))
+    pr = rankmodel.intra_probs(db, days[-2], days[-1], t)
+    assert pr and max(pr, key=pr.get) in hot
+    assert rankmodel.intra_probs(db, days[-2], days[-1], datetime.fromisoformat(rankmodel._et(days[-1], "03:50"))) == {}
+    assert rankmodel.intra_probs(db, days[-2], days[-1], datetime.fromisoformat(rankmodel._et(days[-1], "15:40"))) == {}
+    assert rankmodel.live_probs(db, days[-2], days[-1], t) == pr

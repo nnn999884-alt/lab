@@ -212,6 +212,12 @@ class Collector:
             return None
         self._brief_sent = trade_date
         b = briefing.build(self._mq(), self.cfg.db_path, self._rq(), now)
+        if (b.get("model") or {}).get("kind") == "night":    # 실제로 보낸 후보·가격 기록 → 나중에 진짜 적중률
+            try:
+                from .. import rankmodel
+                rankmodel.save_snap(self.cfg.db_path, b["date"], b.get("picks") or [])
+            except (OSError, ValueError) as e:
+                log.warning("브리핑 후보 기록 실패: %s", e)
         (Path(self.cfg.db_path).parent / "briefing.json").write_text(json.dumps(b, ensure_ascii=False), encoding="utf-8")
         txt = briefing.text(b)
         if self.notifier and self._on("briefing"):
@@ -1144,15 +1150,24 @@ class Collector:
         """새 거래일 일봉이 들어왔거나 모델이 없으면 백그라운드로 다시 학습 (2~3분, 수집은 계속)."""
         from .. import rankmodel
         th = getattr(self, "_rank_thread", None)
-        if (th and th.is_alive()) or not rankmodel.needs_train(self.cfg.db_path, now):
+        if th and th.is_alive():
+            return False
+        need_d = rankmodel.needs_train(self.cfg.db_path, now)
+        need_n = rankmodel.needs_train(self.cfg.db_path, now, rankmodel.night_path(self.cfg.db_path))
+        need_i = rankmodel.needs_train(self.cfg.db_path, now, rankmodel.intra_path(self.cfg.db_path))
+        if not (need_d or need_n or need_i):
             return False
         import threading
 
         def job():
-            try:
-                rankmodel.train(self.cfg.db_path, now)
-            except Exception as e:
-                log.warning("브리핑 순위 모델 학습 실패: %s", e)
+            for need, fn, nm in ((need_d, rankmodel.train, "일봉"), (need_n, rankmodel.train_night, "새벽"),
+                               (need_i, rankmodel.train_intra, "장중")):
+                if not need:
+                    continue
+                try:
+                    fn(self.cfg.db_path, now)
+                except Exception as e:
+                    log.warning("%s 순위 모델 학습 실패: %s", nm, e)
         self._rank_thread = threading.Thread(target=job, name="rank_model", daemon=True)
         self._rank_thread.start()
         return True
@@ -1329,6 +1344,8 @@ class Collector:
         # 든 비율 56% → 64%, +100% 종목 68% → 73% (예전: ★등급·점수 순). 모델이 없으면 예전 방식.
         from .. import rankmodel
         pr = rankmodel.probs(self.cfg.db_path, d0)
+        if session in (PRE, REGULAR):                  # 03:45 뒤 새벽 모델, 04:00~15:30 ET 엔 5분마다 다시 매기는 장중 모델 순
+            pr = rankmodel.live_probs(self.cfg.db_path, d0, str(trade_date), now) or pr
         for r in self.store.query("SELECT symbol, score, signals, metrics, close FROM precursor_daily WHERE d0=?", (d0,)):
             all_rows[r[0]] = r
             tiers[r[0]] = tier(json.loads(r[3] or "{}"), shares.get(r[0]), r[4])

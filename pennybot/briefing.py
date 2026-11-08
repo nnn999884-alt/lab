@@ -57,6 +57,17 @@ def build(mq, market_db: str, rq=None, now: datetime | None = None) -> dict:
                 out["picks"] = [dict(r, name=nm(r["symbol"]), labels=lab.get(r["symbol"], [])) for r in sc[:12]]
                 m = rankmodel.load(rankmodel.model_path(market_db)) or {}
                 out["model"] = {"through": m.get("through"), "check": rankmodel.check_text(m)}
+            # 새벽 모델: 03:45 ET 까지 애프터장·데이마켓 1분봉도 보고 '정규장 고가가 지금가보다 +20% 더' 확률 순
+            # (검증 39일: 하루 12개 중 일봉 모델만 25% → 43%). 있으면 이 순서가 우선.
+            if now.isoformat() >= rankmodel.night_window(d0, out["date"])[2] and d0 < out["date"]:
+                ns = rankmodel.score_night(mq, market_db, d0, out["date"])
+                if ns:
+                    pd_ = {r["symbol"]: r["prob"] for r in (sc or [])}
+                    out["picks"] = [dict(r, name=nm(r["symbol"]), labels=lab.get(r["symbol"], []), prob_d=pd_.get(r["symbol"]))
+                                    for r in ns[:12]]
+                    nm_ = rankmodel.load(rankmodel.night_path(market_db)) or {}
+                    out["model"] = {"kind": "night", "through": nm_.get("through"), "check": rankmodel.night_check_text(nm_),
+                                    "check_d": (out.get("model") or {}).get("check", "")}
         except Exception:
             pass
 
@@ -118,11 +129,13 @@ def text(b: dict) -> str:
         L.append(f"\n📈 어제({b['d0']}) 급등")
         L += [f"• {m['symbol']} 고가 {m['high_chg']:+.0f}% · 종가 {m['chg']:+.0f}% · {money_s(m['dollar'])}" for m in b["movers"][:6]]
     if b.get("picks"):
-        L.append("\n⭐ 오늘 급등 후보" + (" (+30% 갈 확률 순)" if b.get("model") else ""))
+        night = (b.get("model") or {}).get("kind") == "night"
+        L.append("\n⭐ 오늘 급등 후보" + (" (정규장에서 지금가보다 +20% 더 갈 확률 순)" if night else " (+30% 갈 확률 순)" if b.get("model") else ""))
         if (b.get("model") or {}).get("check"):
             L.append("  " + b["model"]["check"])
         L += [f"• {p['symbol']}" + (f" {p['prob']:.0f}%" if p.get("prob") is not None else "") + (f" {'★' * p['tier']}" if p.get("tier") else "")
-              + f" ${p['close']:.4g}" + (f" · 전날 거래량 {p['vol_ratio']:.0f}배" if p.get("vol_ratio") else "")
+              + (f" ${p['price']:.4g} (밤사이 {p['night']:+.0f}%)" if night and p.get("price") else f" ${p['close']:.4g}")
+              + (f" · 전날 거래량 {p['vol_ratio']:.0f}배" if p.get("vol_ratio") else "")
               + (f" · {' · '.join(p['labels'][:2])}" if p.get("labels") else "")
               for p in b["picks"][:8]]
     if b.get("near"):

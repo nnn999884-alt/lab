@@ -725,15 +725,19 @@ def ranked(db_path: str, limit: int = 50, only_active: bool = True) -> dict:
             r["tier"] = max(r["tier"], 2)
             r["patterns"] = r["patterns"] + ["꾸준히 거래"]
     try:                                           # 순위 모델 확률 (그날 고가 +30%, 없으면 None)
-        from .rankmodel import probs
+        from .rankmodel import probs, live_probs
+        from .alertperf import trade_day
         pr = probs(db_path, d0)
+        prn = live_probs(db_path, d0, trade_day(datetime.now(timezone.utc)))   # 지금가 +20% 더 확률 (03:45 ET 뒤, 장중엔 5분마다)
     except Exception:
-        pr = {}
+        pr, prn = {}, {}
     for r in rows:
         r["prob"] = pr.get(r["symbol"])
+        r["prob_n"] = prn.get(r["symbol"])
     pins = _load_pins(db_path)
     if only_active:
         rows = [r for r in rows if r.get("new") or r["live"] or r["symbol"] in pins or (r["prob"] or 0) >= PROB_SHOW
+                or (r["prob_n"] or 0) >= PROB_SHOW
                 or (r["live_m"].get("dollar_3m") or 0) >= ACTIVE_MIN_DOLLAR_3M
                 or (r["live_m"].get("vol_x") or 0) >= ACTIVE_MIN_VOL_X
                 or (r["metrics"].get("vol_ratio") or 0) >= ACTIVE_MIN_DAY_VOL_RATIO]
