@@ -2,7 +2,7 @@
 
 판정: 빨리(전날 대비 +10% 전에 알림) · 중간(+10~20%) · 늦게(+20% 넘어서) · 놓침(알림 없음).
 놓친 종목은 이유(감시 가격대 밖 · 후보 점수 낮음 · 실시간 순위에 안 뜸 · 실시간 구독 아님 등)와 특징(세션·시각·주식 수·
-전날 거래량 배수·체질 목록 여부)을 miss_review 에 쌓고, 최근 20일 누적으로 '놓치는 종목의 공통점'을 뽑는다.
+전날 거래량 배수·급등 이력 목록 여부)을 miss_review 에 쌓고, 최근 20일 누적으로 '놓치는 종목의 공통점'을 뽑는다.
 자동으로 규칙을 바꾸지는 않는다 — 공통점이 쌓이면 사람이 보고 기준을 고친다 (검증 없이 바꾸면 알림만 늘어남).
 """
 from __future__ import annotations
@@ -144,7 +144,7 @@ def patterns(hist: list[dict]) -> list[str]:
                     ("주식 500만↓", lambda x: (x.get("shares") or 9e18) <= 5e6),
                     ("$1 미만", lambda x: (x.get("price") or 99) < 1),
                     ("전날 거래량 3배↑", lambda x: (x.get("vol_ratio") or 0) >= 3),
-                    ("🧬 체질 목록", lambda x: x.get("dna"))):
+                    ("🧬 급등 이력 목록", lambda x: x.get("dna"))):
         b, g = share(bad, f), share(good, f)
         if b >= 0.3 and b - g >= 0.15:
             lines.append(f"  · {name}: 놓침·늦게 {b:.0%} vs 잡은 것 {g:.0%} → 여기 기준을 더 볼 것")

@@ -103,7 +103,7 @@ class Collector:
         self._absorb = AbsorbTracker()
         self._ticks = TickLog(_P(cfg.db_path).parent / "ticks.db")
         self._ab_fired: dict = {}                 # 종목 → 마지막 흡수 알림 시각 (30분에 한 번)
-        self._dna: tuple = (None, [])              # (일봉 기준일, 🧬 급등 체질 감시 종목) — dna.py
+        self._dna: tuple = (None, [])              # (일봉 기준일, 🧬 급등 이력 감시 종목) — dna.py
         self._ticks_flush = 0.0
         self._rt_syms: set = set()                # 지금 구독할 종목
         self._rt_win: dict = {}                   # 종목 → deque[(초, 가격, 수량)] 최근 60초
@@ -225,7 +225,7 @@ class Collector:
         y, m, d = map(int, trade_date.split("-"))
         end = datetime(y, m, d, 20, tzinfo=ET).astimezone(timezone.utc)
         mq, rq = self._mq(), self._rq()
-        rows = alertperf.rows(mq, rq, (end - timedelta(hours=24)).isoformat(), end.isoformat())
+        rows = alertperf.rows(mq, rq, (end - timedelta(hours=24)).isoformat(), end.isoformat(), limit=2000, kinds=alertperf.ALL_KINDS)
         txt = alertperf.summary_text(rows, alertperf.stats(mq, rq, today=trade_date), trade_date)
         if txt and self.notifier and self._on("perf"):
             self.notifier.send(txt)
@@ -1699,7 +1699,7 @@ class Collector:
     def _rt_set(self, symbols) -> None:
         """구독할 종목 (1분 감시 목록 + 랭킹 훑기로 새로 잡은 종목). 새 종목은 1분봉으로 평소 거래량을 채운다."""
         hot = self._fast_hot[1] if self._fast_hot[0] else set()
-        # 순서: 지금(30분 안) 순위에 보인 활발한 종목, 최근 본 순 → 🧬 급등 체질 감시(상위 dna_rt_max) → 나머지 감시 목록 + 예전 활발 종목.
+        # 순서: 지금(30분 안) 순위에 보인 활발한 종목, 최근 본 순 → 🧬 급등 이력 감시(상위 dna_rt_max) → 나머지 감시 목록 + 예전 활발 종목.
         # (11/07: 하루 동안 순위에 든 종목이 87~123개라 70칸을 넘는데 순서 없는 set 이라 방금 뜬 종목이 잘릴 수 있었음)
         seen = getattr(self, "_fast_seen", None) or {}
         cut = time.time() - 1800
@@ -1747,7 +1747,7 @@ class Collector:
         return len(rows)
 
     def refresh_dna(self) -> list[str]:
-        """🧬 급등 체질 감시 목록: 일봉 마지막 날이 바뀌면 다시 뽑아 dna_watch 에 저장하고 실시간 구독 앞쪽에 넣는다."""
+        """🧬 급등 이력 감시 목록: 일봉 마지막 날이 바뀌면 다시 뽑아 dna_watch 에 저장하고 실시간 구독 앞쪽에 넣는다."""
         from .. import dna
         d0 = (self.store.query("SELECT MAX(d) FROM daily_bars") or [[None]])[0][0]
         if not d0 or d0 == self._dna[0]:
@@ -1763,7 +1763,7 @@ class Collector:
             self.notifier.send(dna.summary_text(d0, rows, prev, names, self.store.db))
         if self._rt:
             self._rt_set(list(self._rt_syms))
-        log.info("🧬 급등 체질 감시 %d종목 (%s 일봉): %s", len(rows), d0, ", ".join(self._dna[1][:15]))
+        log.info("🧬 급등 이력 감시 %d종목 (%s 일봉): %s", len(rows), d0, ", ".join(self._dna[1][:15]))
         return self._dna[1]
 
     def _on_book(self, sym: str, bids: list, asks: list, t: float | None = None) -> None:

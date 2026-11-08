@@ -27,3 +27,12 @@ def test_breakdown_groups_and_averages():
     x = bd[("burst", "PRE", "A")]
     assert (x["n"], x["win"], x["loss"], x["hit30"]) == (2, 1, 1, 1)
     assert x["last"] / x["h3n"] == 3.0 and len(bd) == 1
+
+
+def test_breakdown_counts_more50_and_all_kinds():
+    from pennybot.alertperf import ALL_KINDS, LABELS
+    assert "ignition" in ALL_KINDS and set(ALL_KINDS) <= set(LABELS)
+    rs = [{"kind": "ignition", "ts": "2026-11-06T09:00:00+00:00", "price": 1.0, "hit30": True, "result": "win", "more50": True,
+           "h3_last": 5.0, "h3_high": 60.0, "h3_low": -3.0, "text": ""}]
+    bd = breakdown(rs)
+    assert bd[("ignition", "PRE", "-")]["more50"] == 1

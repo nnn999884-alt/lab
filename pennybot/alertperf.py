@@ -10,7 +10,13 @@ from zoneinfo import ZoneInfo
 
 ET = ZoneInfo("America/New_York")
 WIN, LOSS, RUN30 = 1.20, 0.90, 1.30
-KINDS = ("precursor", "burst", "reaccel", "approach")
+KINDS = ("precursor", "burst", "reaccel", "approach")         # 대시보드 '조기 감지' 표
+# 성적표(장 마감 요약·누적 적중률·alert-stats)는 알림 전 종류 (2026-11-08: 예전엔 위 4종만 세서 새 알림은 실제 성적을 몰랐음)
+ALL_KINDS = KINDS + ("early20", "early_watch", "bottom_bounce", "absorb", "spike_start", "slow_climb", "ignition")
+LABELS = {"precursor": "🚨 급등 전조", "burst": "📶 거래 터짐", "reaccel": "🔁 재가속", "approach": "👀🎯 고점 접근",
+          "early20": "🌙 정규장 전 +20%", "early_watch": "👀 초기 경보", "bottom_bounce": "🌊 바닥 재반등", "absorb": "🧲 물량 흡수",
+          "spike_start": "🚀 급등 시작", "slow_climb": "🐢 천천히 오름", "ignition": "🔥 데이·프리 점화"}
+MORE50 = 1.50       # 알림 뒤 그날 고가가 알림가 +50%↑ (점화 알림 검증 기준)
 
 
 def trade_day(t: datetime) -> str:
@@ -59,7 +65,7 @@ def outcome(mq, rq, sym: str, ts: str) -> dict | None:
     w3 = [b for b in after if b["ts"] <= cut]
     return {"date": d, "price": p0, "prev_close": pc, "chg_at": (p0 / pc - 1) * 100 if pc else None,
             "last": after[-1]["close"] if after else p0, "last_ts": bars[-1]["ts"], "high": hi, "high_ts": hi_ts, "low": lo,
-            "result": res, "hit30": bool(pc and day_hi >= pc * RUN30),
+            "result": res, "hit30": bool(pc and day_hi >= pc * RUN30), "more50": hi >= p0 * MORE50,
             "h3_last": (w3[-1]["close"] / p0 - 1) * 100 if w3 else None,
             "h3_high": (max(b["high"] for b in w3) / p0 - 1) * 100 if w3 else None,
             "h3_low": (min(b["low"] for b in w3) / p0 - 1) * 100 if w3 else None}
@@ -86,8 +92,9 @@ def breakdown(rs: list[dict]) -> dict:
         if r.get("price") is None or r["kind"] == "old":
             continue
         key = (r["kind"], session_of(r["ts"]), grade_of(r.get("text")))
-        x = out.setdefault(key, {"n": 0, "h3n": 0, "last": 0.0, "high": 0.0, "low": 0.0, "hit30": 0, "win": 0, "loss": 0})
+        x = out.setdefault(key, {"n": 0, "h3n": 0, "last": 0.0, "high": 0.0, "low": 0.0, "hit30": 0, "win": 0, "loss": 0, "more50": 0})
         x["n"] += 1
+        x["more50"] += bool(r.get("more50"))
         x["hit30"] += bool(r["hit30"])
         x["win"] += r["result"] == "win"
         x["loss"] += r["result"] == "loss"
@@ -101,17 +108,17 @@ def breakdown(rs: list[dict]) -> dict:
 
 def breakdown_text(bd: dict, days: int) -> str:
     lines = [f"알림 성적 (최근 {days}일, 알림 때 가격 기준) — 종류 · 세션 · 등급",
-             "종류      세션   등급   건수  3시간뒤  최고   최저   당일+30%  +20%먼저/−10%먼저"]
+             "종류           세션   등급   건수  3시간뒤  최고   최저   당일+30%  +50%더  +20%먼저/−10%먼저"]
     for (k, s, g), x in sorted(bd.items(), key=lambda kv: (kv[0][0], -kv[1]["n"])):
         n3 = x["h3n"] or 1
-        lines.append(f"{k:9s} {s:6s} {g:3s} {x['n']:5d}  {x['last'] / n3:+6.1f}% {x['high'] / n3:+6.1f}% {x['low'] / n3:+6.1f}% "
-                     f"{x['hit30'] / x['n'] * 100:6.0f}%   {x['win']}/{x['loss']}")
+        lines.append(f"{k:14s} {s:6s} {g:3s} {x['n']:5d}  {x['last'] / n3:+6.1f}% {x['high'] / n3:+6.1f}% {x['low'] / n3:+6.1f}% "
+                     f"{x['hit30'] / x['n'] * 100:6.0f}%  {x.get('more50', 0) / x['n'] * 100:5.0f}%   {x['win']}/{x['loss']}")
     return "\n".join(lines)
 
 
-def rows(mq, rq, since: str, until: str | None = None, limit: int = 300) -> list[dict]:
-    ev = mq("SELECT ts, symbol, kind, text FROM events WHERE kind IN ('precursor','burst','reaccel','approach') AND ts>=? AND ts<? "
-            "ORDER BY ts DESC LIMIT ?", (since, until or "9999", limit))
+def rows(mq, rq, since: str, until: str | None = None, limit: int = 300, kinds=KINDS) -> list[dict]:
+    ev = mq(f"SELECT ts, symbol, kind, text FROM events WHERE kind IN ({','.join('?' * len(kinds))}) AND ts>=? AND ts<? "
+            "ORDER BY ts DESC LIMIT ?", (*kinds, since, until or "9999", limit))
     out = []
     for r in ev:
         o = outcome(mq, rq, r["symbol"], r["ts"])
@@ -123,12 +130,13 @@ def stats(mq, rq, today: str | None = None) -> dict:
     """끝난 거래일 알림 전부로 종류별 (그리고 감지 때 이미 +20% 넘었나 = :run / 아니면 :early) 적중 수."""
     today = today or trade_day(datetime.now(timezone.utc))
     st: dict = {}
-    for r in rows(mq, rq, "0", limit=100000):
+    for r in rows(mq, rq, "0", limit=100000, kinds=ALL_KINDS):
         if r.get("price") is None or r["date"] >= today:
             continue
         for key in (r["kind"], r["kind"] + (":run" if (r["chg_at"] or 0) >= 20 else ":early")):
-            x = st.setdefault(key, {"n": 0, "hit30": 0, "win": 0, "loss": 0})
+            x = st.setdefault(key, {"n": 0, "hit30": 0, "win": 0, "loss": 0, "more50": 0})
             x["n"] += 1
+            x["more50"] += bool(r.get("more50"))
             x["hit30"] += r["hit30"]
             x["win"] += r["result"] == "win"
             x["loss"] += r["result"] == "loss"
@@ -145,7 +153,7 @@ def summary_text(day_rows: list[dict], st: dict, date: str) -> str | None:
     if not rs:
         return None
     lines = [f"📊 오늘 알림 성과 ({date})", "적중 = 감지가 +20% 선도달 · 손절 = −10% 선도달"]
-    for k, lab in (("precursor", "🚨 급등 전조"), ("burst", "📶 거래 터짐"), ("reaccel", "🔁 재가속"), ("approach", "👀🎯 고점 접근")):
+    for k, lab in LABELS.items():
         g = [r for r in rs if r["kind"] == k]
         if not g:
             continue
@@ -154,7 +162,8 @@ def summary_text(day_rows: list[dict], st: dict, date: str) -> str | None:
         h = sum(r["hit30"] for r in g)
         s = st.get(k) or {}
         hist = f" · 누적 적중률 {s['win'] / s['n'] * 100:.0f}% ({s['n']}건)" if s.get("n") else ""
-        lines.append(f"{lab} {len(g)}건 — ✅ 적중 {w} · ❌ 손절 {lz} · 당일 +30% {h}{hist}")
+        m50 = f" · +50% 더 {sum(bool(r.get('more50')) for r in g)}" if k == "ignition" else ""
+        lines.append(f"{lab} {len(g)}건 — ✅ 적중 {w} · ❌ 손절 {lz} · 당일 +30% {h}{m50}{hist}")
     best = sorted(rs, key=lambda r: -(r["high"] / r["price"]))[:3]
     if best:
         lines.append("")

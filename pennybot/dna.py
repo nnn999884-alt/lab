@@ -1,4 +1,4 @@
-"""🧬 급등 체질 감시 목록 — 매일 일봉 기준으로 다시 뽑는 '따로 보는' 종목 리스트.
+"""🧬 급등 이력 감시 목록 — 매일 일봉 기준으로 다시 뽑는 '따로 보는' 종목 리스트.
 
 사용자가 준 급등 예시 6종목(RETO·SDOT·JL·VEEE·YIBO·ZCMD)의 +50% 급등 44건 직전 공통점(2026-11-05 분석):
 주식 수가 아주 적음(5/6 이 60만~440만 주) · 60일 중 바닥(위치 중앙 7%) · 직전에 빠지는 중(5일 −13%, 20일 −23%) ·
@@ -87,7 +87,7 @@ def previous(con: sqlite3.Connection, d0: str) -> tuple[str, list[str]] | None:
 
 def summary_text(d0: str, rows: list[dict], prev, names: dict, con: sqlite3.Connection, top: int = 20) -> str:
     """장 끝나고 텔레그램: 전 목록이 오늘 어땠나 + 새 목록."""
-    lines = [f"🧬 급등 체질 감시 정리 · {d0} 일봉 기준", "──────────────"]
+    lines = [f"🧬 급등 이력 감시 정리 · {d0} 일봉 기준", "──────────────"]
     if prev:
         pd0, syms = prev
         res = []

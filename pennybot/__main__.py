@@ -182,7 +182,7 @@ def cmd_alert_stats(cfg: Config, days: int) -> None:
     mq = lambda sql, a=(): [dict(r) for r in con.execute(sql, a).fetchall()]
     since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
     try:
-        rs = alertperf.rows(mq, None, since, limit=100000)
+        rs = alertperf.rows(mq, None, since, limit=100000, kinds=alertperf.ALL_KINDS)
     finally:
         pass
     print(alertperf.breakdown_text(alertperf.breakdown(rs), days))

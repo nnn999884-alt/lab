@@ -42,7 +42,7 @@ def test_summary_text_reports_previous_list_and_new_list(tmp_path):
     prev = dna.previous(con, d0)
     assert prev == ("2026-01-01", ["PEN"])
     msg = dna.summary_text(d0, rows, prev, {"PEN": "펜"}, con)
-    assert "급등 체질 감시 정리" in msg and "PEN 펜" in msg and "매수 신호 아님" in msg
+    assert "급등 이력 감시 정리" in msg and "PEN 펜" in msg and "매수 신호 아님" in msg
 
 
 def test_rejects_without_spike_big_float_or_no_drop(tmp_path):
