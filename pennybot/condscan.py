@@ -83,7 +83,8 @@ def cond_text(c: dict) -> str:
         return f"오늘 거래량 {c['min']:,.0f}주 이상"
     if t == "mcap":
         return f"시총 ${c['min'] / 1e6:g}M 이상"
-    return t
+    from . import screens
+    return screens.cond_text(c) or t
 
 
 # ---------- 지표 ----------
@@ -131,6 +132,9 @@ def _env_upper(closes, n, pct, back=0):
 def evaluate(cond: dict, ctx: dict) -> bool | None:
     """True/False, 데이터가 모자라면 None(건너뜀)."""
     t = cond["t"]
+    if t in ("f", "ses"):                  # 해외 스크리너 지표 (screens.py)
+        from . import screens
+        return screens.evaluate(cond, ctx.get("feat"))
     if t == "day_vol":
         v = ctx["day_vol"]
         return None if v is None else cond.get("min", 0) <= v <= cond.get("max", 1e12)
@@ -166,7 +170,7 @@ def evaluate(cond: dict, ctx: dict) -> bool | None:
     return None
 
 
-def check(bars_1m: list[tuple], conds: list[dict], day_vol=None, shares=None, daily=None) -> list[bool | None]:
+def check(bars_1m: list[tuple], conds: list[dict], day_vol=None, shares=None, daily=None, feat=None) -> list[bool | None]:
     cache: dict[int, list[float]] = {}
 
     def closes(tf: int) -> list[float]:
@@ -174,7 +178,7 @@ def check(bars_1m: list[tuple], conds: list[dict], day_vol=None, shares=None, da
             cache[tf] = list(daily or []) if tf >= 1440 else [b[4] for b in resample(bars_1m, tf)]
         return cache[tf]
 
-    ctx = {"closes": closes, "day_vol": day_vol, "shares": shares, "price": bars_1m[-1][4] if bars_1m else None}
+    ctx = {"closes": closes, "day_vol": day_vol, "shares": shares, "price": bars_1m[-1][4] if bars_1m else None, "feat": feat}
     return [evaluate(c, ctx) for c in conds]
 
 
@@ -195,7 +199,9 @@ def trend_of(bars_1m: list[tuple]) -> dict | None:
 
 # ---------- 스캔 ----------
 def presets(state_dir: Path | None = None) -> dict[str, dict]:
+    from . import screens
     p = dict(PRESETS)
+    p.update(screens.PRESETS)              # 해외 스크리너 식 (그룹 '해외')
     if state_dir:
         f = Path(state_dir) / "condscan.json"
         if f.exists():
@@ -226,7 +232,8 @@ def scan(market_db, name: str, state_dir: Path | None = None, *, recent_min: int
     if name not in pre:
         return {"error": f"식 없음: {name}", "names": list(pre)}
     _refresh(market_db, name, state_dir, key, recent_min, limit)      # 처음엔 계산 중이라고만 답한다
-    return {"loading": True, "name": name, "names": list(pre), "rows": [], "conds": [cond_text(c) for c in pre[name]["conds"]]}
+    return {"loading": True, "name": name, "names": list(pre), "groups": {n: q.get("group", "기본") for n, q in pre.items()},
+            "rows": [], "conds": [cond_text(c) for c in pre[name]["conds"]]}
 
 
 def _refresh(market_db, name, state_dir, key, recent_min, limit) -> None:
@@ -253,13 +260,16 @@ def _scan(market_db, name, state_dir, key, recent_min, limit) -> dict:
     spec = pre[name]
     conds = spec["conds"]
     min_ok = spec.get("min_ok", max(1, len(conds) // 2))
+    groups = {n: p.get("group", "기본") for n, p in pre.items()}
+    from . import screens
+    need_feat = screens.uses_feat(conds)
     con = sqlite3.connect(f"file:{Path(market_db).as_posix()}?mode=ro", uri=True, timeout=10)
     try:
         last = con.execute("SELECT MAX(ts) FROM bars_1m").fetchone()[0]
         if not last:
             out = {"name": name, "label": spec.get("label", name), "desc": spec.get("desc", ""), "rows": [],
                    "conds": [cond_text(c) for c in conds], "pass_n": [0] * len(conds), "tested": 0, "min_ok": min_ok,
-                   "scanned": 0, "names": list(pre)}
+                   "scanned": 0, "names": list(pre), "groups": groups}
             _cache[key] = (time.time(), out)
             return out
         cand = [r[0] for r in con.execute(
@@ -272,17 +282,28 @@ def _scan(market_db, name, state_dir, key, recent_min, limit) -> dict:
             names = dict(con.execute("SELECT symbol, name FROM universe WHERE name IS NOT NULL ORDER BY snapshot_date"))
         except sqlite3.Error:
             names = {}
+        side = screens.load_side(con, cand) if need_feat else {}
         rows = []
         pass_n = [0] * len(conds)
         tested = 0
         for s in cand:
-            raw = con.execute("SELECT ts, open, high, low, close, volume FROM bars_1m WHERE symbol=? "
+            raw = con.execute("SELECT ts, open, high, low, close, volume, trade_date, session FROM bars_1m WHERE symbol=? "
                               "ORDER BY ts DESC LIMIT ?", (s, MAX_1M)).fetchall()
             if len(raw) < 30:
                 continue
             bars = [(_epoch_min(r[0]), r[1], r[2], r[3], r[4], r[5]) for r in reversed(raw)]
             dc = [r[0] for r in con.execute('SELECT close FROM daily_bars WHERE symbol=? ORDER BY d DESC LIMIT 30', (s,))][::-1]
-            res = check(bars, conds, vols.get(s), shares.get(s), dc)
+            feat = None
+            if need_feat:
+                std = raw[0][6]
+                day = [(r[0], r[7], r[1], r[2], r[3], r[4], r[5] or 0) for r in reversed(raw) if r[6] == std]
+                prior = con.execute("SELECT d, open, high, low, close, volume FROM daily_bars WHERE symbol=? AND d<? "
+                                    "ORDER BY d DESC LIMIT 260", (s, std)).fetchall()[::-1]
+                sd = dict(side.get(s) or {})
+                if any(c.get("k") == "spread" for c in conds):
+                    sd["spread"] = screens.live_spread(con, s, raw[0][0])
+                feat = screens.Feat(day, prior, shares.get(s), sd) if day else None
+            res = check(bars, conds, vols.get(s), shares.get(s), dc, feat)
             tested += 1
             for i, r in enumerate(res):
                 pass_n[i] += r is True
@@ -312,7 +333,8 @@ def _scan(market_db, name, state_dir, key, recent_min, limit) -> dict:
             r["chg"] = round((r["price"] / p - 1) * 100, 1) if p else None
         rows.sort(key=lambda r: (not r["full"], -r["ok"], -(r["day_vol"] or 0)))
         out = {"name": name, "label": spec.get("label", name), "desc": spec.get("desc", ""), "asof": last, "scanned": len(cand),
-               "conds": [cond_text(c) for c in conds], "pass_n": pass_n, "tested": tested, "min_ok": min_ok, "names": list(pre), "rows": rows[:limit]}
+               "conds": [cond_text(c) for c in conds], "pass_n": pass_n, "tested": tested, "min_ok": min_ok, "names": list(pre),
+               "groups": groups, "rows": rows[:limit]}
     finally:
         con.close()
     _cache[key] = (time.time(), out)

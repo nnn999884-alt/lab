@@ -689,7 +689,7 @@ class Handler(BaseHTTPRequestHandler):
             "/api/daily": lambda: d.daily(qs.get("s", "")[:12], n("n", 90)),
             "/api/precursor": lambda: __import__("pennybot.precursor", fromlist=["ranked"]).ranked(d.market_db, n("limit", 80), only_active=qs.get("all") != "1"),
             "/api/condscan": lambda: __import__("pennybot.condscan", fromlist=["scan"]).scan(
-                d.market_db, qs.get("n", "추세 돌파")[:20], d.cfg.state_dir),
+                d.market_db, qs.get("n", "추세 돌파")[:40], d.cfg.state_dir),
             "/api/dna": lambda: __import__("pennybot.dna", fromlist=["latest"]).latest(d.market_db),
             "/api/symbol": lambda: d.symbol(qs.get("s", "")[:12]),
             "/api/symbol_extra": lambda: d.symbol_extra(qs.get("s", "")[:12]),

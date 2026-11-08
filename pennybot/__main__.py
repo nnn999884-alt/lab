@@ -204,6 +204,19 @@ def cmd_rule_eval(cfg: Config, rule: str, freeze: str | None, since: str | None,
     print(ruleeval.text(ruleeval.evaluate(events, rule, freeze), rule, freeze))
 
 
+def cmd_screen_eval(cfg: Config, freeze: str | None, since: str | None, days: int, session: str | None) -> None:
+    """해외 스크리너 식(screens.py) 전부를 과거 터짐 순간에 걸어 비교 (읽기 전용)."""
+    from . import screens
+    freeze = freeze or "2026-11-04"
+    since = since or (datetime.now(timezone.utc) - timedelta(days=min(days, 120))).date().isoformat()
+    print(f"1분봉에서 터짐을 다시 뽑고 식 {len(screens.PRESETS)}개를 거는 중 ({since} 이후, 몇 분 걸림) ...", flush=True)
+    events = screens.extract(cfg.collector.db_path, since)
+    print(f"터짐 {len(events)}건\n")
+    for ses in ([session] if session else [None, "DAY", "PRE", "REGULAR", "AFTER"]):
+        print(screens.text(screens.evaluate_all(events, freeze, ses), freeze, ses))
+        print()
+
+
 def cmd_overnight(cfg: Config, since: str | None, days: int) -> None:
     """조용한 거래량 폭발 후보와 데이마켓 실제 가격 기준 결과 (읽기 전용)."""
     from . import overnight
@@ -682,10 +695,11 @@ def main() -> None:
                     choices=["check", "accounts", "collect", "summarize", "audit", "signal-audit", "alert-stats", "trade", "dashboard",
                              "probe-orders", "backtest", "research", "bigruns", "chart30", "trigger", "anatomy",
                              "telegram-setup", "tunnel", "screen", "run", "backfill-daily", "backfill-minutes",
-                             "vacuum-db", "rule-eval", "overnight", "halt-resume"])
+                             "vacuum-db", "rule-eval", "screen-eval", "overnight", "halt-resume"])
     ap.add_argument("--config", default="config.yaml")
     ap.add_argument("--rule", default="session-score", help="rule-eval: 검증할 규칙 이름 (ruleeval.RULES)")
     ap.add_argument("--freeze", help="rule-eval: 이 날(YYYY-MM-DD) 이후를 '한 번도 안 본 확인 기간'으로 (기본: 규칙별 고정일)")
+    ap.add_argument("--session", choices=["DAY", "PRE", "REGULAR", "AFTER"], help="screen-eval: 이 세션만 (기본: 전체 + 세션별)")
     ap.add_argument("--once", action="store_true", help="collect/run: 한 번만 실행")
     ap.add_argument("--date", help="summarize: 미국 영업일 YYYY-MM-DD")
     ap.add_argument("--port", type=int, default=8050, help="dashboard 포트")
@@ -762,6 +776,7 @@ def _dispatch(cfg, args) -> None:
         "signal-audit": lambda: cmd_signal_audit(cfg, args.days, args.gap_minutes, args.horizon),
         "alert-stats": lambda: cmd_alert_stats(cfg, args.days),
         "rule-eval": lambda: cmd_rule_eval(cfg, args.rule, args.freeze, args.since, args.days),
+        "screen-eval": lambda: cmd_screen_eval(cfg, args.freeze, args.since, args.days, args.session),
         "overnight": lambda: cmd_overnight(cfg, args.since, args.days),
         "halt-resume": lambda: cmd_halt_resume(cfg, args.since),
         "trade": lambda: cmd_trade(cfg, args.once),
