@@ -191,6 +191,17 @@ def cmd_alert_stats(cfg: Config, days: int) -> None:
     print(tradecost.text(tradecost.report(cfg.trading.db_path, db, days), days))
 
 
+def cmd_rank_train(cfg: Config) -> None:
+    """브리핑 순위 모델 지금 다시 학습 (수집기는 30일마다 알아서 한다)."""
+    from . import rankmodel
+    m = rankmodel.train(cfg.collector.db_path)
+    if not m:
+        print("학습 못 함 — scikit-learn 미설치(update.bat) 또는 일봉 데이터 부족")
+        return
+    print(f"학습 끝: {m['since']} ~ {m['through']} · {m['days']}일 · 종목·일 {m['rows']:,} (그날 +30% {m['pos']:,})")
+    print(rankmodel.check_text(m) or "지난 모델이 없어 실제 적중률은 다음 학습부터 나옵니다")
+
+
 def cmd_rule_eval(cfg: Config, rule: str, freeze: str | None, since: str | None, days: int) -> None:
     """알림 규칙 검증 (읽기 전용): 선택 기간 vs 한 번도 안 본 확인 기간, 적중률과 순수익을 같이."""
     from . import ruleeval
@@ -695,7 +706,7 @@ def main() -> None:
                     choices=["check", "accounts", "collect", "summarize", "audit", "signal-audit", "alert-stats", "trade", "dashboard",
                              "probe-orders", "backtest", "research", "bigruns", "chart30", "trigger", "anatomy",
                              "telegram-setup", "tunnel", "screen", "run", "backfill-daily", "backfill-minutes",
-                             "vacuum-db", "rule-eval", "screen-eval", "overnight", "halt-resume"])
+                             "vacuum-db", "rule-eval", "screen-eval", "overnight", "halt-resume", "rank-train"])
     ap.add_argument("--config", default="config.yaml")
     ap.add_argument("--rule", default="session-score", help="rule-eval: 검증할 규칙 이름 (ruleeval.RULES)")
     ap.add_argument("--freeze", help="rule-eval: 이 날(YYYY-MM-DD) 이후를 '한 번도 안 본 확인 기간'으로 (기본: 규칙별 고정일)")
@@ -775,6 +786,7 @@ def _dispatch(cfg, args) -> None:
         "audit": lambda: cmd_audit(cfg, args.days),
         "signal-audit": lambda: cmd_signal_audit(cfg, args.days, args.gap_minutes, args.horizon),
         "alert-stats": lambda: cmd_alert_stats(cfg, args.days),
+        "rank-train": lambda: cmd_rank_train(cfg),
         "rule-eval": lambda: cmd_rule_eval(cfg, args.rule, args.freeze, args.since, args.days),
         "screen-eval": lambda: cmd_screen_eval(cfg, args.freeze, args.since, args.days, args.session),
         "overnight": lambda: cmd_overnight(cfg, args.since, args.days),

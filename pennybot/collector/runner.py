@@ -369,6 +369,8 @@ class Collector:
                 self._run("halts", self.poll_halts)
         if c.precursor:
             self._run("precursor_daily", self.ensure_precursor_daily, trade_date, session)
+            if self._due("rank_model", now, timedelta(hours=6)):
+                self._run("rank_model", self.ensure_rank_model, now)
             if c.pre_open_watch and session == DAY:
                 self._run("pre_open", self.pre_open_watch, now, trade_date)
                 self._run("day_open", self.day_open_watch, now, trade_date)
@@ -1137,6 +1139,23 @@ class Collector:
                 log.debug("1분봉 저장 실패 %s: %s", sym, e)
         log.info("하루치 1분봉 저장 %s: %d/%d종목 (research.db)", d, n, len(syms))
         return n
+
+    def ensure_rank_model(self, now: datetime) -> bool:
+        """브리핑 순위 모델이 없거나 30일 지났으면 백그라운드로 다시 학습 (몇 분, 수집은 계속)."""
+        from .. import rankmodel
+        th = getattr(self, "_rank_thread", None)
+        if (th and th.is_alive()) or not rankmodel.needs_train(self.cfg.db_path, now):
+            return False
+        import threading
+
+        def job():
+            try:
+                rankmodel.train(self.cfg.db_path, now)
+            except Exception as e:
+                log.warning("브리핑 순위 모델 학습 실패: %s", e)
+        self._rank_thread = threading.Thread(target=job, name="rank_model", daemon=True)
+        self._rank_thread.start()
+        return True
 
     def ensure_precursor_daily(self, trade_date, session) -> None:
         """기준일 점수가 없으면 백그라운드로 전 종목 계산 (약 2,000번 일봉 조회 → 몇 분, 그동안 수집은 계속)."""

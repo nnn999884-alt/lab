@@ -41,13 +41,24 @@ def build(mq, market_db: str, rq=None, now: datetime | None = None) -> dict:
         import re
         strip_date = lambda s: re.sub(r" \d\d/\d\d(/\d\d)?$", "", s)
         rk = ranked(market_db, 300)
+        lab = {r["symbol"]: ([strip_date(t) for t in r.get("filing_tags") or []] + (r.get("patterns") or []) + r["labels"])[:4]
+               for r in rk.get("rows", [])}
         out["picks"] = [{"symbol": r["symbol"], "name": nm(r["symbol"]), "tier": r["tier"], "close": r["close"],
-                         "vol_ratio": r["metrics"].get("vol_ratio"),
-                         "labels": ([strip_date(t) for t in r.get("filing_tags") or []]
-                                    + (r.get("patterns") or []) + r["labels"])[:4]}
+                         "vol_ratio": r["metrics"].get("vol_ratio"), "labels": lab.get(r["symbol"], [])}
                         for r in rk.get("rows", []) if r["tier"] >= 2][:12]
     except Exception:
-        out["picks"] = []
+        lab, out["picks"] = {}, []
+    # 순위 모델이 있으면 그 순서로 (검증: 하루 12개 중 그날 고가 +30% — 예전 규칙 14~16% → 모델 20~23%)
+    if d0:
+        try:
+            from . import rankmodel
+            sc = rankmodel.score_today(mq, market_db, d0)
+            if sc:
+                out["picks"] = [dict(r, name=nm(r["symbol"]), labels=lab.get(r["symbol"], [])) for r in sc[:12]]
+                m = rankmodel.load(rankmodel.model_path(market_db)) or {}
+                out["model"] = {"through": m.get("through"), "check": rankmodel.check_text(m)}
+        except Exception:
+            pass
 
     since = (t.replace(hour=16, minute=0, second=0, microsecond=0) - timedelta(days=1 if t.hour < 16 else 0)).astimezone(timezone.utc).isoformat()
     nowp = {r["symbol"]: r["last"] for r in mq("SELECT symbol, last, MAX(ts) FROM rankings WHERE trade_date=? GROUP BY symbol", (out["date"],))}
@@ -107,8 +118,11 @@ def text(b: dict) -> str:
         L.append(f"\n📈 어제({b['d0']}) 급등")
         L += [f"• {m['symbol']} 고가 {m['high_chg']:+.0f}% · 종가 {m['chg']:+.0f}% · {money_s(m['dollar'])}" for m in b["movers"][:6]]
     if b.get("picks"):
-        L.append("\n⭐ 오늘 급등 후보")
-        L += [f"• {p['symbol']} {'★' * p['tier']} ${p['close']:.4g}" + (f" · 전날 거래량 {p['vol_ratio']:.0f}배" if p.get("vol_ratio") else "")
+        L.append("\n⭐ 오늘 급등 후보" + (" (+30% 갈 확률 순)" if b.get("model") else ""))
+        if (b.get("model") or {}).get("check"):
+            L.append("  " + b["model"]["check"])
+        L += [f"• {p['symbol']}" + (f" {p['prob']:.0f}%" if p.get("prob") is not None else "") + (f" {'★' * p['tier']}" if p.get("tier") else "")
+              + f" ${p['close']:.4g}" + (f" · 전날 거래량 {p['vol_ratio']:.0f}배" if p.get("vol_ratio") else "")
               + (f" · {' · '.join(p['labels'][:2])}" if p.get("labels") else "")
               for p in b["picks"][:8]]
     if b.get("near"):

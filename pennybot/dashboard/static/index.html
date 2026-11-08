@@ -2049,9 +2049,10 @@ async function loadBrief() {
   const line = (li, sym, mid, right, rc) => { li.append(mk("b", "mono", sym), mk("span", "br-m", mid), mk("span", "br-r mono " + (rc || ""), right)); };
   const nm1 = x => x.name ? x.name + " · " : "";
   sec(`어제${b.d0 ? " (" + b.d0.slice(5) + ")" : ""} 급등`, (b.movers || []).slice(0, 6), (li, m) => line(li, m.symbol, `${nm1(m)}종가 ${fmtPct(m.chg, 0)} · ${usdK(m.dollar)}`, "고가 " + fmtPct(m.high_chg, 0), "pos"), "+30% 넘은 종목 없음");
-  sec("오늘 급등 후보", (b.picks || []).slice(0, 6), (li, x) => line(li, x.symbol,
-    `${nm1(x)}$${fmtPx(x.close)}` + (x.vol_ratio ? ` · 거래량 ${x.vol_ratio.toFixed(0)}배` : "") + ((x.labels || []).length ? " · " + x.labels.slice(0, 3).join(" · ") : ""),
-    "★".repeat(x.tier), "gold"), "★★ 이상 없음");
+  sec(b.model ? "오늘 급등 후보 (+30% 확률 순)" : "오늘 급등 후보", (b.picks || []).slice(0, 6), (li, x) => { line(li, x.symbol,
+    `${nm1(x)}$${fmtPx(x.close)}` + (x.tier ? " " + "★".repeat(x.tier) : "") + (x.vol_ratio ? ` · 거래량 ${x.vol_ratio.toFixed(0)}배` : "") + ((x.labels || []).length ? " · " + x.labels.slice(0, 3).join(" · ") : ""),
+    x.prob != null ? Math.round(x.prob) + "%" : "★".repeat(x.tier), "gold");
+    if (x.prob != null) li.title = "그날 고가가 전날 종가 +30% 넘을 확률 (일봉 순위 모델, 30일마다 다시 학습)" + (b.model && b.model.check ? "\n" + b.model.check : ""); }, "후보 없음");
   sec("고점 재돌파 근접", (b.near || []).slice(0, 6), (li, x) => { line(li, x.symbol, `${nm1(x)}${x.days}일 전 +${Math.round(x.run_chg)}% · 고점 $${fmtPx(x.level)}`, fmtPct(x.dist, 0), x.dist <= 5 ? "pos" : ""); li.title = "최근 20거래일 +50% 급등주가 급등 뒤 최고가까지 남은 거리 (5% 안이면 그날 돌파 79%, 15% 안 + 거래 3배면 51%)"; }, "근접한 종목 없음");
   sec("오늘 액면병합", (b.splits || []).slice(0, 6), (li, s) => line(li, s.symbol, s.name || "", "", ""), "없음");
 }
