@@ -581,7 +581,7 @@ table.ca-tbl tr.off .ca-fill { opacity: .35; }
   #main-tabs, #side-tabs { display: none !important; }
   .m-tabs { display: flex; order: 0; position: sticky; top: 48px; z-index: 25; background: var(--bg); padding-top: 8px; margin: 0 -12px -1px; padding-left: 12px; padding-right: 12px; gap: 3px; }
   .m-tabs button { flex: 1; justify-content: center; padding: 9px 0; font-size: 13px; }
-  .det-wrap, .pre-wrap, .feed-wrap, .fil-wrap, .vs-wrap { order: 1 !important; border-top-left-radius: 0; border-top-right-radius: 0; }
+  .det-wrap, .pre-wrap, .dna-wrap, .feed-wrap, .fil-wrap, .vs-wrap { order: 1 !important; border-top-left-radius: 0; border-top-right-radius: 0; }
   /* 위 요약: 옆으로 넘기는 한 줄 */
   .kpis { display: flex; overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none; margin-bottom: 10px; }
   .kpis::-webkit-scrollbar, .ptabs::-webkit-scrollbar { display: none; }
@@ -612,6 +612,13 @@ table.ca-tbl tr.off .ca-fill { opacity: .35; }
   .kpis { margin-bottom: 6px; }
   .kpi { flex: 0 0 34%; padding: 7px 10px !important; }
   .kpi .k { font-size: 10.5px; } .kpi .v { font-size: 13px; } .kpi .n { display: none; }
+  /* 2026-11-08: 옆으로 밀어야 4번째 칸이 보이던 것 → 2줄 2칸으로 한눈에 */
+  .kpis { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); overflow: visible; scroll-snap-type: none; }
+  .kpi { flex: none; border-left: 1px solid var(--line-2) !important; border-top: 0 !important; }
+  .kpi:nth-child(odd) { border-left: 0 !important; } .kpi:nth-child(n+3) { border-top: 1px solid var(--line-2) !important; }
+  /* 한 탭에 패널 두 개를 쌓을 때 아래 패널 */
+  .feed-wrap { margin-top: 10px; border-radius: 8px !important; }
+  .home-cols .feed-wrap .pre-head h2 { display: flex; }   /* 탭 이름이 '알림' 이라 아래 패널엔 제목을 보임 */
   /* '지금 봇이 보는 것': 접어 두고 제목 누르면 펼침 */
   .pick-wrap { padding: 10px 12px !important; margin-bottom: 6px; }
   .pick-wrap h2 { margin: 0; cursor: pointer; font-size: 13.5px; }
@@ -696,7 +703,7 @@ table.ca-tbl tr.off .ca-fill { opacity: .35; }
     </details>
     <div class="home-cols">
     <div class="ptabs m-tabs" id="m-tabs" role="tablist">
-      <button data-p="det-wrap">감지</button><button data-p="pre-wrap">후보</button><button data-p="dna-wrap">이력</button><button data-p="feed-wrap">신호</button><button data-p="fil-wrap">공시</button><button data-p="vs-wrap">매매</button>
+      <button data-p="det-wrap feed-wrap">알림</button><button data-p="pre-wrap">후보</button><button data-p="dna-wrap">이력</button><button data-p="fil-wrap">공시</button>
     </div>
       <div class="home-main">
     <div class="ptabs" id="main-tabs" role="tablist">
@@ -1997,17 +2004,19 @@ function drawFilingsFeed(rows) {
 /* ---------- 패널 탭: 한 칸에 패널 하나씩 (선택은 이 기기에 기억) ---------- */
 // 넓은 화면 = 왼쪽·오른쪽 탭 두 묶음, 휴대폰 = 다섯 패널을 한 줄 탭으로
 const NARROW = matchMedia("(max-width: 700px)");
-const PT = { "main-tabs": "det-wrap", "side-tabs": "feed-wrap", "m-tabs": "det-wrap" };
+// 휴대폰 탭은 패널 여러 개를 위아래로 묶음 (2026-11-08: 6개 → 알림=감지+신호 · 후보 · 이력 · 공시, 모의매매는 아래 '매매' 메뉴에 있어 뺌)
+const PT = { "main-tabs": "det-wrap", "side-tabs": "feed-wrap", "m-tabs": "det-wrap feed-wrap" };
 try { for (const k in PT) PT[k] = localStorage.getItem("pt:" + k) || PT[k]; } catch (e) {}
+for (const k in PT) if (![...$(k).querySelectorAll("button")].some(b => b.dataset.p === PT[k])) PT[k] = $(k).querySelector("button").dataset.p;
 function applyTabs() {
   const groups = NARROW.matches ? ["m-tabs"] : ["main-tabs", "side-tabs"];
-  const on = new Set(groups.map(g => PT[g]));
+  const on = new Set(groups.flatMap(g => PT[g].split(" ")));
   ["det-wrap", "pre-wrap", "dna-wrap", "feed-wrap", "fil-wrap", "vs-wrap"].forEach(p => document.querySelector("." + p).classList.toggle("p-hide", !on.has(p)));
   for (const g in PT) $(g).querySelectorAll("button").forEach(b => b.setAttribute("aria-selected", b.dataset.p === PT[g]));
 }
 for (const g in PT) $(g).querySelectorAll("button").forEach(b => b.onclick = () => {
   PT[g] = b.dataset.p;
-  if (g === "m-tabs") { if (["det-wrap", "pre-wrap", "dna-wrap"].includes(b.dataset.p)) PT["main-tabs"] = b.dataset.p; else PT["side-tabs"] = b.dataset.p; }
+  if (g === "m-tabs") for (const x of b.dataset.p.split(" ")) { if (["det-wrap", "pre-wrap", "dna-wrap"].includes(x)) PT["main-tabs"] = x; else PT["side-tabs"] = x; }
   try { for (const k in PT) localStorage.setItem("pt:" + k, PT[k]); } catch (e) {}
   applyTabs();
   if (g === "m-tabs") window.scrollTo({ top: Math.min(window.scrollY, $("m-tabs").offsetTop - 56), behavior: "smooth" });
