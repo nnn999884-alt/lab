@@ -292,6 +292,49 @@ def early20_text(sym: str, name: str | None, chg: float, price: float | None, se
     ])
 
 
+# 🔥 데이·프리 점화 (2026-11-08): 그날 저점 뒤 처음 종가가 저점 +10% 인 1분봉 = '점화'.
+# 9/1~11/6 점화 1.7만 건 중 그날 그 뒤 고가 +50%↑ 더 간 비율 1.2%. 데이·프리 + $2 미만 + 점화 봉 몸통 +2.8%↑
+# + 점화까지 누적 대금 $1만↑ → 225건(하루 4.6건) 10.2% (10/19까지 9.9% · 10/20부터 10.4%).
+# 같은 종목을 점화 때 사서 고점 대비 −20% 에 팔면 비용 빼기 전부터 손해 → 알림만, 매매 연결 없음.
+IGN_UP_PCT = 10.0
+IGN_BODY_PCT = 2.8
+IGN_MAX_PX = 2.0
+IGN_MIN_DOLLAR = 1e4
+IGN_SESSIONS = ("DAY", "PRE")
+
+
+def day_ignition(bars: list[tuple]) -> dict | None:
+    """그날 첫 봉부터의 1분봉 (ts, o, h, l, c, v) → 첫 점화 {k, low, price, body, cum, pre60} 또는 None."""
+    lo, li, cum = float("inf"), -1, 0.0
+    for i, b in enumerate(bars):
+        cum += b[4] * b[5]
+        if b[3] < lo:
+            lo, li = b[3], i
+        if 0 < lo and i > li and b[4] >= lo * (1 + IGN_UP_PCT / 100):
+            return {"k": i, "low": lo, "price": b[4], "body": (b[4] / b[1] - 1) * 100 if b[1] else 0.0,
+                    "cum": cum, "pre60": sum(x[4] * x[5] for x in bars[max(0, i - 60):i])}
+    return None
+
+
+def ignition_ok(ig: dict | None, session: str) -> bool:
+    return bool(ig and session in IGN_SESSIONS and ig["price"] < IGN_MAX_PX
+                and ig["body"] >= IGN_BODY_PCT and ig["cum"] >= IGN_MIN_DOLLAR)
+
+
+def ignition_text(sym: str, name: str | None, ig: dict, pc: float | None, session_ko: str,
+                  shares: float | None = None) -> str:
+    from .trading.messages import money_s, pct, px
+    chg = f" (전날 대비 {pct((ig['price'] / pc - 1) * 100)})" if pc else ""
+    return "\n".join([
+        _head("🔥 데이·프리 점화", sym, name, f" · {session_ko}"),
+        f"💵 {px(ig['price'])}{chg} · 오늘 저점 {px(ig['low'])}에서 +{(ig['price'] / ig['low'] - 1) * 100:.0f}%"
+        f" · 1분봉 +{ig['body']:.1f}%",
+        f"점화 전 60분 대금 {money_s(ig['pre60'])} · 오늘 누적 {money_s(ig['cum'])}"
+        + (f" · 주식 {shares / 1e6:.1f}M" if shares else ""),
+        "이런 점화 10건 중 1건이 그날 +50% 이상 더 감 (검증 10%, 평소 1.2%) — 9건은 꺼짐. 매수 신호 아님",
+    ])
+
+
 EARLY_UP_PCT = 3.0        # 초기 경보: 10분 전 시가 대비 이만큼 오른 1분봉이 그날 처음
 EARLY_TURN_PCT = 0.05     # + 그 1분 회전율(거래량/발행주식) 이만큼 + 양봉
 EARLY_MIN_SCORE = 9       # 프리장은 전날 일봉 점수가 이 이상인 종목만, 아니면 1시간 안 공시·뉴스가 있어야

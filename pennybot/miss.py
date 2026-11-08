@@ -16,8 +16,8 @@ from zoneinfo import ZoneInfo
 ET = ZoneInfo("America/New_York")
 MIN_RUN = 30.0             # 하루 고가 +30% 이상 = 급등주
 ALERT_KINDS = ("fast", "spike_start", "burst", "precursor", "early_watch", "early20", "reaccel", "absorb", "approach",
-               "bottom_bounce", "day_gap", "slow_climb")
-KIND_KO = {"fast": "⚡빠른", "spike_start": "🚀시작", "day_gap": "🌙데이갭", "slow_climb": "🐢천천히", "burst": "📶터짐", "precursor": "🚨전조", "early_watch": "👀초기", "early20": "🌙+20%",
+               "bottom_bounce", "day_gap", "slow_climb", "ignition")
+KIND_KO = {"fast": "⚡빠른", "spike_start": "🚀시작", "day_gap": "🌙데이갭", "slow_climb": "🐢천천히", "ignition": "🔥점화", "burst": "📶터짐", "precursor": "🚨전조", "early_watch": "👀초기", "early20": "🌙+20%",
            "reaccel": "🔁재가속", "absorb": "🧲흡수", "approach": "🎯고점접근", "bottom_bounce": "🌊바닥반등"}
 SESS_KO = {"DAY": "데이", "PRE": "프리", "REGULAR": "정규", "AFTER": "애프터"}
 VERDICT_KO = {"early": "빨리", "mid": "중간", "late": "늦게", "miss": "놓침"}

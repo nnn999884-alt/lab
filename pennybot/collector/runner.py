@@ -555,6 +555,68 @@ class Collector:
                     self._promote(r["symbol"], now)
                     self._watch_now([r["symbol"]])
                     self._spike_start_alert(now, session, r["symbol"], r["last"], chg, d)
+        if session in (DAY, PRE):
+            self._ignition_scan(now, trade_date, session, rows, prev)
+
+    # 🔥 데이·프리 점화 (2026-11-08) — 기준은 precursor.IGN_*. 하루 상위 종목 중 데이·이른 프리에 점화한 것(OMH·VIVK·SDA)은
+    # 기존 알림이 166~806분 늦었다. 전 종목 현재가(20초 조회)로 그날 저점을 따라가다 +10% 넘고 1분 +2%↑ 면 1분봉으로 확인.
+    IGN_POLL_UP = 2.0
+
+    def _ignition_scan(self, now, trade_date, session, rows, prev) -> None:
+        from ..precursor import IGN_MAX_PX, IGN_UP_PCT
+        st = getattr(self, "_ign", None)
+        if st is None or st[0] != trade_date:
+            st = self._ign = (trade_date, {}, set(), {})      # (거래일, 조회 저점, 판정 끝난 종목, 다음 확인 시각)
+        _, low, done, nxt = st
+        for r in rows:
+            s, p = r["symbol"], r["last"]
+            if not p or s in done:
+                continue
+            lo = low.get(s)
+            if lo is None or p < lo:
+                low[s] = p
+                continue
+            a = prev.get(s)
+            if p >= IGN_MAX_PX or p < lo * (1 + IGN_UP_PCT / 100) or not a or (p / a - 1) * 100 < self.IGN_POLL_UP:
+                continue
+            if s in nxt and nxt[s] > now:
+                continue
+            nxt[s] = now + timedelta(minutes=2)
+            try:
+                self._ignition_check(now, trade_date, session, s)
+            except Exception as e:
+                log.debug("점화 확인 실패 %s: %s", s, e)
+
+    def _ignition_check(self, now, trade_date, session, sym) -> bool:
+        """1분봉으로 그날 첫 점화를 찾아 최근 3분 안이고 기준을 넘으면 알림. 점화를 찾으면 결과와 상관없이 그날 판정 끝."""
+        from ..precursor import day_ignition, ignition_ok, ignition_text
+        from ..trading.strategies import SESSION_KO
+        b = self.cal.bounds(trade_date, DAY)
+        start = iso(b[0]) if b else iso(now - timedelta(hours=12))
+        cs = (self.c.candles(sym, "1m", 200) or {}).get("candles", [])
+        recent = sorted((iso(datetime.fromisoformat(cd["timestamp"].replace("Z", "+00:00"))), float(cd["openPrice"]),
+                         float(cd["highPrice"]), float(cd["lowPrice"]), float(cd["closePrice"]), float(cd["volume"]))
+                        for cd in cs)
+        today = self._day_bars(sym, [x for x in recent if x[0] >= start], start)
+        ig = day_ignition(today)
+        if not ig:
+            return False                                  # 조회 저점이 실제보다 높았던 것 — 2분 뒤 다시
+        st = getattr(self, "_ign", None)
+        if st and st[0] == trade_date:
+            st[2].add(sym)
+        if ig["k"] < len(today) - 3 or not ignition_ok(ig, session):
+            return False                                  # 이미 지난 점화(늦음)거나 기준 미달
+        pc = self._prev_close(sym)
+        sh = (self.store.query("SELECT shares FROM stock_info WHERE symbol=?", (sym,)) or [[None]])[0][0]
+        chg = (ig["price"] / pc - 1) * 100 if pc else None
+        self._event(now, sym, "ignition", f"🔥 {sym} 데이·프리 점화 ${ig['price']:.4g} (저점 대비 +{(ig['price'] / ig['low'] - 1) * 100:.0f}%"
+                    f" · 1분봉 +{ig['body']:.1f}% · 누적 ${ig['cum'] / 1e3:.0f}K)", chg)
+        self._watch_now([sym])
+        if self.notifier and self._on("ignition"):
+            self.notifier.send(ignition_text(sym, (self.universe.get(sym) or {}).get("name"), ig, pc,
+                                             SESSION_KO.get(session, session), sh))
+        log.info("데이·프리 점화 %s $%.4g 저점 $%.4g 몸통 %+.1f%% 누적 $%.0f", sym, ig["price"], ig["low"], ig["body"], ig["cum"])
+        return True
 
     # 🚀 급등 시작 (2026-11-07): '1분새 +4%' 기록(spike_up) 중 아직 전날 대비 +10% 전이고 거래가 붙은 것만 알림.
     # 10/26~11/06 spike_up 첫 건 검증 — 2분 대금 $20만↑: 1시간 안 +10% 먼저 44%·−5% 먼저 17% (앞 50/17, 뒤 40/17),

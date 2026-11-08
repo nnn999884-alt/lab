@@ -7,7 +7,7 @@ from pathlib import Path
 
 DEFAULTS = {
     "strategies": {"S1": True, "S2": True, "S3": True, "S4": True, "S5": True, "S6": True},
-    "alerts": {"presurge": True, "burst": True, "early20": True, "after_move": True, "bottom_bounce": True, "steady": False, "halt": True, "pre_open": True, "vtrade": True, "briefing": True, "perf": True, "reaccel": True, "approach": True, "early_watch": True, "absorb": True, "dna": True, "fast": True, "miss": True, "spike_start": True, "day_open": True, "slow_climb": True},
+    "alerts": {"presurge": True, "burst": True, "early20": True, "after_move": True, "bottom_bounce": True, "steady": False, "halt": True, "pre_open": True, "vtrade": True, "briefing": True, "perf": True, "reaccel": True, "approach": True, "early_watch": True, "absorb": True, "dna": True, "fast": True, "miss": True, "spike_start": True, "day_open": True, "slow_climb": True, "ignition": True},
     "realtime": True,
     "vaccount": {"capital": 10000, "per_trade": 1000},
 }
@@ -23,7 +23,8 @@ ALERT_KO = {"presurge": "🚨 급등 전조", "burst": "📶 거래 터짐 신�
             "miss": "📝 놓친 급등주 복기 (장 끝나고 하루 한 번 · +30% 간 종목을 빨리·늦게·놓침으로)",
             "spike_start": "🚀 급등 시작 (1분새 +4%, 아직 전날 대비 +10% 전 · 거래 붙음)",
             "day_open": "🌙 데이마켓 개장 갭 상승 목록 (20:30 ET 한 번 · 추격 금지)",
-            "slow_climb": "🐢 천천히 오름 (1분 급등 없이 +20% 넘음 · 오늘 대금 $100만↑ · 감시용)"}
+            "slow_climb": "🐢 천천히 오름 (1분 급등 없이 +20% 넘음 · 오늘 대금 $100만↑ · 감시용)",
+            "ignition": "🔥 데이·프리 점화 (저점 +10% · 1분봉 +2.8% · $2 미만 · 그날 +50% 더 감 10% · 매수 신호 아님)"}
 
 
 def path(state_dir: str) -> Path:
