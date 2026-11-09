@@ -14,6 +14,7 @@ import json
 import logging
 import sqlite3
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -91,7 +92,14 @@ class Data:
         trade_date, session = self.cal.classify(now)
         if age is not None and age < 120 and info.get("session"):
             session, trade_date = info["session"], info.get("trade_date")
-        last_price = self.m("SELECT MAX(ts) AS ts FROM prices")
+        # 11/09: MAX(ts) 를 테이블 전체로 구하면 2초 (ts 인덱스 없음) — 화면마다 3초씩 불러 대시보드가 밀림.
+        # 최근 거래일만 보고(0.3초) 15초 캐시.
+        lp = getattr(self, "_lp", None)
+        if lp and time.monotonic() - lp[0] < 15:
+            last_price = lp[1]
+        else:
+            last_price = self.m("SELECT MAX(ts) AS ts FROM prices WHERE trade_date=(SELECT MAX(trade_date) FROM prices)")
+            self._lp = (time.monotonic(), last_price)
         eq = self.t("SELECT * FROM equity ORDER BY ts DESC LIMIT 1")
         ctl = self.control.load()
         nxt = self.cal.next_change(now)
@@ -187,10 +195,15 @@ class Data:
         return (lambda sql, args=(): self._q(str(rp), sql, args)) if rp.exists() else None
 
     def _names(self) -> dict:
-        """symbol → 종목명 (종목 정보 → 지난 유니버스 → 최신 유니버스 순으로 덮어써서, 유니버스에서 빠진 종목도 이름이 나오게)."""
+        """symbol → 종목명 (종목 정보 → 지난 유니버스 → 최신 유니버스 순으로 덮어써서, 유니버스에서 빠진 종목도 이름이 나오게).
+        5분 캐시 (11/09: 보유·체결·신호·이벤트 화면이 3초마다 4만 줄을 새로 읽어 대시보드가 밀림)."""
+        c = getattr(self, "_names_c", None)
+        if c and time.monotonic() - c[0] < 300:
+            return c[1]
         names = {r["symbol"]: r["name"] for r in self.m("SELECT symbol, name FROM stock_info WHERE name IS NOT NULL AND name != ''")}
         names.update({r["symbol"]: r["name"] for r in self.m(
             "SELECT symbol, name FROM universe WHERE name IS NOT NULL ORDER BY snapshot_date")})
+        self._names_c = (time.monotonic(), names)
         return names
 
     def detections(self, hours: int = 36) -> dict:
@@ -208,15 +221,17 @@ class Data:
         return {"rows": out, "stats": self.detection_stats()}
 
     def briefing(self) -> dict:
-        """홈 '오늘 브리핑' (1분 캐시)."""
-        import time
-        from .. import briefing
-        c = getattr(self, "_brief", None)
-        if c and time.time() - c[0] < 60:
-            return c[1]
-        b = briefing.build(self.m, self.market_db, self._rq())
-        self._brief = (time.time(), b)
-        return b
+        """홈 '오늘 브리핑': 뒤에서 1분에 한 번만 계산하고 요청은 기다리지 않음.
+        (11/09: 계산 10초+ 인데 화면이 3초마다 요청 → 캐시가 차기 전에 계산이 계속 겹쳐 스레드 90개·대시보드 전체 수십 초)
+        첫 계산이 끝나기 전엔 수집기가 03:45 ET 에 남긴 state/briefing.json."""
+        from .. import briefing, rankmodel
+        b = rankmodel.background("briefing", (self.market_db,), lambda: briefing.build(self.m, self.market_db, self._rq()), 60)
+        if b:
+            return b
+        try:
+            return json.loads((Path(self.cfg.state_dir) / "briefing.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return _shared("briefing-first", 60, lambda: briefing.build(self.m, self.market_db, self._rq()))
 
     def account(self) -> dict:
         """수집기가 10초마다 남기는 토스 실제 계좌 (state/account.json)."""
@@ -664,6 +679,8 @@ class Handler(BaseHTTPRequestHandler):
             return
         u = urlparse(self.path)
         qs = {k: v[0] for k, v in parse_qs(u.query).items()}
+        if u.path == "/api/live":
+            return self._live_stream()
         n = lambda k, d: max(1, min(int(qs.get(k, d)), 1000))
         d = self.data
         routes = {
@@ -720,6 +737,53 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             return self.wfile.write(body)
         self._json({"error": "not found"}, 404)
+
+    LIVE_EVERY = 1.0
+    LIVE_MAX_SEC = 600            # 한 연결 최대 10분 (브라우저가 알아서 다시 붙음 — 끊긴 연결이 스레드를 붙잡지 않게)
+
+    def _live_stream(self):
+        """실시간 가격 밀어 주기 (11/09): 웹소켓 체결가(live_tick, 수집기가 1초마다)·전 종목 3초 훑기(price_now) 중
+        지난번 보낸 뒤 바뀐 것만 1초마다 {종목: [가격, 시각]} 로. 화면은 받은 즉시 현재가·등락률·순서를 고친다."""
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Accel-Buffering", "no")
+        self.end_headers()
+        db = self.data.market_db
+        last: dict = {}
+        since = (datetime.now(timezone.utc) - timedelta(seconds=60)).isoformat()
+        t_end = time.monotonic() + self.LIVE_MAX_SEC
+        try:
+            while time.monotonic() < t_end:
+                t0 = time.monotonic()
+                out: dict = {}
+                try:
+                    con = sqlite3.connect(ro_uri(db), uri=True)
+                    try:
+                        for tbl in ("price_now", "live_tick"):
+                            try:
+                                for s_, ts_, px_ in con.execute(f"SELECT symbol, ts, last FROM {tbl} WHERE ts >= ? AND last > 0", (since,)):
+                                    if ts_ > (last.get(s_) or ("",))[0] and ts_ > (out.get(s_) or ("",))[0]:
+                                        out[s_] = (ts_, px_)
+                            except sqlite3.OperationalError:
+                                pass
+                    finally:
+                        con.close()
+                except sqlite3.Error:
+                    pass
+                since = (datetime.now(timezone.utc) - timedelta(seconds=10)).isoformat()
+                sent = {k: v for k, v in out.items() if (last.get(k) or (None, None))[1] != v[1]}   # 가격이 실제로 바뀐 것만
+                last.update(out)
+                out = sent
+                if out:
+                    msg = json.dumps({k: [v[1], v[0]] for k, v in out.items()}, separators=(",", ":"))
+                    self.wfile.write(f"data: {msg}\n\n".encode("utf-8"))
+                else:
+                    self.wfile.write(b": ping\n\n")
+                self.wfile.flush()
+                time.sleep(max(0.05, self.LIVE_EVERY - (time.monotonic() - t0)))
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError, OSError):
+            return
 
     def do_POST(self):
         if not self._authorized():

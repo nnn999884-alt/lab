@@ -746,3 +746,39 @@ def intra_probs(market_db: str, d0: str | None, d: str | None, now: datetime | N
 def live_probs(market_db: str, d0: str | None, d: str | None, now: datetime | None = None) -> dict[str, float]:
     """'지금가보다 +20% 더' 확률: 장중(04:00~15:30 ET)엔 장중 모델, 그 전 03:45 뒤엔 새벽 모델. 없으면 {}."""
     return intra_probs(market_db, d0, d, now) or night_probs(market_db, d0, d, now)
+
+
+# ---------------------------------------------------------------- 화면용: 기다리지 않고 바로
+import threading as _th
+import time as _time
+_BG_LOCK = _th.Lock()
+_BG: dict = {}
+
+
+def background(name: str, args: tuple, fn, max_age: float = 60.0) -> dict:
+    """fn() 결과를 뒤에서 계산해 두고 바로 돌려준다 (대시보드 요청이 모델 계산 3~10초를 기다리지 않게).
+    같은 args 로 max_age 초 안에 계산한 값이 있으면 그것, 없으면 계산을 하나만 띄우고 지금 있는 값
+    (같은 args 의 지난 값, 없으면 {})을 바로 돌려준다. 동시에 요청이 몰려도 계산은 한 번만 돈다 (11/09: 46초 → 즉시)."""
+    with _BG_LOCK:
+        e = _BG.get(name)
+        if e and e["args"] == args and _time.time() - e["t"] < max_age:
+            return e["val"]
+        cur = e["val"] if e and e["args"] == args else {}
+        if e and e.get("busy"):
+            return cur
+        e = _BG[name] = {"args": args, "t": e["t"] if e and e["args"] == args else 0.0, "val": cur, "busy": True}
+
+    def run():
+        try:
+            v = fn()
+        except Exception as ex:
+            log.warning("%s 계산 실패: %s", name, ex)
+            v = None
+        with _BG_LOCK:
+            e2 = _BG.get(name)
+            if e2 is e:
+                e["busy"] = False
+                if v is not None:
+                    e["val"], e["t"] = v, _time.time()
+    _th.Thread(target=run, name=f"bg-{name}", daemon=True).start()
+    return cur

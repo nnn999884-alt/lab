@@ -411,6 +411,8 @@ class Collector:
             threading.Thread(target=self._stall_watch, name="stall-watchdog", daemon=True).start()
         if self.cfg.fast_scan_seconds and self.cfg.precursor:
             threading.Thread(target=self._fast_loop, name="rank-scan", daemon=True).start()
+        if getattr(self.cfg, "price_sweep_seconds", 0) and self.cfg.precursor:
+            threading.Thread(target=self._sweep_loop, name="price-sweep", daemon=True).start()
         if self.cfg.realtime_alerts and self.cfg.precursor:
             from .. import stream
             if stream.available():
@@ -533,8 +535,10 @@ class Collector:
         self.store.put_prices(rows)
         from ..trading.strategies import SESSION_KO
         if session in (PRE, REGULAR):
-            for r in rows:
-                self._slow_climb_check(now, trade_date, session, r["symbol"], r["last"], prev.get(r["symbol"]))
+            self._pc_refresh()
+            for r in rows:                              # 메모리 비교만 — 넘은 종목만 큐로 (API·알림은 실시간 작업 스레드)
+                if self._slow_cross(trade_date, r["symbol"], r["last"], prev.get(r["symbol"])):
+                    self._rt_q.put(("slow", r["symbol"], r["last"], trade_date, session))
         for r in rows:
             a = prev.get(r["symbol"])
             if a and a >= 0.05 and r["last"]:            # 11/07: 0.2→0.05 (RBNE $0.14 +130% 를 아예 못 봄)
@@ -634,11 +638,28 @@ class Collector:
     SPIKE_SMALL_SHARES = 2e7
     SPIKE_SMALL_DOLLAR = 5e4
 
-    def _prev_close(self, sym: str) -> float | None:
-        c = getattr(self, "_pc_cache", None)
+    def _pc_refresh(self) -> None:
+        """전날 종가 표 갱신 — 메인 스레드에서만, 10분에 한 번 '최근 일봉 날짜'(MAX(d), 0.1초)를 물어 바뀌었으면 다시 읽음.
+        (2026-11-09: 종목마다 MAX(d) 를 물어 프리·정규장 가격 폴링 한 바퀴가 4분 → 메인 루프가 멈춘 것처럼 됨)"""
+        t = time.monotonic()
+        dq = getattr(self, "_pc_d0", None)
+        if dq and t - dq[1] < 600 and getattr(self, "_pc_cache", None):
+            return
         d0 = (self.store.query("SELECT MAX(d) FROM daily_bars") or [[None]])[0][0]
+        self._pc_d0 = (d0, t)
+        c = getattr(self, "_pc_cache", None)
         if not c or c[0] != d0:
-            c = self._pc_cache = (d0, dict(self.store.query("SELECT symbol, close FROM daily_bars WHERE d=? AND close>0", (d0,))))
+            self._pc_cache = (d0, dict(self.store.query("SELECT symbol, close FROM daily_bars WHERE d=? AND close>0", (d0,))))
+
+    def _prev_close(self, sym: str) -> float | None:
+        """메모리 표만 본다 (DB 안 씀 — 웹소켓·실시간 작업 스레드에서도 부름). 표가 아직 없으면 메인 스레드에서만 채움."""
+        c = getattr(self, "_pc_cache", None)
+        if not c:
+            import threading
+            if threading.current_thread() is not threading.main_thread():
+                return None
+            self._pc_refresh()
+            c = self._pc_cache
         return c[1].get(sym)
 
     def _spike_start_alert(self, now, session, sym, price, chg1, dollar2) -> bool:
@@ -676,19 +697,37 @@ class Collector:
     SLOW_MIN_DOLLAR = 1e6
 
     def _slow_climb_check(self, now, trade_date, session, sym, last, prev1) -> bool:
+        """넘는 순간 판단 + 확인을 한 번에 (테스트·동기 호출용). 수집기는 둘을 나눠 쓴다."""
+        return self._slow_cross(trade_date, sym, last, prev1) and self._slow_confirm(now, trade_date, session, sym, last, None)
+
+    def _slow_cross(self, trade_date, sym, last, prev1) -> bool:
+        """전날 대비 +20% 를 '지금 처음' 넘었나 — 메모리만 본다 (DB·API 없음). 가격 폴링(전 종목 20초)과
+        웹소켓 체결(구독 종목, 즉시) 양쪽에서 부르므로 하루 한 번 판단은 잠금으로 지킨다."""
         pc = self._prev_close(sym)
         if not pc or not last or last < pc * (1 + self.SLOW_CHG / 100):
             return False
-        sent = getattr(self, "_slow_sent", None)
-        if sent is None:
-            sent = self._slow_sent = {}
-        if sent.get(sym) == trade_date:
-            return False
-        sent[sym] = trade_date                           # 오늘은 한 번만 판단 (넘은 첫 순간)
+        lk = getattr(self, "_slow_lock", None)
+        if lk is None:
+            import threading
+            lk = self._slow_lock = threading.Lock()
+        with lk:
+            sent = getattr(self, "_slow_sent", None)
+            if sent is None:
+                sent = self._slow_sent = {}
+            if sent.get(sym) == trade_date:
+                return False
+            sent[sym] = trade_date                       # 오늘은 한 번만 판단 (넘은 첫 순간)
         if not prev1 or prev1 >= pc * (1 + self.SLOW_CHG / 100):
             return False                                 # 이미 넘어 있던 것(재시작 직후 등)은 '넘는 순간'이 아님
         if (last / prev1 - 1) * 100 >= 4:
             return False                                 # 1분 급등으로 넘은 것 = 급등 알림 쪽
+        return True
+
+    def _slow_confirm(self, now, trade_date, session, sym, last, store=None) -> bool:
+        """넘은 종목만: 오늘 거래대금 $100만↑ 인지 1분봉으로 확인하고 알림 (실시간 작업 스레드에서)."""
+        pc = self._prev_close(sym)
+        if not pc:
+            return False
         b = self.cal.bounds(trade_date, DAY)
         start = b[0] if b else now - timedelta(hours=12)
         try:
@@ -703,8 +742,8 @@ class Collector:
         from ..trading.strategies import SESSION_KO
         chg = (last / pc - 1) * 100
         name = (self.universe.get(sym) or {}).get("name") or ""
-        self._event(now, sym, "slow_climb", f"🐢 {sym} 천천히 오름 {chg:+.0f}% (오늘 {money_s(dol)})", chg)
-        self._watch_now([sym])
+        self._event(now, sym, "slow_climb", f"🐢 {sym} 천천히 오름 {chg:+.0f}% (오늘 {money_s(dol)})", chg, store=store)
+        self._watch_now([sym], store=store)
         if self.notifier and self._on("slow_climb"):
             self.notifier.send("\n".join([
                 f"🐢 천천히 오름 · {sym}" + (f"({name})" if name else "") + f" · {SESSION_KO.get(session, session)}",
@@ -1743,11 +1782,16 @@ class Collector:
         # (11/07: 하루 동안 순위에 든 종목이 87~123개라 70칸을 넘는데 순서 없는 set 이라 방금 뜬 종목이 잘릴 수 있었음)
         seen = getattr(self, "_fast_seen", None) or {}
         cut = time.time() - 1800
-        recent = sorted((s for s in hot if seen.get(s, 0) >= cut), key=lambda s: -seen.get(s, 0))
-        stale = [s for s in hot if seen.get(s, 0) < cut]
         # 지금 실시간 체결이 붙는 종목(최근 5분 웹소켓 대금 $2만↑, 큰 순)은 계속 앞에, 식은 종목은 뒤로 → 칸 밖이면 1분 조회(REST)로
         m = int(time.time() // 60)
         act = {s: sum(v for k, v in d.items() if k >= m - 4) for s, d in list(self._rt_dmin.items())}
+        # 11/09: 잡힌 지 2분 넘었는데 웹소켓 대금 $5천도 안 붙은 종목은 '최근'에서 빼서 칸을 비운다 (다시 움직이면 다시 앞으로)
+        trial = time.time() - getattr(self, "RT_TRIAL_SEC", 120)
+        min_d = getattr(self, "RT_TRIAL_MIN_DOLLAR", 5e3)
+        recent = sorted((s for s in hot if seen.get(s, 0) >= cut and (seen.get(s, 0) >= trial or act.get(s, 0) >= min_d)),
+                        key=lambda s: -seen.get(s, 0))
+        rset = set(recent)
+        stale = [s for s in hot if s not in rset]
         active = sorted((s for s, v in act.items() if v >= 2e4), key=lambda s: -act[s])
         quiet = {s for s in self._rt_syms if act.get(s, 0) < 2e4}
         dna = self._dna[1][:getattr(self.cfg, "dna_rt_max", 20)]
@@ -1896,6 +1940,9 @@ class Collector:
                     self._rt_q.put(("approach", sym, price, stage, d60))
                     break
         self._fast_check(sym, t, price, w, mins, m)
+        ls = getattr(self, "_last_session", None)
+        if ls and ls[1] in (PRE, REGULAR) and self._slow_cross(ls[0], sym, price, w[0][1]):
+            self._rt_q.put(("slow", sym, price, ls[0], ls[1]))
         if t - self._rt_fired.get(sym, 0) < getattr(self.cfg, "rt_cooldown_seconds", 600) \
                 or not self._settings.get().get("realtime", True):
             return
@@ -1998,7 +2045,7 @@ class Collector:
         self._rt_shares = dict(store.query("SELECT symbol, shares FROM stock_info WHERE shares > 0"))
         last_refresh = 0.0
         while True:
-            if self._rt_px and time.time() - self._rt_flush >= 3:
+            if self._rt_px and time.time() - self._rt_flush >= 1:      # 대시보드 실시간 가격 (11/09: 3초 → 1초)
                 try:
                     acc, self._rt_acc = self._rt_acc, {}
                     w60 = win60(self._rt_win, time.time())
@@ -2026,7 +2073,7 @@ class Collector:
                 self._vopen_refresh(store)
                 last_refresh = time.time()
             try:
-                job = self._rt_q.get(timeout=5)
+                job = self._rt_q.get(timeout=0.5)
             except queue.Empty:
                 continue
             try:
@@ -2044,6 +2091,8 @@ class Collector:
                     self._absorb_alert(store, job[1], job[2])
                 elif job[0] == "fast":
                     self._fast_alert(store, *job[1:])
+                elif job[0] == "slow":
+                    self._slow_confirm(self.clock(), job[3], job[4], job[1], job[2], store)
                 else:
                     self._rt_alert(store, *job[1:])
             except Exception as e:
@@ -2281,6 +2330,94 @@ class Collector:
             except Exception as e:
                 log.warning("랭킹 훑기 실패: %s", str(e)[:160])
             time.sleep(max(1.0, self.cfg.fast_scan_seconds - (time.time() - t0)))
+
+    # 전 종목 현재가 따로 훑기 (2026-11-09): 메인 루프의 가격 폴링은 다른 일과 같이 돌아 실제 20~60초 간격이었음.
+    # 이 스레드는 현재가만 3초마다 받아(약 2,900종목 = 15번 묶음 조회) 움직이기 시작한 종목을 바로 웹소켓 구독에 올린다.
+    # 구독(70칸)에 들어가면 그 뒤로는 체결마다 실시간 판단(급등·점화·천천히 오름·가상 매매).
+    SWEEP_UP = 3.0          # 약 1분 전보다 +3% (막 움직이기 시작)
+    SWEEP_MIN_PX = 0.05
+    SWEEP_CONFIRM_SEC = 20  # +3% 가 처음 보인 뒤 이 안의 다음 훑기에서도 유지돼야 구독 (11/09: 몇 주 체결로 튄 가격이 칸을 차지)
+    RT_TRIAL_SEC = 120      # 구독에 올린 뒤 이 시간 안에 웹소켓 대금이 RT_TRIAL_MIN_DOLLAR 도 안 붙으면 뒤로 (칸 비우기)
+    RT_TRIAL_MIN_DOLLAR = 5e3
+
+    def _sweep_loop(self) -> None:
+        store = Store(self.cfg.db_path)                  # 스레드 전용 연결
+        while True:
+            t0 = time.time()
+            try:
+                now = self.clock()
+                trade_date, session = self.cal.classify(now)
+                if session in (DAY, PRE, REGULAR) and self.universe:
+                    self.price_sweep(now, trade_date, session, store)
+            except Exception as e:
+                log.warning("현재가 훑기 실패: %s", str(e)[:160])
+            time.sleep(max(0.5, self.cfg.price_sweep_seconds - (time.time() - t0)))
+
+    def price_sweep(self, now: datetime, trade_date, session: str, store=None, prices=None) -> list[str]:
+        """전 종목 현재가 → 약 1분 전보다 +3% 이거나 전날 대비 +20% 를 막 넘은(천천히 오름) 종목 중 구독 안 한 것 → 실시간 구독.
+        → 새로 올린 종목. 판단은 메모리만, 천천히 오름 확인(1분봉 API·알림)은 실시간 작업 큐로."""
+        store = store or self.store
+        t = time.time()
+        ps = prices if prices is not None else self.c.prices(sorted(self.universe))
+        cur = {p["symbol"]: float(p["lastPrice"]) for p in ps if p.get("lastPrice")}
+        if prices is None and cur:                       # 대시보드 등락률용 지금 가격 (3초마다)
+            try:
+                ts_ = iso(now)
+                store.put_price_now([{"symbol": k, "ts": ts_, "last": v} for k, v in cur.items()])
+            except Exception as e:
+                log.debug("price_now 기록 실패: %s", e)
+        hist = getattr(self, "_sweep_hist", None)
+        if hist is None:
+            hist = self._sweep_hist = []
+        old = [h for h in hist if t - h[0] >= 50]
+        base = old[-1][1] if old else (hist[0][1] if hist else {})
+        if old:
+            del hist[:len(old) - 1]
+        hist.append((t, cur))
+        pend = getattr(self, "_sweep_pend", None)
+        if pend is None:
+            pend = self._sweep_pend = {}
+        for s in [s for s, f in pend.items() if t - f[0] > self.SWEEP_CONFIRM_SEC]:
+            del pend[s]
+        movers = []
+        for s, px in cur.items():
+            a = base.get(s)
+            if not a or px < self.SWEEP_MIN_PX:
+                continue
+            if session in (PRE, REGULAR) and self._slow_cross(trade_date, s, px, a):
+                self._rt_q.put(("slow", s, px, trade_date, session))
+                movers.append(s)
+            elif (px / a - 1) * 100 >= self.SWEEP_UP:
+                f = pend.get(s)
+                if f and t - f[0] >= 1 and px >= f[1] * 0.99:      # 다음 훑기에서도 그 가격 유지 → 진짜 움직임
+                    pend.pop(s, None)
+                    movers.append(s)
+                elif not f:
+                    pend[s] = (t, px)
+                elif px < f[1] * 0.99:                             # 바로 되돌아감 → 체결 한 번에 튄 것
+                    pend.pop(s, None)
+            elif s in pend:                                        # +3% 아래로 되돌아감 → 체결 한 번에 튄 것
+                del pend[s]
+        new = [s for s in movers if s not in self._rt_syms]
+        if not new:
+            return []
+        seen = getattr(self, "_fast_seen", None)
+        if seen is None:
+            seen = self._fast_seen = {}
+        for s in new:
+            seen[s] = t                                  # 구독 순서 맨 앞 (방금 본 종목)
+            self._fast_hot[1].add(s)
+            self._promote(s, now)
+        self._rt_set(list(self._rt_syms))
+        d0 = store.query("SELECT MAX(d0) FROM precursor_daily")
+        d0 = d0[0][0] if d0 else None
+        for s in new:                                    # 1분 감시·가상 매매용 일봉 점수 (없으면)
+            if d0 and not store.query("SELECT 1 FROM precursor_daily WHERE d0=? AND symbol=?", (d0, s)):
+                row = self._precursor_row(s, d0, store, src="fast")
+                if row:
+                    store.put_precursor_daily([row])
+        log.info("현재가 훑기: 움직이기 시작 → 실시간 구독 %s", ", ".join(new[:10]))
+        return new
 
     def fast_scan(self, now: datetime, trade_date, session: str, store=None) -> list[str]:
         """거래대금·거래량 실시간 랭킹(시장·토스) 상위에 있는데 아직 구독 안 한 유니버스 종목 → 실시간 구독에 넣는다. → 새로 넣은 종목."""

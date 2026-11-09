@@ -216,3 +216,19 @@ def test_train_intra_and_live_probs(tmp_path, monkeypatch):
     assert rankmodel.intra_probs(db, days[-2], days[-1], datetime.fromisoformat(rankmodel._et(days[-1], "03:50"))) == {}
     assert rankmodel.intra_probs(db, days[-2], days[-1], datetime.fromisoformat(rankmodel._et(days[-1], "15:40"))) == {}
     assert rankmodel.live_probs(db, days[-2], days[-1], t) == pr
+
+
+def test_background_returns_immediately_and_computes_once():
+    import threading, time as _t
+    rankmodel._BG.clear()
+    calls, gate = [], threading.Event()
+    def slow():
+        calls.append(1); gate.wait(5); return {"A": 1.0}
+    assert rankmodel.background("t", (1,), slow) == {}           # 바로 (빈 값)
+    assert rankmodel.background("t", (1,), slow) == {}           # 계산 중엔 또 띄우지 않음
+    gate.set()
+    for _ in range(50):
+        if rankmodel.background("t", (1,), slow) == {"A": 1.0}:
+            break
+        _t.sleep(0.05)
+    assert rankmodel.background("t", (1,), slow) == {"A": 1.0} and len(calls) == 1

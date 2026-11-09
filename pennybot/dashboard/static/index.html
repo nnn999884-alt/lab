@@ -2484,6 +2484,35 @@ $("set-va").onsubmit = e => { e.preventDefault();
 
 /* ---------- 급등 전조 목록 ---------- */
 let preData = null, preFilter = "all", preShown = 40;
+// 실시간 가격 (11/09): 서버가 바뀐 가격만 1초마다 밀어 줌 → 현재가·등락률·순서를 바로 고친다 (목록 전체는 3초마다 그대로)
+let livePx = {}, liveDirty = false;
+(function liveConnect() {
+  if (!window.EventSource) return;
+  const es = new EventSource("/api/live");
+  es.onmessage = ev => {
+    try { Object.assign(livePx, JSON.parse(ev.data)); liveDirty = true; } catch (e) {}
+  };
+  es.onerror = () => { es.close(); setTimeout(liveConnect, 3000); };
+})();
+function applyLive(d) {
+  if (!d || !d.rows) return;
+  for (const x of d.rows) {
+    const p = livePx[x.symbol];
+    if (!p) continue;
+    const n = x.now || (x.now = {});
+    if (!n.ts || p[1] > n.ts) {
+      n.price = p[0]; n.ts = p[1];
+      if (x.close) n.chg = (p[0] / x.close - 1) * 100;
+    }
+  }
+}
+setInterval(() => {
+  if (!liveDirty || !preData) return;
+  liveDirty = false;
+  applyLive(preData);
+  const box = $("pre-list");
+  if (box && box.offsetParent !== null) { try { drawPre(); } catch (e) {} }
+}, 1000);
 let csName = "추세 돌파";
 async function loadCond() {
   const r = await api("/api/condscan?n=" + encodeURIComponent(csName));
@@ -2556,6 +2585,7 @@ async function loadCond() {
 async function loadPre() {
   const fresh = await api("/api/precursor?limit=300&all=1");   // 움직이는 종목이 위, 그 아래 점수순 (11/07: 장 끝나면 86개만 남던 것)
   if (unchanged("pre", fresh)) return;
+  applyLive(fresh);
   preData = fresh;
   const r = preData;
   const live = (r.rows || []).filter(x => x.moving).length;

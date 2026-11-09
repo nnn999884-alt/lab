@@ -685,6 +685,17 @@ def ranked(db_path: str, limit: int = 50, only_active: bool = True) -> dict:
                 "SELECT symbol FROM events WHERE kind='steady' AND ts>=?", (since,)).fetchall()}
         except sqlite3.OperationalError:
             reaccel_n, early20, steady = {}, set(), set()
+        # 지금 가격: 웹소켓 체결(live_tick, 구독 종목) · 전 종목 3초 훑기(price_now) 중 최근 것 (60초 안)
+        # (11/09: 화면 등락률이 1분 감시 계산값이라 3초마다 새로 받아도 그대로였음)
+        nowpx: dict = {}
+        cut = (datetime.now(timezone.utc) - timedelta(seconds=60)).isoformat()
+        for tbl in ("price_now", "live_tick"):
+            try:
+                for s_, ts_, px_ in con.execute(f"SELECT symbol, ts, last FROM {tbl} WHERE ts >= ? AND last > 0", (cut,)):
+                    if s_ not in nowpx or ts_ > nowpx[s_][0]:
+                        nowpx[s_] = (ts_, px_)
+            except sqlite3.OperationalError:
+                pass
     except sqlite3.OperationalError:
         return {"d0": None, "rows": []}
     finally:
@@ -694,6 +705,11 @@ def ranked(db_path: str, limit: int = 50, only_active: bool = True) -> dict:
         r["metrics"] = json.loads(r["metrics"] or "{}")
         r["live"] = json.loads(r["live"] or "[]")
         r["live_m"] = json.loads(r["live_m"] or "{}")
+        np_ = nowpx.get(r["symbol"])
+        if np_ and r.get("close"):
+            r["live_m"]["price"] = np_[1]
+            r["live_m"]["chg"] = (np_[1] / r["close"] - 1) * 100
+            r["live_m"]["px_ts"] = np_[0]
         try:
             created = datetime.fromisoformat(r.get("created") or "")
             if created.tzinfo is None:
@@ -725,10 +741,12 @@ def ranked(db_path: str, limit: int = 50, only_active: bool = True) -> dict:
             r["tier"] = max(r["tier"], 2)
             r["patterns"] = r["patterns"] + ["꾸준히 거래"]
     try:                                           # 순위 모델 확률 (그날 고가 +30%, 없으면 None)
-        from .rankmodel import probs, live_probs
+        from .rankmodel import probs, live_probs, background
         from .alertperf import trade_day
-        pr = probs(db_path, d0)
-        prn = live_probs(db_path, d0, trade_day(datetime.now(timezone.utc)))   # 지금가 +20% 더 확률 (03:45 ET 뒤, 장중엔 5분마다)
+        td = trade_day(datetime.now(timezone.utc))
+        # 모델 계산(3~10초)은 뒤에서 — 화면 요청은 기다리지 않고 지금 있는 값으로 바로 (처음 몇 초만 빈칸)
+        pr = background("probs", (db_path, d0), lambda: probs(db_path, d0), 300)
+        prn = background("live", (db_path, d0, td), lambda: live_probs(db_path, d0, td), 60)   # 지금가 +20% 더 확률
     except Exception:
         pr, prn = {}, {}
     for r in rows:
@@ -826,7 +844,11 @@ def ranked(db_path: str, limit: int = 50, only_active: bool = True) -> dict:
                 live = con.execute("SELECT last, ts FROM live_tick WHERE symbol=?", (r["symbol"],)).fetchone()
             except sqlite3.OperationalError:
                 live = None
-            if live and (not px or (live[1] or "") >= (px[2] or "")):
+            np_ = nowpx.get(r["symbol"])                 # 웹소켓 체결·전 종목 3초 훑기 중 최신 (60초 안)
+            if np_ and (not px or np_[0] >= (px[2] or "")):
+                r["now"] = {"price": np_[1], "session": px[1] if px else None, "ts": np_[0],
+                            "chg": (np_[1] / r["close"] - 1) * 100 if r["close"] else None}
+            elif live and (not px or (live[1] or "") >= (px[2] or "")):
                 r["now"] = {"price": live[0], "session": px[1] if px else None, "ts": live[1],
                             "chg": (live[0] / r["close"] - 1) * 100 if r["close"] else None}
             elif px:

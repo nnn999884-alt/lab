@@ -189,3 +189,21 @@ def test_briefing_account_overhead_endpoints(server):
     (tmp / "account.json").write_text(json.dumps({"ts": "2026-10-24T00:00:00+00:00", "holdings": {"items": []}}), encoding="utf-8")
     assert get(base + "/api/account")["holdings"] == {"items": []}
     assert "overhead" in get(base + "/api/symbol_extra?s=PENX")
+
+
+def test_live_stream_pushes_changed_prices(server):
+    """실시간 가격 밀어 주기: 수집기가 price_now·live_tick 에 쓴 가격이 1초 안에 이벤트로 온다."""
+    import sqlite3, time as _t
+    from datetime import datetime, timezone
+    from pennybot.dashboard.server import Handler
+    base, tmp = server
+    Handler.LIVE_MAX_SEC = 3
+    db = get_market_path(tmp)
+    con = sqlite3.connect(db)
+    con.execute("CREATE TABLE IF NOT EXISTS price_now (symbol TEXT PRIMARY KEY, ts TEXT, last REAL)")
+    con.execute("INSERT OR REPLACE INTO price_now VALUES ('ABCD', ?, 1.23)", (datetime.now(timezone.utc).isoformat(),))
+    con.commit(); con.close()
+    with urllib.request.urlopen(base + "/api/live", timeout=10) as r:
+        assert r.headers["Content-Type"].startswith("text/event-stream")
+        line = r.readline().decode()
+    assert line.startswith("data: ") and json.loads(line[6:])["ABCD"][0] == 1.23

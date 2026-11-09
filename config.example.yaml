@@ -70,6 +70,7 @@ collector:
   watch_flow_slots: 25        # 최근 터짐·수급·신선한 공시·승격 종목
   watch_rotation_slots: 45    # 최근에 안 본 유니버스 종목 순환
   watch_rotation_minutes: 10  # 순환 묶음 교체 주기
+  price_sweep_seconds: 3       # 전 종목 현재가 따로 훑기 → 움직이면 바로 실시간 구독 (0 = 끔)
   fast_scan_seconds: 2        # 실시간 랭킹 훑기 (초 단위 실행)
   orderbook_poll_seconds: 60
   candle_sync_minutes: 30

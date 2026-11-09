@@ -67,6 +67,9 @@ CREATE TABLE IF NOT EXISTS daily_bars (
     symbol TEXT, d TEXT, open REAL, high REAL, low REAL, close REAL, volume REAL, PRIMARY KEY (symbol, d));
 CREATE TABLE IF NOT EXISTS live_tick (
     symbol TEXT PRIMARY KEY, ts TEXT, last REAL);
+-- 전 종목 현재가 지금 값 (현재가 훑기 스레드가 3초마다 덮어씀) — 대시보드 등락률을 실시간으로
+CREATE TABLE IF NOT EXISTS price_now (
+    symbol TEXT PRIMARY KEY, ts TEXT, last REAL);
 
 CREATE TABLE IF NOT EXISTS events (
     ts TEXT, symbol TEXT, kind TEXT, text TEXT, value REAL, PRIMARY KEY (ts, symbol, kind));
@@ -132,6 +135,7 @@ class Store:
     def put_universe(self, rows): return self._put("universe", rows)
     def put_prices(self, rows): return self._put("prices", rows)
     def put_live_ticks(self, rows): return self._put("live_tick", rows)
+    def put_price_now(self, rows): return self._put("price_now", rows)
     def put_quotes(self, rows): return self._put("quotes", rows)
     def put_bars(self, rows): return self._put("bars_1m", rows)
     def put_rankings(self, rows): return self._put("rankings", rows)
