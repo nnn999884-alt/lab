@@ -2290,7 +2290,7 @@ async function loadVs() {                                   // 홈: 요약 + 보
   drawVs();
 }
 let vsRows = [], vsShown = 6;
-const STRAT_NAME = { "모의": "모의매매", S1: "① VWAP 눌림", S2: "② 프리 추격", S3: "③ 깊은 털기", S4: "④ 신호가 눌림", S5: "⑤ 5분 눌림", S6: "⑥ 3분반 눌림", "이전": "이전 규칙" };
+const STRAT_NAME = { "모의": "모의매매", S1: "① VWAP 눌림", S2: "② 프리 추격", S3: "③ 깊은 털기", S4: "④ 신호가 눌림", S5: "⑤ 5분 눌림", S6: "⑥ 3분반 눌림", M1: "Ⓜ 데이마켓 후보", "이전": "이전 규칙" };
 const untilS = (a, b) => { const m = Math.max(0, Math.round((new Date(b) - new Date(a)) / 60000)); return m >= 60 ? `${Math.floor(m / 60)}시간 ${m % 60}분 뒤` : `${m}분 뒤`; };
 const vsOpen = new Set();
 function drawVs() {
@@ -2323,7 +2323,8 @@ document.querySelectorAll("#fil-filter button").forEach(b => b.onclick = () => {
 
 /* ---------- 매매 탭: 가상 매매 ---------- */
 const STRAT_RULE = { S1: "정규장 전 신호 → VWAP −10% 지정가 60분", S2: "06~09시 신호 → 바로 매수", S3: "신호 뒤 고점 −30% 지정가 60분",
-  S4: "신호가 −15% 지정가 30분", S5: "5분 뒤 고점 −10% 눌림 + 거래대금 유지 → 바로", S6: "3분 반 뒤 같은 조건 → 그 가격 지정가 3분 (돌파면 시장가)" };
+  S4: "신호가 −15% 지정가 30분", S5: "5분 뒤 고점 −10% 눌림 + 거래대금 유지 → 바로", S6: "3분 반 뒤 같은 조건 → 그 가격 지정가 3분 (돌파면 시장가)",
+  M1: "한국 낮 12시 데이마켓 모델 상위 12개 중 최근 1시간 거래 있는 것 → 바로 · 정규장 마감 정리" };
 let vtRows = [], vtStrat = "all", vtRange = 7, vtSettings = null;
 const el2 = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 function table2(t, heads, rows, empty) {
@@ -2376,7 +2377,7 @@ async function loadVTrade() {
   table2($("vt-strats"), [["전략"], ["규칙", 0, 1], ["끝난", 1], ["승률", 1], ["손익분기", 1, 1], ["평균", 1], ["합계", 1, 1], ["최고", 1, 1], ["최악", 1, 1], ["보유", 1, 1], ["대기", 1, 1], ["상태"]],
     keys.map(k => {
       const rs = rows.filter(r => (r.strat || "이전") === k), d = rs.filter(r => r.status === "CLOSED");
-      const tp = (rs[0] && rs[0].tp) || ({ S1: 10, S2: 20, S3: 20, S4: 15, S5: 15, S6: 10 }[k] || 15), sl = (rs[0] && rs[0].sl) || 35;
+      const tp = (rs[0] && rs[0].tp) || ({ S1: 10, S2: 20, S3: 20, S4: 15, S5: 15, S6: 10, M1: 20 }[k] || 15), sl = (rs[0] && rs[0].sl) || (k === "M1" ? 15 : 35);
       const be = (sl + 1) / (tp + sl), w = d.filter(r => vret(r) > 0).length / (d.length || 1);
       const rets = d.map(vret);
       const st = k === "이전" ? ["옛 규칙 (참고)", "flat"] : d.length < 50 ? [`표본 부족 (${d.length}/50)`, "flat"] : w < be ? ["손익분기 아래", "neg"] : ["정상", "pos"];

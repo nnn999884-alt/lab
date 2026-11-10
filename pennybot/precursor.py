@@ -1011,7 +1011,8 @@ def vsignal_text(kind: str, sym: str, name: str | None, v: dict, cfg, session_ko
         return "\n".join([
             _head(f"🧪 {tag}가상 매수 체결".strip(), sym, name),
             f"💵 {px(e)} · {session_ko} · 실제 주문 아님",
-            f"🎯 익절 {px(e * (1 + tp / 100))} (+{tp:g}%) · 🛑 손절 {px(e * (1 - sl / 100))} (−{sl:g}%) · 애프터장 마감에 정리",
+            f"🎯 익절 {px(e * (1 + tp / 100))} (+{tp:g}%) · 🛑 손절 {px(e * (1 - sl / 100))} (−{sl:g}%) · "
+            + ("정규장 마감에 정리" if st.get("close") == "regular" else "애프터장 마감에 정리"),
             f"근거: {v['reason']}",
             f"한줄 판단: {st.get('why', '')}" + (f" (과거 검증 {st['test']})" if st.get("test") else ""),
         ])

@@ -36,6 +36,11 @@ STRATEGIES = {
            "why": "급등 3분 반 뒤 고점에서 −10% 넘게 눌렸는데 거래대금이 유지됩니다. 그 가격 지정가(3분) 또는 고점 돌파 시 시장가로 체결.",
            "test": "+1.6 / +0.6 / +3.1%, 승률 75%"},
 }
+# 데이마켓 모델 후보 (11/10): 신호가 아니라 한국 낮 12시(전날 22:00 ET) 데이마켓 모델 상위 12개 중 최근 1시간 체결 있는 것.
+# _vtrade(신호 전략)는 안 돌고 수집기 model_picks 가 사고, 정규장 마감에 정리한다.
+STRATEGIES["M1"] = {"name": "전략M 데이마켓 후보", "entry": "model", "tp": 20, "sl": 15, "close": "regular",
+                    "why": "데이마켓 순위 모델 상위 12개 (그 시각보다 정규장 +20% 더 갈 확률 순) 중 최근 1시간 거래가 있는 종목입니다.",
+                    "test": "9/15~11/6 · 171건 · 비용 3% 뒤 1건 +3.9%, 이긴 66%"}
 LIMIT_KO = {"vwap": "VWAP −{dip}% (VWAP 따라 움직임)", "signal": "신호가 −{dip}%", "high": "신호 뒤 고점 −{dip}% (고점 따라 올라감)",
             "hold_lim": "눌린 지금 가격, 3분 안 미체결 취소 · 고점 돌파 시 시장가"}
 
@@ -79,6 +84,8 @@ def plan(bars: list[tuple], prev_close: float, shares: float | None, st: dict) -
     (아직 wait 분이 안 지났으면 {waiting: True}) /
     hold_lim = hold 와 같은 조건이면 그 종가에 지정가 3분, 그사이 신호 뒤 고점을 넘으면 시장가(고점 +0.5%).
     1분봉이라 '3분 30초 뒤' 는 신호 4번째 봉(wait=4) 종가로 본다."""
+    if st.get("entry") == "model":                       # 데이마켓 후보(M1)는 신호로 사지 않는다 (수집기 model_picks)
+        return None
     t = signal_k(bars, prev_close, shares)
     if t is None or not in_hours(bars[t][0], st["hours"]):
         return None

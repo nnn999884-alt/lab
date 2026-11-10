@@ -46,6 +46,11 @@ NIGHT_SINCE = "2026-09-15"      # 데이·애프터 1분봉이 넉넉히 쌓이�
 NIGHT_MIN_DAYS = 10
 NIGHT_TRAIN_DAYS = 180
 SNAP_KEEP = 120
+# 데이마켓 후보 (11/10): 03:45 ET 보다 5시간 45분 앞 = 전날 22:00 ET (한국 낮 12시) 까지 정보로 같은 확률.
+# 검증(9/15~11/6, 39일, 주 단위로 빼고 학습): 하루 12개 중 적중 37% (03:45 은 40%, 장 마감 직후 25%).
+# 그 시각 60분 안 체결이 있던 후보를 사서 +20% 익절 · −15% 손절 · 정규장 마감 정리 → 비용 3% 뒤 1건 +3.9% (171건, 이긴 66%).
+DM_BACK_H = 5.75
+DM_FRESH_MIN = 60
 
 
 def model_path(market_db: str) -> Path:
@@ -311,6 +316,15 @@ def night_window(prev_d: str, d: str) -> tuple[str, str, str]:
     return tuple(x.astimezone(timezone.utc).isoformat() for x in (a0, a0.replace(hour=20), b1))
 
 
+def dm_path(market_db: str) -> Path:
+    return Path(market_db).parent / "rank_dm.pkl"
+
+
+def dm_time(prev_d: str, d: str) -> str:
+    """데이마켓 후보 시각 (UTC iso) = d 의 03:45 ET − DM_BACK_H."""
+    return (datetime.fromisoformat(night_window(prev_d, d)[2]) - timedelta(hours=DM_BACK_H)).isoformat()
+
+
 def night_feats(bars: list[tuple], pc: float, shares: float | None, a1u: str) -> tuple[list[float], float] | None:
     """bars: 창 안 1분봉 [(ts, o, h, l, c, v)] 시간순. → (특징 9개, 03:45 직전 가격). 가격이 안 맞으면(병합 등) None."""
     def agg(w):
@@ -357,14 +371,17 @@ def _day_rows(con, since: str, until: str | None):
     return shares, prev_of, by_day
 
 
-def night_dataset(market_db: str, since: str, until: str | None = None):
-    """(X, y, days, syms): 날짜 D 마다 일봉 특징 + 밤사이 1분봉 특징 → D 정규장 고가 ≥ 03:45 가격 × 1.2."""
+def night_dataset(market_db: str, since: str, until: str | None = None, back_h: float = 0.0):
+    """(X, y, days, syms): 날짜 D 마다 일봉 특징 + 밤사이 1분봉 특징 → D 정규장 고가 ≥ 03:45 가격 × 1.2.
+    back_h > 0 이면 03:45 보다 그만큼 앞 시각까지의 1분봉·가격으로 (데이마켓 후보 모델)."""
     con = sqlite3.connect(f"file:{market_db}?mode=ro", uri=True)
     try:
         shares, prev_of, by_day = _day_rows(con, since, until)
         X, y, days, syms = [], [], [], []
         for d in sorted(by_day):
             a0, a1, b1 = night_window(prev_of[d], d)
+            if back_h:
+                b1 = (datetime.fromisoformat(b1) - timedelta(hours=back_h)).isoformat()
             one = defaultdict(list)
             for s, ts, o, h, l, c, v in con.execute("SELECT symbol, ts, open, high, low, close, volume FROM bars_1m "
                                                     "WHERE ts >= ? AND ts < ?", (a0, b1)):
@@ -413,7 +430,13 @@ def _snap_score(market_db: str, days: int = SCORE_DAYS) -> dict | None:
     return {"hit": hit, "n": n, "days": got, "from": first, "to": last} if n else None
 
 
-def train_night(market_db: str, now: datetime | None = None) -> dict | None:
+def train_dm(market_db: str, now: datetime | None = None) -> dict | None:
+    """데이마켓 후보 모델 (전날 22:00 ET 까지 정보) → state/rank_dm.pkl."""
+    return train_night(market_db, now, DM_BACK_H, dm_path(market_db), "데이마켓 모델")
+
+
+def train_night(market_db: str, now: datetime | None = None, back_h: float = 0.0, path: Path | None = None,
+                label: str = "새벽 모델") -> dict | None:
     """밤사이 1분봉이 있는 날(2026-09-15~, 최근 180일)로 새벽 모델 학습 → state/rank_night.pkl."""
     try:
         import numpy as np
@@ -421,12 +444,12 @@ def train_night(market_db: str, now: datetime | None = None) -> dict | None:
     except ImportError:
         return None
     now = now or datetime.now(timezone.utc)
-    path = night_path(market_db)
+    path = path or night_path(market_db)
     old = load(path)
     since = max(NIGHT_SINCE, (now.date() - timedelta(days=NIGHT_TRAIN_DAYS)).isoformat())
-    X, y, days, _ = night_dataset(market_db, since, (now.date() + timedelta(days=1)).isoformat())
+    X, y, days, _ = night_dataset(market_db, since, (now.date() + timedelta(days=1)).isoformat(), back_h)
     if len(set(days)) < NIGHT_MIN_DAYS or sum(y) < 30:
-        log.info("새벽 모델: 데이터 부족 (%d일, +20%% %d건)", len(set(days)), sum(y))
+        log.info("%s: 데이터 부족 (%d일, +20%% %d건)", label, len(set(days)), sum(y))
         return None
     X = np.asarray(X, dtype=float)
     check = None
@@ -439,18 +462,19 @@ def train_night(market_db: str, now: datetime | None = None) -> dict | None:
     meta = {"model": model, "features": list(FEATURES + NIGHT_FEATURES), "trained_at": now.isoformat(), "since": since,
             "through": max(days), "rows": len(y), "pos": int(sum(y)), "days": len(set(days)), "check": check,
             "history": ((old or {}).get("history") or [])[-250:] + ([check] if check else []),
-            "live": _snap_score(market_db)}
+            "live": _snap_score(market_db) if not back_h else None, "back_h": back_h}
     tmp = path.with_suffix(".tmp")
     with open(tmp, "wb") as fh:
         pickle.dump(meta, fh)
     tmp.replace(path)
-    log.info("새벽 모델 다시 학습: %s~%s · %d일 · %d건 (+20%% %d)", since, meta["through"], meta["days"], len(y), sum(y))
+    log.info("%s 다시 학습: %s~%s · %d일 · %d건 (+20%% %d)", label, since, meta["through"], meta["days"], len(y), sum(y))
     return meta
 
 
-def score_night(mq, market_db: str, d0: str, d: str) -> list[dict] | None:
-    """d(오늘) 03:45 ET 까지의 밤사이 1분봉 + d0(전날)까지 일봉으로 전 종목 확률(%). 모델 없으면 None."""
-    m = load(night_path(market_db))
+def score_night(mq, market_db: str, d0: str, d: str, back_h: float = 0.0, path: Path | None = None) -> list[dict] | None:
+    """d(오늘) 03:45 ET (back_h 를 주면 그만큼 앞) 까지의 밤사이 1분봉 + d0(전날)까지 일봉으로 전 종목 확률(%).
+    모델 없으면 None. 각 줄의 last_ts = 그 시각 전 마지막 1분봉 시각 (없으면 None)."""
+    m = load(path or night_path(market_db))
     if not m:
         return None
     start = (date.fromisoformat(d0) - timedelta(days=120)).isoformat()
@@ -460,6 +484,8 @@ def score_night(mq, market_db: str, d0: str, d: str) -> list[dict] | None:
                 (start, d0)):
         D[r["symbol"]].append((r["d"], r["open"], r["high"], r["low"], r["close"], r["volume"] or 0))
     a0, a1, b1 = night_window(d0, d)
+    if back_h:
+        b1 = (datetime.fromisoformat(b1) - timedelta(hours=back_h)).isoformat()
     one: dict[str, list[tuple]] = defaultdict(list)
     for r in mq("SELECT symbol, ts, open, high, low, close, volume FROM bars_1m WHERE ts >= ? AND ts < ?", (a0, b1)):
         one[r["symbol"]].append((r["ts"], r["open"], r["high"], r["low"], r["close"], r["volume"] or 0))
@@ -470,11 +496,12 @@ def score_night(mq, market_db: str, d0: str, d: str) -> list[dict] | None:
         f = feats(bars, shares.get(s))
         if f is None:
             continue
-        nf = night_feats(sorted(one.get(s, [])), f["px"], shares.get(s), a1)
+        nb = sorted(one.get(s, []))
+        nf = night_feats(nb, f["px"], shares.get(s), a1)
         if nf is None:
             continue
         out.append({"symbol": s, "tier": f["tier"], "close": f["px"], "vol_ratio": f["vr"], "turn": f["turn"],
-                    "price": nf[1], "night": nf[0][-1]})
+                    "price": nf[1], "night": nf[0][-1], "last_ts": nb[-1][0] if nb else None})
         X.append(vec(f) + nf[0])
     if not X:
         return []

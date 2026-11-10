@@ -653,3 +653,47 @@ def test_rt_alert_flow2_runs_on_worker_thread_connection(tmp_path):
     t.start()
     t.join()
     assert not errors, errors
+
+
+def test_model_picks_buy_fresh_only_and_close_at_regular_end(tmp_path, monkeypatch):
+    """데이마켓 후보(M1): 상위 12개 알림, 최근 1시간 체결 있는 것만 가상 매수 → +20% 익절 · −15% 손절 · 정규장 마감 정리."""
+    from pennybot import rankmodel
+    col, st, sent = make(tmp_path)
+    col.universe = {"AAA": {"name": "에이", "last": 1.0}, "BBB": {"name": "비", "last": 2.0}}
+    d0, d = "2026-11-06", "2026-11-09"
+    T = rankmodel.dm_time(d0, d)
+    assert T == "2026-11-09T03:00:00+00:00"                     # 일요일 22:00 ET = 한국 월요일 12:00
+    fresh = (datetime.fromisoformat(T) - timedelta(minutes=10)).isoformat()
+    stale = (datetime.fromisoformat(T) - timedelta(hours=3)).isoformat()
+    monkeypatch.setattr(rankmodel, "score_night", lambda *a, **k: [
+        {"symbol": "AAA", "prob": 40.0, "price": 1.0, "close": 0.8, "last_ts": fresh},
+        {"symbol": "BBB", "prob": 30.0, "price": 2.0, "close": 2.0, "last_ts": stale}])
+    now = datetime.fromisoformat(T) + timedelta(minutes=1)
+    col.clock = lambda: now
+    picks = col._model_picks_job(now, d0, d, st, fill=False)
+    rows = st.query("SELECT symbol, strat, status, entry, tp, sl FROM vsignals")
+    assert rows == [("AAA", "M1", "OPEN", 1.0, 20.0, 15.0)]
+    assert [p["symbol"] for p in picks] == ["AAA", "BBB"]
+    txt = sent.msgs[-1][0]
+    assert "데이마켓 후보" in txt and "AAA" in txt and "최근 1시간 거래 없음" in txt
+    v = col._vrow(st.query("SELECT * FROM vsignals")[0])
+    et = lambda h, m=0: datetime(2026, 11, 9, h + 5, m, tzinfo=timezone.utc)      # ET → UTC (11월 = UTC−5)
+    assert col._vexit(v, 1.19, 1.195, et(10)) is None                            # 목표 근처 밀림 정리 없음
+    assert col._vexit(v, 1.21, 1.21, et(10)) == "익절 +20%"
+    assert col._vexit(v, 0.84, 1.0, et(10)) == "손절 −15%"
+    assert col._vexit(v, 1.05, 1.1, et(15, 59)) is None
+    assert col._vexit(v, 1.05, 1.1, et(16)) == "정규장 마감 정리"
+
+
+def test_model_picks_runs_once_in_window(tmp_path, monkeypatch):
+    from pennybot import rankmodel
+    col, st, sent = make(tmp_path)
+    st.db.execute("INSERT INTO daily_bars (symbol, d, open, high, low, close, volume) VALUES ('AAA','2026-11-06',1,1,1,1,1)")
+    st.db.commit()
+    started = []
+    monkeypatch.setattr(Collector, "_model_picks_job", lambda self, *a, **k: started.append(a))
+    T = datetime.fromisoformat(rankmodel.dm_time("2026-11-06", "2026-11-09"))
+    assert col.model_picks(T - timedelta(minutes=5)) is False                    # 22:00 ET 전
+    assert col.model_picks(T + timedelta(minutes=1)) is True
+    col._mpick_thread.join()
+    assert started

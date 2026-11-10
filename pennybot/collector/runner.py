@@ -399,6 +399,8 @@ class Collector:
             self._run("prices", self.poll_prices, now, trade_date, session)
             if c.vsignal:
                 self._run("vsignals", self.check_vsignals, now, session)
+                if session == DAY:
+                    self._run("model_picks", self.model_picks, now)
         if self._due("orderbook", now, timedelta(seconds=c.orderbook_poll_seconds)):
             self._run("orderbook", self.poll_orderbooks, now, trade_date, session)
         if self._due("candles", now, timedelta(minutes=c.candle_sync_minutes)):
@@ -1194,13 +1196,14 @@ class Collector:
         need_d = rankmodel.needs_train(self.cfg.db_path, now)
         need_n = rankmodel.needs_train(self.cfg.db_path, now, rankmodel.night_path(self.cfg.db_path))
         need_i = rankmodel.needs_train(self.cfg.db_path, now, rankmodel.intra_path(self.cfg.db_path))
-        if not (need_d or need_n or need_i):
+        need_m = rankmodel.needs_train(self.cfg.db_path, now, rankmodel.dm_path(self.cfg.db_path))
+        if not (need_d or need_n or need_i or need_m):
             return False
         import threading
 
         def job():
             for need, fn, nm in ((need_d, rankmodel.train, "일봉"), (need_n, rankmodel.train_night, "새벽"),
-                               (need_i, rankmodel.train_intra, "장중")):
+                               (need_i, rankmodel.train_intra, "장중"), (need_m, rankmodel.train_dm, "데이마켓")):
                 if not need:
                     continue
                 try:
@@ -2590,6 +2593,132 @@ class Collector:
                     store.db.execute("UPDATE vsignals SET entry=?, high=?, low=?, last=? WHERE id=?",
                                           (p["limit"], p["limit"], p["limit"], today[-1][4], vid))
 
+    # ---------- 데이마켓 후보 (11/10): 한국 낮 12시 데이마켓 모델 상위 12개 → 알림 + 가상 매수 (전략 M1) ----------
+    DM_FILL_MAX = 900                # 그 시각 1분봉을 채울 종목 수 상한 (전날 종가 뒤 거래가 있었던 종목, 일봉 모델 확률 순)
+
+    def model_picks(self, now: datetime) -> bool:
+        """데이마켓 중 전날 22:00 ET 가 지나면 하루 한 번: 1분봉 채우기 → 점수 → 알림·가상 매수 (뒤에서). → 시작했나."""
+        from .. import rankmodel
+        from ..alertperf import trade_day
+        if not self._settings.get()["strategies"].get("M1", True):
+            return False
+        th = getattr(self, "_mpick_thread", None)
+        if th and th.is_alive():
+            return False
+        d = trade_day(now)
+        if getattr(self, "_mpick_d", None) == d:
+            return False
+        last_try = getattr(self, "_mpick_try", None)
+        if last_try and now - last_try < timedelta(minutes=10):
+            return False
+        d0 = (self.store.query("SELECT MAX(d) FROM daily_bars WHERE d < ?", (d,)) or [[None]])[0][0]
+        if not d0:
+            return False
+        T, b1 = rankmodel.dm_time(d0, d), rankmodel.night_window(d0, d)[2]
+        t = iso(now)
+        if t < T or t >= b1:
+            return False
+        if self.store.query("SELECT 1 FROM vsignals WHERE d0=? AND strat='M1' LIMIT 1", (d0,)):
+            self._mpick_d = d
+            return False
+        self._mpick_try = now
+        import threading
+        self._mpick_thread = threading.Thread(target=self._model_picks_job, args=(now, d0, d), name="model_picks", daemon=True)
+        self._mpick_thread.start()
+        return True
+
+    def _model_picks_job(self, now: datetime, d0: str, d: str, store=None, fill: bool = True) -> list[dict]:
+        import sqlite3
+        from .. import rankmodel
+        from .store import ro_uri
+        store = store or Store(self.cfg.db_path)
+        db = self.cfg.db_path
+        a0 = rankmodel.night_window(d0, d)[0]
+        T = rankmodel.dm_time(d0, d)
+        if fill and self.c:                              # 학습 데이터처럼 그 시각까지 1분봉을 채운다 (평소엔 감시 종목만 30분마다)
+            pcs = dict(store.query("SELECT symbol, close FROM daily_bars WHERE d=?", (d0,)))
+            cur = dict(store.query("SELECT symbol, last FROM price_now"))
+            traded = [s for s in self.universe if pcs.get(s) and cur.get(s) and abs(cur[s] / pcs[s] - 1) > 1e-6]
+            try:
+                pr = rankmodel.probs(db, d0) or {}
+            except Exception:
+                pr = {}
+            traded.sort(key=lambda s: -(pr.get(s) or 0))
+            n = 0
+            for s in traded[:self.DM_FILL_MAX]:
+                have = store.query("SELECT MAX(ts) FROM bars_1m WHERE symbol=? AND ts>=? AND ts<?", (s, a0, T))
+                since = have[0][0] if have and have[0][0] else a0
+                before, rows = datetime.fromisoformat(T).isoformat(timespec="milliseconds"), []   # anatomy.fetch_day 와 같은 형식
+                for _ in range(4):
+                    try:
+                        res = self.c.candles(s, "1m", 200, before) or {}
+                    except Exception as e:
+                        log.debug("데이마켓 후보 1분봉 실패 %s: %s", s, e)
+                        break
+                    page = res.get("candles", [])
+                    for cd in page:
+                        end = datetime.fromisoformat(cd["timestamp"].replace("Z", "+00:00"))
+                        ts = iso(end)
+                        if ts <= since or ts >= T:
+                            continue
+                        dd, sess = self.cal.classify(end - timedelta(seconds=30))
+                        rows.append({"symbol": s, "ts": ts, "trade_date": dd.isoformat() if dd else None, "session": sess,
+                                     "open": float(cd["openPrice"]), "high": float(cd["highPrice"]), "low": float(cd["lowPrice"]),
+                                     "close": float(cd["closePrice"]), "volume": float(cd["volume"])})
+                    before = res.get("nextBefore")
+                    if not page or not before or iso(datetime.fromisoformat(page[-1]["timestamp"].replace("Z", "+00:00"))) <= since:
+                        break
+                if rows:
+                    store.put_bars(rows)
+                    n += 1
+            log.info("데이마켓 후보: 1분봉 채움 %d/%d종목", n, min(len(traded), self.DM_FILL_MAX))
+        con = sqlite3.connect(ro_uri(db), uri=True)
+        con.row_factory = sqlite3.Row
+        try:
+            sc = rankmodel.score_night(lambda sql, a=(): [dict(r) for r in con.execute(sql, a).fetchall()], db, d0, d,
+                                       rankmodel.DM_BACK_H, rankmodel.dm_path(db))
+        finally:
+            con.close()
+        if sc is None:
+            log.info("데이마켓 후보: 모델이 아직 없음 (학습 뒤 다시)")
+            return []
+        self._mpick_d = d
+        picks = sc[:rankmodel.TOP]
+        cut = (datetime.fromisoformat(T) - timedelta(minutes=rankmodel.DM_FRESH_MIN)).isoformat()
+        cur = dict(store.query("SELECT symbol, last FROM price_now"))
+        t = self.clock()
+        for r in picks:
+            r["fresh"] = bool(r.get("last_ts") and r["last_ts"] >= cut)
+            r["entry"] = cur.get(r["symbol"]) or r["price"]
+            if not r["fresh"] or not r["entry"]:
+                continue
+            reason = (f"데이마켓 후보 {picks.index(r) + 1}위 · +20% 더 갈 확률 {r['prob']:.0f}% · 전날 종가 대비 "
+                      f"{(r['entry'] / r['close'] - 1) * 100:+.0f}%")
+            with store.db:
+                c = store.db.execute(
+                    "INSERT INTO vsignals (symbol, d0, opened, session, entry, score, reason, status, high, low, last, tp, sl, strat) "
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (r["symbol"], d0, iso(t), DAY, r["entry"], round(r["prob"]), reason, "OPEN", r["entry"], r["entry"],
+                     r["entry"], 20.0, 15.0, "M1"))
+            r["vid"] = c.lastrowid
+            log.info("가상 매수 체결 %s $%.4g (%s)", r["symbol"], r["entry"], reason)
+        if self.notifier and self._on("vtrade"):
+            self.notifier.send(self._model_picks_text(picks))
+        return picks
+
+    def _model_picks_text(self, picks: list[dict]) -> str:
+        from ..trading.messages import px
+        n = sum(1 for r in picks if r.get("vid"))
+        L = ["🌞 데이마켓 후보 TOP 12 (한국 낮 12시 · 정규장에 지금가보다 +20% 더 갈 확률 순)", ""]
+        for i, r in enumerate(picks, 1):
+            name = (self.universe.get(r["symbol"]) or {}).get("name") or ""
+            chg = (r["entry"] / r["close"] - 1) * 100 if r.get("close") and r.get("entry") else 0
+            mark = "🧪 가상 매수" if r.get("vid") else "· 최근 1시간 거래 없음"
+            L.append(f"{i}. {r['symbol']} {name} {px(r['entry'])} ({chg:+.0f}%) · {r['prob']:.0f}% {mark}")
+        L += ["", f"🧪 전략M: 최근 1시간 거래 있는 {n}종목 가상 매수 · 익절 +20% · 손절 −15% · 정규장 마감 정리 (실제 주문 아님)",
+              "과거 검증 9/15~11/6: 하루 12개 중 37% 가 +20% 더 감 · 가상 규칙은 비용 3% 뒤 1건 +3.9% (171건). 보장 아님"]
+        return "\n".join(L)
+
     def _vnotify(self, kind: str, vid: int, session: str, store=None) -> None:
         from ..precursor import vsignal_text
         from ..trading.strategies import SESSION_KO
@@ -2648,6 +2777,10 @@ class Collector:
             return f"익절 +{tp:g}%"
         if ret <= -sl:
             return f"손절 −{sl:g}%"
+        if v.get("strat") == "M1":                       # 데이마켓 후보: 검증 그대로 (밀림 정리 없음, 정규장 마감 정리)
+            from ..alertperf import trade_day
+            close_at = datetime.fromisoformat(f"{trade_day(datetime.fromisoformat(v['opened']))}T16:00").replace(tzinfo=ET)
+            return "정규장 마감 정리" if now >= close_at or eod else None
         back = self.cfg.vsignal_near_back
         if back and g >= tp - self.cfg.vsignal_near_tp and ret <= g - back:
             return f"목표 근처 +{g:.1f}% 에서 밀려 정리"         # 예: 익절 +20% 인데 +19.5% 까지 갔다가 +17.5%
