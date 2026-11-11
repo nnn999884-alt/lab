@@ -7,7 +7,7 @@ from pathlib import Path
 
 DEFAULTS = {
     "strategies": {"S1": True, "S2": True, "S3": True, "S4": True, "S5": True, "S6": True},
-    "alerts": {"presurge": True, "burst": True, "early20": True, "after_move": True, "bottom_bounce": True, "steady": False, "halt": True, "pre_open": True, "vtrade": True, "briefing": True, "perf": True, "reaccel": True, "approach": True, "early_watch": True, "absorb": True, "dna": True, "fast": True, "miss": True, "spike_start": True, "day_open": True, "slow_climb": True, "ignition": True},
+    "alerts": {"presurge": True, "burst": True, "early20": True, "after_move": True, "bottom_bounce": True, "steady": False, "halt": True, "pre_open": True, "vtrade": True, "dm_pick": True, "briefing": True, "perf": True, "reaccel": True, "approach": True, "early_watch": True, "absorb": True, "dna": True, "fast": True, "miss": True, "spike_start": True, "day_open": True, "slow_climb": True, "ignition": True},
     "realtime": True,
     "vaccount": {"capital": 10000, "per_trade": 1000},
 }
@@ -15,7 +15,7 @@ ALERT_KO = {"presurge": "🚨 급등 전조", "burst": "📶 거래 터짐 신�
             "bottom_bounce": "🌊 바닥 찍고 재반등 (2차 파동 초입)",
             "steady": "🫧 꾸준히 거래 붙음 (사부작 지속 관심)",
             "halt": "🛑 뉴스 대기 거래정지", "pre_open": "🌅 프리 개장 주목 목록",
-            "vtrade": "🧪 가상 매매 (주문·체결·매도)", "briefing": "🗞 장 시작 전 브리핑 (03:45 ET)", "perf": "📊 장 마감 알림 성과 요약", "reaccel": "🔁 재가속 (급등 뒤 눌렸다 다시 붙음)", "approach": "👀🎯 이전 고점 접근·임박 (며칠 전 급등주, 넘기 전)",
+            "vtrade": "🧪 가상 매매 (주문·체결·매도)", "dm_pick": "🌞 데이마켓 후보 TOP 12 (한국 낮 12시)", "briefing": "🗞 장 시작 전 브리핑 (03:45 ET)", "perf": "📊 장 마감 알림 성과 요약", "reaccel": "🔁 재가속 (급등 뒤 눌렸다 다시 붙음)", "approach": "👀🎯 이전 고점 접근·임박 (며칠 전 급등주, 넘기 전)",
             "early_watch": "👀 초기 경보 (10분 +3%, 점수 높음·공시 뒤 · 매수 없음)",
             "absorb": "🧲 물량 흡수 (매수호가에서 나오는 매도를 다 받아 줌 · 검증 전)",
             "dna": "🧬 급등 이력 감시 정리 (장 끝나고 하루 한 번)",

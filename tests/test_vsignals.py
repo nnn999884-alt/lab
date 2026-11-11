@@ -658,7 +658,9 @@ def test_rt_alert_flow2_runs_on_worker_thread_connection(tmp_path):
 def test_model_picks_buy_fresh_only_and_close_at_regular_end(tmp_path, monkeypatch):
     """데이마켓 후보(M1): 상위 12개 알림, 최근 1시간 체결 있는 것만 가상 매수 → +20% 익절 · −15% 손절 · 정규장 마감 정리."""
     from pennybot import rankmodel
+    from pennybot import settings
     col, st, sent = make(tmp_path)
+    settings.save(str(tmp_path), {"alerts": {"vtrade": False}})       # 가상 매매 알림을 꺼도 후보 알림은 온다 (11/11)
     col.universe = {"AAA": {"name": "에이", "last": 1.0}, "BBB": {"name": "비", "last": 2.0}}
     d0, d = "2026-11-06", "2026-11-09"
     T = rankmodel.dm_time(d0, d)
@@ -675,7 +677,8 @@ def test_model_picks_buy_fresh_only_and_close_at_regular_end(tmp_path, monkeypat
     assert rows == [("AAA", "M1", "OPEN", 1.0, 20.0, 15.0)]
     assert [p["symbol"] for p in picks] == ["AAA", "BBB"]
     txt = sent.msgs[-1][0]
-    assert "데이마켓 후보" in txt and "AAA" in txt and "최근 1시간 거래 없음" in txt
+    assert "데이마켓 후보" in txt and "AAA" in txt and "거래 없어 건너뜀 1종목" in txt and "가상 매수 1종목" in txt
+    assert txt.index("AAA") < txt.index("건너뜀") < txt.index("BBB")
     v = col._vrow(st.query("SELECT * FROM vsignals")[0])
     et = lambda h, m=0: datetime(2026, 11, 9, h + 5, m, tzinfo=timezone.utc)      # ET → UTC (11월 = UTC−5)
     assert col._vexit(v, 1.19, 1.195, et(10)) is None                            # 목표 근처 밀림 정리 없음

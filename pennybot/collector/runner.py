@@ -2702,21 +2702,42 @@ class Collector:
                      r["entry"], 20.0, 15.0, "M1"))
             r["vid"] = c.lastrowid
             log.info("가상 매수 체결 %s $%.4g (%s)", r["symbol"], r["entry"], reason)
-        if self.notifier and self._on("vtrade"):
+        if self.notifier and self._on("dm_pick"):           # 가상 매매 알림과 따로 켜고 끈다
             self.notifier.send(self._model_picks_text(picks))
         return picks
 
     def _model_picks_text(self, picks: list[dict]) -> str:
+        """휴대폰에서 읽기 쉽게: 산 것 / 거래 없어 건너뛴 것을 나눠, 종목마다 2줄 (코드·확률 / 이름·가격·전날 대비)."""
         from ..trading.messages import px
-        n = sum(1 for r in picks if r.get("vid"))
-        L = ["🌞 데이마켓 후보 TOP 12 (한국 낮 12시 · 정규장에 지금가보다 +20% 더 갈 확률 순)", ""]
-        for i, r in enumerate(picks, 1):
+        from zoneinfo import ZoneInfo
+        kst = ZoneInfo("Asia/Seoul")
+        t = self.clock().astimezone(kst)
+
+        def row(i, r):
             name = (self.universe.get(r["symbol"]) or {}).get("name") or ""
-            chg = (r["entry"] / r["close"] - 1) * 100 if r.get("close") and r.get("entry") else 0
-            mark = "🧪 가상 매수" if r.get("vid") else "· 최근 1시간 거래 없음"
-            L.append(f"{i}. {r['symbol']} {name} {px(r['entry'])} ({chg:+.0f}%) · {r['prob']:.0f}% {mark}")
-        L += ["", f"🧪 전략M: 최근 1시간 거래 있는 {n}종목 가상 매수 · 익절 +20% · 손절 −15% · 정규장 마감 정리 (실제 주문 아님)",
-              "과거 검증 9/15~11/6: 하루 12개 중 37% 가 +20% 더 감 · 가상 규칙은 비용 3% 뒤 1건 +3.9% (171건). 보장 아님"]
+            name = name if len(name) <= 16 else name[:15] + "…"
+            chg = ""
+            if r.get("close") and r.get("entry"):
+                c = (r["entry"] / r["close"] - 1) * 100
+                chg = f" ({'+' if c >= 0 else '−'}{abs(c):.0f}%)"
+            return [f"{i:>2}. {r['symbol']}  {px(r['entry'])}{chg} · 확률 {r['prob']:.0f}%", f"      {name}".rstrip()]
+
+        bought = [(i, r) for i, r in enumerate(picks, 1) if r.get("vid")]
+        skip = [(i, r) for i, r in enumerate(picks, 1) if not r.get("vid")]
+        L = [f"🌞 데이마켓 후보 TOP {len(picks)}", f"{t.month}/{t.day}({'월화수목금토일'[t.weekday()]}) 한국 {t:%H:%M} · 정규장 +20% 갈 확률 순", ""]
+        if bought:
+            L.append(f"🧪 가상 매수 {len(bought)}종목")
+            for i, r in bought:
+                L += row(i, r)
+            L.append("")
+        if skip:
+            L.append(f"💤 최근 1시간 거래 없어 건너뜀 {len(skip)}종목")
+            for i, r in skip:
+                last = r.get("last_ts")
+                when = f" · 마지막 거래 {datetime.fromisoformat(last).astimezone(kst):%H:%M}" if last else ""
+                L += [row(i, r)[0], row(i, r)[1] + when]
+            L.append("")
+        L += ["📋 익절 +20% · 손절 −15% · 정규장 마감 정리", "실제 주문 아님 · 과거 1건 평균 +3.9% (171건) · 보장 아님"]
         return "\n".join(L)
 
     def _vnotify(self, kind: str, vid: int, session: str, store=None) -> None:
