@@ -82,14 +82,20 @@ def test_price_sweep_promotes_movers_to_realtime():
     c.store = SimpleNamespace(query=lambda *a: [[None]])
     px = lambda pen, up: [{"symbol": "PEN", "lastPrice": pen}, {"symbol": "UP", "lastPrice": up}, {"symbol": "FLAT", "lastPrice": 1.0}]
     c._sweep_hist = [(_t.time() - 60, {"PEN": 1.19, "UP": 1.00, "FLAT": 1.0})]
-    new = c.price_sweep(NOW, TD, "PRE", prices=px(1.21, 1.05))
-    assert new == ["PEN"]                                  # +20% 넘는 순간은 바로, +3% 는 한 번 더 봐야
-    assert c._rt_q.get_nowait()[:2] == ("slow", "PEN")
+    c._rt_dmin = {}
+    m = int(_t.time() // 60)
+    assert c.price_sweep(NOW, TD, "PRE", prices=px(1.21, 1.05)) == []   # 가격만으론 '잡힘' 아님 → 구독해서 거래대금 확인
+    assert c._rt_q.get_nowait()[:2] == ("slow", "PEN") and "PEN" in c._sweep_probe and got
+    c._rt_dmin["PEN"] = {m: 6000.0}                                     # 웹소켓 대금 $6천 (프리 기준 $3천)
+    assert c.price_sweep(NOW, TD, "PRE", prices=px(1.21, 1.05)) == ["PEN"]
     c._rt_syms = {"PEN"}
-    c._sweep_pend["UP"] = (c._sweep_pend["UP"][0] - 3, c._sweep_pend["UP"][1])   # 3초 뒤 다음 훑기
-    new = c.price_sweep(NOW, TD, "PRE", prices=px(1.21, 1.06))
-    assert new == ["UP"] and got
-    assert "FLAT" not in new
+    c._sweep_pend["UP"] = (c._sweep_pend["UP"][0] - 10, c._sweep_pend["UP"][1])  # 10초 뒤: 아직 30초 안 됨
+    assert c.price_sweep(NOW, TD, "PRE", prices=px(1.21, 1.04)) == [] and "UP" in c._sweep_pend
+    c._sweep_pend["UP"] = (c._sweep_pend["UP"][0] - 31, c._sweep_pend["UP"][1])  # 30초 넘게 −2% 안에서 버팀
+    assert c.price_sweep(NOW, TD, "PRE", prices=px(1.21, 1.04)) == [] and "UP" in c._sweep_probe
+    c._sweep_probe["UP"] -= 130                                          # 2분 지나도 거래대금 없음 → 제외
+    assert c.price_sweep(NOW, TD, "PRE", prices=px(1.21, 1.04)) == [] and "UP" not in c._sweep_probe
+    assert "FLAT" not in c._sweep_probe and "FLAT" not in c._sweep_pend
 
 
 def test_price_sweep_ignores_one_trade_blip():
@@ -102,8 +108,34 @@ def test_price_sweep_ignores_one_trade_blip():
     c._promote = lambda s, now: None
     c._rt_set = lambda syms: None
     c.store = SimpleNamespace(query=lambda *a: [[None]])
+    c._rt_dmin = {}
     c._sweep_hist = [(_t.time() - 60, {"UP": 1.00})]
     assert c.price_sweep(NOW, TD, "PRE", prices=[{"symbol": "UP", "lastPrice": 1.05}]) == []
     c._sweep_pend["UP"] = (c._sweep_pend["UP"][0] - 3, 1.05)
-    assert c.price_sweep(NOW, TD, "PRE", prices=[{"symbol": "UP", "lastPrice": 1.0}]) == []
+    assert c.price_sweep(NOW, TD, "PRE", prices=[{"symbol": "UP", "lastPrice": 1.02}]) == []   # −2% 넘게 되돌아감
     assert "UP" not in c._sweep_pend
+    c._sweep_hist = [(_t.time() - 60, {"UP": 1.00})]
+    c.price_sweep(NOW, TD, "PRE", prices=[{"symbol": "UP", "lastPrice": 1.05}])
+    c._sweep_pend["UP"] = (c._sweep_pend["UP"][0] - 20, 1.05)
+    c.price_sweep(NOW, TD, "PRE", prices=[{"symbol": "UP", "lastPrice": 1.06}])
+    c._sweep_pend["UP"] = (c._sweep_pend["UP"][0] - 15, 1.05)                                  # 35초 버텼지만 마지막에 꺼짐
+    assert c.price_sweep(NOW, TD, "PRE", prices=[{"symbol": "UP", "lastPrice": 1.0}]) == []
+
+
+def test_price_sweep_tick_floor_and_lowpri():
+    """$1 근처는 호가 한 칸이 1% — +3% 는 최소 3칸, 버팀은 최소 2칸. 뒷순위는 전날 대비 +10%↑ 만."""
+    import queue, time as _t
+    c = _col()
+    c._pc_cache = ("2026-11-05", {"ONE": 1.0, "BIG": 1.0})
+    c._rt_syms, c._fast_hot, c._rt_q = set(), ("2026-11-05", set()), queue.Queue()
+    c.universe = {"ONE": {}, "BIG": {}}
+    c._promote = lambda s, now: None
+    c._rt_set = lambda syms: None
+    c.store = SimpleNamespace(query=lambda *a: [[None]])
+    c._rt_dmin, c._lowpri = {}, {"BIG"}
+    c._sweep_hist = [(_t.time() - 60, {"ONE": 1.00, "BIG": 1.00})]
+    c.price_sweep(NOW, TD, "PRE", prices=[{"symbol": "ONE", "lastPrice": 1.02}, {"symbol": "BIG", "lastPrice": 1.05}])
+    assert "ONE" not in c._sweep_pend                     # 2칸(+2%)은 아직
+    assert "BIG" not in c._sweep_pend                     # 뒷순위: 전날 대비 +5% 라 아직
+    c.price_sweep(NOW, TD, "PRE", prices=[{"symbol": "ONE", "lastPrice": 1.03}, {"symbol": "BIG", "lastPrice": 1.11}])
+    assert "ONE" in c._sweep_pend and "BIG" in c._sweep_pend

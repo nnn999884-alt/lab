@@ -978,6 +978,20 @@ table.ca-tbl tr.off .ca-fill { opacity: .35; }
       <div class="pre-head"><h2><i class="ic ic-bell" aria-hidden="true"></i>텔레그램 알림</h2><span class="sub" style="margin:0">종류별로 켜고 끄기 · 대시보드 기록은 계속</span></div>
       <div class="set-list" id="set-alerts"></div>
     </section>
+    <section class="card">
+      <div class="pre-head"><h2><i class="ic ic-target" aria-hidden="true"></i>종목 거르기</h2><span class="sub" style="margin:0">잡주 줄이기 · 0 = 끔</span></div>
+      <form class="set-form" id="set-flt">
+        <span class="sub" style="margin:0;width:100%">훑기로 잡은 뒤 2분 안 실시간 거래대금이 이것보다 적으면 감시에서 뺌 ($)</span>
+        <label>데이 <input type="number" id="set-sd-DAY" min="0" step="500"></label>
+        <label>프리 <input type="number" id="set-sd-PRE" min="0" step="500"></label>
+        <label>정규 <input type="number" id="set-sd-REGULAR" min="0" step="500"></label>
+        <label>애프터 <input type="number" id="set-sd-AFTER" min="0" step="500"></label>
+        <span class="sub" style="margin:0;width:100%">감시 목록 (하루 한 번 새로 만들 때 · 최근 30일 급등주는 그대로 둠)</span>
+        <label>시총 상한 ($) <input type="number" id="set-mcap" min="0" step="10000000"></label>
+        <label>20일 평균 거래대금 하한 ($) <input type="number" id="set-adv" min="0" step="5000"></label>
+        <button type="submit">저장</button><span class="sub" id="set-flt-msg" style="margin:0"></span>
+      </form>
+    </section>
     <section class="card" hidden>
       <div class="pre-head"><h2><i class="ic ic-wallet" aria-hidden="true"></i>가상 계좌</h2><span class="sub" style="margin:0">매매 탭 손익 계산 기준 ($)</span></div>
       <form class="set-form" id="set-va">
@@ -2466,6 +2480,8 @@ async function loadSettings() {
     toggleRow(ab, "실시간 거래 터짐 감지", "웹소켓 체결로 바로 잡기 (끄면 1분 확인만)", s.realtime !== false, on => postSettings({ realtime: on }));
     Object.entries(ALERT_KO).forEach(([k, [t, d]]) => toggleRow(ab, t, d, s.alerts[k] !== false, on => postSettings({ alerts: { [k]: on } })));
     $("set-cap").value = s.vaccount.capital; $("set-per").value = s.vaccount.per_trade;
+    ["DAY", "PRE", "REGULAR", "AFTER"].forEach(k => { $("set-sd-" + k).value = (s.sweep_min_dollar || {})[k] ?? ""; });
+    $("set-mcap").value = s.universe_max_mcap ?? ""; $("set-adv").value = s.universe_min_adv ?? "";
   }
   const g = $("st-grid"); g.replaceChildren();
   const age = st.ts ? Math.round((Date.now() - new Date(st.ts)) / 1000) : null;
@@ -2479,6 +2495,12 @@ async function loadSettings() {
       const b = document.createElement("div"); b.className = "v"; b.textContent = v; if (String(v).startsWith("⚠")) b.classList.add("neg"); c.append(a, b); g.appendChild(c); });
   $("st-ts").textContent = st.ts ? "갱신 " + kst(st.ts) : "";
 }
+const SESS_KEYS = ["DAY", "PRE", "REGULAR", "AFTER"];
+$("set-flt").onsubmit = e => { e.preventDefault();
+  const sd = {}; SESS_KEYS.forEach(k => { sd[k] = +$("set-sd-" + k).value || 0; });
+  postSettings({ sweep_min_dollar: sd, universe_max_mcap: +$("set-mcap").value || 0, universe_min_adv: +$("set-adv").value || 0 })
+    .then(() => { $("set-flt-msg").textContent = "저장됨 (감시 목록 기준은 다음 목록 갱신 때)"; setTimeout(() => $("set-flt-msg").textContent = "", 3000); })
+    .catch(err => alert(err.message)); };
 $("set-va").onsubmit = e => { e.preventDefault();
   postSettings({ vaccount: { capital: +$("set-cap").value, per_trade: +$("set-per").value } })
     .then(() => { $("set-va-msg").textContent = "저장됨"; delete _seen.vt; setTimeout(() => $("set-va-msg").textContent = "", 2000); })

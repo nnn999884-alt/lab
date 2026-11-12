@@ -9,6 +9,10 @@ DEFAULTS = {
     "strategies": {"S1": True, "S2": True, "S3": True, "S4": True, "S5": True, "S6": True},
     "alerts": {"presurge": True, "burst": True, "early20": True, "after_move": True, "bottom_bounce": True, "steady": False, "halt": True, "pre_open": True, "vtrade": True, "dm_pick": True, "briefing": True, "perf": True, "reaccel": True, "approach": True, "early_watch": True, "absorb": True, "dna": True, "fast": True, "miss": True, "spike_start": True, "day_open": True, "slow_climb": True, "ignition": True},
     "realtime": True,
+    # 11/12: 전 종목 훑기로 잡은 뒤 2분 안 웹소켓 대금 기준 ($, 세션별) · 감시 목록 시총 상한 · 20일 평균 거래대금 하한 (0 = 끔)
+    "sweep_min_dollar": {"DAY": 1000, "PRE": 3000, "REGULAR": 5000, "AFTER": 5000},
+    "universe_max_mcap": 500000000,
+    "universe_min_adv": 25000,
     "vaccount": {"capital": 10000, "per_trade": 1000},
 }
 ALERT_KO = {"presurge": "🚨 급등 전조", "burst": "📶 거래 터짐 신호", "early20": "🌙 정규장 전 +20% 돌파", "after_move": "🌆 애프터마켓 누적 변동",

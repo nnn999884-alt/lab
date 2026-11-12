@@ -615,6 +615,25 @@ def test_ranking_admits_symbol_outside_universe(tmp_path):
     assert st.query("SELECT shares FROM stock_info WHERE symbol='MERC'")[0][0] == 1000000
 
 
+def test_ranking_admission_skips_big_market_cap(tmp_path):
+    """순위 편입: 시총 $5억 초과는 뒷순위로 (빼지 않음) — 최근 30일 급등주는 예외 (11/12)."""
+    col, st, sent = make(tmp_path)
+
+    class C:
+        def stocks(self, syms):
+            return [{"symbol": s, "name": s, "sharesOutstanding": "400000000" if s != "SMALL" else "5000000",
+                     "listDate": "2020-01-01"} for s in syms]
+    col.c = C()
+    col.universe = {}
+    col._listed = {s: {"market": "NASDAQ", "name": s} for s in ("BIGCAP", "SMALL", "RUNNER")}
+    st.db.execute("INSERT INTO runners (trade_date, symbol, prev_close, close, change_pct) VALUES ('2026-10-20','RUNNER',1,2,100)")
+    st.db.commit()
+    now = datetime(2026, 11, 3, 0, 0, tzinfo=timezone.utc)
+    col._admit_from_rankings([{"symbol": s, "last": 2.0, "type": "TOP_GAINERS", "rank": 1} for s in ("BIGCAP", "SMALL", "RUNNER")], now)
+    assert set(col.universe) == {"BIGCAP", "SMALL", "RUNNER"}   # 빼지 않고
+    assert col._lowpri == {"BIGCAP"}                            # 시총 $8억은 뒷순위 (최근 급등주 RUNNER 는 아님)
+
+
 def test_rt_alert_flow2_runs_on_worker_thread_connection(tmp_path):
     """2차 재유입(flow2) 이벤트 기록이 메인 스레드 DB 연결을 쓰면 '실시간 처리 실패(SQLite … same thread)' 로 알림이 통째로 사라진다
     (10/26~11/03 969건). 실시간 스레드 전용 연결(store)만 써야 한다."""
