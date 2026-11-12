@@ -52,6 +52,7 @@ def _fake(store):
     f = SimpleNamespace(store=store, universe={"ABC": {"name": "Abc"}}, sent=sent,
                         notifier=SimpleNamespace(send=sent.append), _on=lambda k: True,
                         _chase_line=lambda store, sym, price: "")
+    f._gsend = lambda sym, price, text, **k: sent.append(text) or True       # 등급은 test_alertgrade 에서
     f._event = lambda now, sym, kind, text, value=None, store=None: store.db.execute(
         "INSERT INTO events VALUES (?,?,?,?,?)", (now.isoformat(), sym, kind, text, value))
     return f

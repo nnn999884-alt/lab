@@ -39,6 +39,15 @@ ACTIVE_MIN_DAY_VOL_RATIO = 50.0 # 전날 거래량 대비 이 배 이상
 ACTIVE_BY_SESSION = {"DAY": (1e4, 0.05, 5.0), "PRE": (2e4, 0.1, 5.0), "REGULAR": (1e5, 0.1, 5.0), "AFTER": (2e4, 0.1, 5.0)}
 
 
+def _money_bars(state_dir: str) -> dict:
+    """🔥 표시 최소 3분 거래대금 = 설정 탭 '종목 거르기' 세션 기준 (sweep_min_dollar, 기본 데이 $1천 · 프리 $3천 · 정규·애프터 $5천)."""
+    from . import settings
+    try:
+        return {k: float(v) for k, v in settings.load(state_dir)["sweep_min_dollar"].items()}
+    except Exception:
+        return {}
+
+
 def is_moving(live_m: dict, turnover_3m: float | None, session: str | None = None) -> bool:
     """'지금 움직임' 탭에 넣을 종목인가 (정지 종목은 호출하는 쪽에서 뺀다)."""
     d_min, t_min, x_min = ACTIVE_BY_SESSION.get(session or live_m.get("session") or "REGULAR", ACTIVE_BY_SESSION["REGULAR"])
@@ -875,6 +884,9 @@ def ranked(db_path: str, limit: int = 50, only_active: bool = True) -> dict:
         # 지금 급등 전조 조건을 채운 종목(hot)과 그 등급(A/B/C), 3초 거래 순위 1~3위(flow_top)를 표시 — 대시보드에서 눈에 띄게 한다.
         now_iso = datetime.now(timezone.utc).isoformat()
         pins_dirty = False
+        from pathlib import Path
+        bars_ = _money_bars(str(Path(db_path).parent))
+        _money_bar = lambda ses: bars_.get(ses or "REGULAR", 5000.0)
         # 맨 위 1~3번 = 지금 체결이 있는 종목(최근 TOP_RECENT_SEC 초) 중 3분 회전율이 가장 큰 3개 (2026-11-05 변경).
         # 체결 있는 종목이 3개 미만이면 모자란 만큼은 아래 흐름 순위 순서대로 채운다.
         halted = _halted_now(con)
@@ -897,6 +909,8 @@ def ranked(db_path: str, limit: int = 50, only_active: bool = True) -> dict:
                 continue
             ok, why = presurge(now_iso, r.get("tier") or 0, r.get("close"), (r.get("metrics") or {}).get("vol_ratio"),
                                lm.get("chg"), None, r.get("turnover_3m"))
+            if ok and (lm.get("dollar_3m") or 0) < _money_bar(lm.get("session")):
+                ok = False                          # 11/12: 최근 3분 거래대금이 세션 기준 미만이면 🔥 안 붙임 (한 주 체결로 튄 잡주)
             r["hot"], r["hot_why"] = ok, why
             r["grade"] = alert_grade(now_iso, r.get("tier") or 0, None, None, r.get("turnover_3m"), r.get("shares"),
                                      lm.get("dollar_3m"))[0]
@@ -909,7 +923,7 @@ def ranked(db_path: str, limit: int = 50, only_active: bool = True) -> dict:
         # 맨 위 1~3번 = 지금 거래 흐름 1~3위 (계속 고정), 그 아래 = 급등 조건 충족 종목, 나머지는 흐름 순 (안정 정렬)
         for r in rows:                             # 조건이 풀렸어도 오늘 A/B 가 붙었던 종목은 칩을 유지한다 (자리는 일반 순위)
             pin = pins.get(r["symbol"])
-            if pin and not r.get("hot"):
+            if pin and not r.get("hot") and (r["live_m"].get("dollar_3m") or 0) >= _money_bar(r["live_m"].get("session")):
                 r["hot"], r["grade"], r["pinned"] = True, pin["grade"], True
                 r["hot_why"] = ["조건 충족 후 유지"] + list(pin.get("why") or [])
         if pins_dirty:

@@ -22,6 +22,7 @@ def make(tmp_path):
     sent = Sent()
     col = Collector(None, st, None, CollectorConfig(db_path=db), notifier=sent, link=lambda: "https://x.example")
     col.universe = {"PENX": {"name": "펜엑스", "last": 1.0}}
+    col._v_money_ok = lambda *a: True                    # 거래대금 확인은 따로 시험 (test_virtual_exit_needs_real_money)
     return col, st, sent
 
 
@@ -719,3 +720,20 @@ def test_model_picks_runs_once_in_window(tmp_path, monkeypatch):
     assert col.model_picks(T + timedelta(minutes=1)) is True
     col._mpick_thread.join()
     assert started
+
+
+def test_virtual_exit_needs_real_money(tmp_path):
+    """1주·$1 체결로 찍힌 가격은 가상 익절·손절로 안 친다 — 최근 5분 실제 거래대금이 세션 기준 이상일 때만 (11/12 CRGO)."""
+    col, st, sent = make(tmp_path)
+    del col._v_money_ok
+    now = datetime(2026, 11, 12, 15, 0, tzinfo=timezone.utc)                    # 10:00 ET 정규장 (기준 $5천)
+    with st.db:
+        st.db.execute("INSERT INTO vsignals (symbol, d0, opened, session, entry, status, high, low, last, tp, sl, strat) "
+                      "VALUES ('PENX','2026-11-11',?, 'DAY', 1.0, 'OPEN', 1.0, 1.0, 1.0, 20, 15, 'M1')", ((now - timedelta(hours=1)).isoformat(),))
+    v = col._vrow(st.query("SELECT * FROM vsignals")[0])
+    m = int(now.timestamp() // 60)
+    col._rt_dmin = {"PENX": {m: 1.0}}                                           # $1 한 건
+    assert col._vupdate(st, v, 1.30, now, "REGULAR") is None
+    assert st.query("SELECT status, high FROM vsignals")[0] == ("OPEN", 1.0)    # 가짜 고점도 안 남김
+    col._rt_dmin = {"PENX": {m: 8000.0}}
+    assert col._vupdate(st, v, 1.30, now, "REGULAR") == "익절 +20%"

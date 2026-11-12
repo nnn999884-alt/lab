@@ -2490,7 +2490,9 @@ async function loadSettings() {
    ["세션", SESS[st.session] || st.session || "-"], ["실시간 웹소켓", !ws.on ? "꺼짐" : ws.healthy ? "연결됨" : ws.connected ? "연결 (체결 뜸)" : "⚠ 끊김"],
    ["마지막 체결", ws.last_frame_sec == null ? "-" : `${ws.last_frame_sec}초 전`], ["구독 종목", (ws.subscribed ?? "-") + "개"],
    ["감시 종목", (st.watch ?? "-") + "개"], ["가상 보유", (st.open ?? "-") + "건"], ["지정가 대기", (st.orders ?? "-") + "건"],
-   ["유니버스", (st.universe ?? "-") + "종목"], ["웹소켓 재연결", (ws.connects ?? "-") + "회"]]
+   ["유니버스", (st.universe ?? "-") + "종목"], ["웹소켓 재연결", (ws.connects ?? "-") + "회"],
+   ["트레이딩뷰", !(st.tv && st.tv.on) ? "꺼짐 (토스만)" : st.tv.error ? "⚠ 토스로 대체 중" : st.tv.age_sec == null ? "대기" :
+     `${st.tv.realtime ? "실시간" : "지연"} · ${st.tv.symbols}종목 · ${st.tv.age_sec}초 전`], ["돈 붙은 종목 (TV)", ((st.tv && st.tv.hot) ?? 0) + "개"]]
     .forEach(([k, v]) => { const c = document.createElement("div"); c.className = "st"; const a = document.createElement("div"); a.className = "k"; a.textContent = k;
       const b = document.createElement("div"); b.className = "v"; b.textContent = v; if (String(v).startsWith("⚠")) b.classList.add("neg"); c.append(a, b); g.appendChild(c); });
   $("st-ts").textContent = st.ts ? "갱신 " + kst(st.ts) : "";
