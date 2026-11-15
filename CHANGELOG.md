@@ -16,6 +16,16 @@
 
 ---
 
+## 2026-11-15
+
+- **트리거 순간 호가 로거 (연구용 기록 전용)** (새 `pennybot/collector/triggerlog.py`, 설정 `trigger_log` · `trigger_quote_max_per_min` 20 · `trigger_start_delay_s` 10 · `trigger_fresh_s` 15, 표 `trigger_quotes`).
+  트레이딩뷰 스냅샷(PRE·REGULAR·AFTER, 세션 누적 거래량 차이로 1분봉 재구성)으로 연구용 '거래량 첫 폭발' 트리거(5배·$5k·5분 $2만·+10% 미만·ADV $25k)를 실시간 감지해 그 순간 REST 호가(최우선 매수·매도·잔량)를 저장한다. **매매·알림에는 안 쓰임.**
+  ① 시각 3종을 따로 저장: 요청 시작 · 응답 수신 · 호가 기준 시각(응답 timestamp). **기준 시각이 없거나(unconfirmed_no_asof) 응답보다 15초 넘게 낡았거나(stale_asof) 미래면(clock) 수신 시각만으로 신선하다고 판정하지 않음** — fresh=1 은 status=ok 만.
+  ② 실패·지연·한도·워밍업(감지기가 직전 60분을 직접 못 본 PRE 개장 직후·재시작·끊김 직후)은 '미확인'으로 기록하고 과거·미래 호가로 채우지 않음. 트리거마다 요청 1번, retries=0.
+  ③ origin='live' = 실시간 감지 신호. 소급 1분봉 신호와 섞이지 않고 `research/trigger_join.py` 가 'live_logged' / 'retro_only' 로 가름.
+  ④ 부하: 분당 20회 이하, 감지 10초 안에 못 보내면 미확인, 별도 스레드·DB 연결, 모든 오류는 삼켜서 TV 루프·감시·알림은 계속. 상태는 `collector_status.json` 의 `trig`.
+  참고: 기존 `quotes.ts` 는 폴링 라운드 시작 시각이고 실제 기준 시각은 `quotes.book_ts` (중앙 +63초 뒤, 한 라운드 표본) — 연구는 `book_ts` 로 판정할 것. P1 동결 파일(`research/`)은 변경 없음, 테스트 `test_p1_frozen_files_unchanged`.
+
 ## 2026-11-14
 
 - **당일 파동을 '그날 움직인 폭' 기준으로 다시 정의, 확률표에서 파동 뺌** (`pennybot/alertgrade.py`). 1분봉 10% 로 세니 급등주가 하루 11~19

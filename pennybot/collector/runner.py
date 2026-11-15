@@ -155,6 +155,8 @@ class Collector:
         # 별도 스레드가 '마지막으로 틱이 끝난 시각'을 보고, 장중에 이만큼 멈추면 프로세스를 재시작한다.
         self._tick_ok_at = time.monotonic()
         self._stage = "start"
+        self._trig = None                         # 트리거 순간 호가 로거 (연구용 기록 전용) — _tv_loop 에서 첫 스냅샷 때 만듦
+        self._trig_warn = 0.0
 
     def _on(self, alert: str) -> bool:
         """설정 탭의 알림 켜기·끄기."""
@@ -173,7 +175,7 @@ class Collector:
               "rt": len(self._rt_syms), "promoted": len(self._promoted),
               "open": sum(len(v) for v in self._vopen.values()),
               "orders": sum(len(v) for v in self._vorders.values()),
-              "tv": self._tv_status()}
+              "tv": self._tv_status(), "trig": self._trig.status() if self._trig else None}
         p = Path(self.cfg.db_path).parent / "collector_status.json"
         tmp = p.with_suffix(".tmp")
         tmp.write_text(json.dumps(st, ensure_ascii=False), encoding="utf-8")
@@ -2459,6 +2461,24 @@ class Collector:
         d = tv[1].get(sym)
         return float(d["d1"]) if d else 0.0
 
+    def _trig_feed(self, snap: dict, now: datetime, session: str, store) -> None:
+        """트리거 순간 호가 로거에 스냅샷을 넘긴다 (collector/triggerlog.py). 예외는 전부 삼킨다 — 연구용 기록이 수집기를 멈추면 안 됨."""
+        if not getattr(self.cfg, "trigger_log", False):
+            return
+        try:
+            if self._trig is None:
+                from .triggerlog import TriggerQuoteLogger
+                self._trig = TriggerQuoteLogger(self.c, self.cfg.db_path, max_per_min=self.cfg.trigger_quote_max_per_min,
+                                                start_delay_s=self.cfg.trigger_start_delay_s, fresh_s=self.cfg.trigger_fresh_s)
+                self._trig.start()
+                log.info("트리거 순간 호가 로거 시작 (분당 %d회 이하, 기록 전용)", self.cfg.trigger_quote_max_per_min)
+            td, _ = self.cal.classify(now)
+            self._trig.feed(snap, now.timestamp(), session, td.isoformat() if td else None, store)
+        except Exception as e:
+            if time.time() - self._trig_warn > 300:
+                self._trig_warn = time.time()
+                log.warning("트리거 호가 로거 오류(무시, 감시·알림은 계속): %s", e)
+
     def _tv_status(self) -> dict:
         tv = getattr(self, "_tv", None)
         tvs = getattr(self, "_tvs", None)
@@ -2485,6 +2505,7 @@ class Collector:
                     if self._tvs.realtime is False:      # 15분 지연 = 쿠키 만료 → 쓰지 않음 (토스만)
                         raise RuntimeError("실시간 아님 (15분 지연) — 쿠키 만료? .env TV_SESSIONID 다시 넣기")
                     self._tv = (time.time(), snap)
+                    self._trig_feed(snap, now, session, store)       # 연구용 기록만 — 실패해도 TV 루프·감시·알림에 영향 없음
                     if fails:
                         log.info("트레이딩뷰 다시 연결 → 트레이딩뷰 + 토스 같이 씀")
                     self._tv_err, fails = "", 0

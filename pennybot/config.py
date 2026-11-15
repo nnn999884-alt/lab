@@ -103,6 +103,10 @@ class CollectorConfig:
     precursor_live_max: int = 200    # 장중 감시 종목 수 상한 (11/07: 80→200, 체결 없는 종목은 1분봉을 다시 안 받아 조회 수는 그대로)
     precursor_rank_max: int = 40     # 목록 밖이라도 지금 랭킹(급등률·거래대금·거래량)에 든 종목을 이만큼 더 장중 감시
     tv_scan_seconds: float = 10.0    # 트레이딩뷰 스크리너(.env TV_SESSIONID·TV_SESSIONID_SIGN)로 전 종목 1분·5분봉 거래대금 (0 = 끔)
+    trigger_log: bool = True                # 트리거 순간 호가 로거 (연구용 기록 전용, 매매·알림 무관): 'trigger_quotes' 표 (collector/triggerlog.py). False = 끔
+    trigger_quote_max_per_min: int = 20     # 호가 요청 상한 (분당) — 넘치면 보내지 않고 '미확인'으로 기록
+    trigger_start_delay_s: float = 10.0     # 감지 뒤 이 시간 안에 요청 못 보내면 미확인(지연)
+    trigger_fresh_s: float = 15.0           # 호가 기준 시각이 응답 수신보다 이 이상 오래되면 신선하지 않음(미확인)
     price_sweep_seconds: float = 3.0   # 전 종목 현재가를 이 간격으로 따로 훑어 움직이기 시작한 종목을 바로 실시간 구독 (0 = 끔)
     fast_scan_seconds: int = 2      # 거래대금·거래량 실시간 랭킹을 이 간격으로 봐서 새로 든 종목을 바로 실시간 구독 (0 = 끔)
     realtime_alerts: bool = True     # 웹소켓 체결로 실시간 알림 (계정당 연결 2개 중 1개 사용, 끊기면 1분 확인으로 대체)
