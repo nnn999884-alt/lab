@@ -13,4 +13,12 @@ timeout /t 5 /nobreak >nul
 start /min "pennybot 매매" cmd /c run_forever.bat trade
 start /min "pennybot 대시보드" cmd /c run_forever.bat dashboard
 rem tunnel.bat 을 한 번 실행해 cloudflared 를 받아 뒀으면 외부 주소도 연다 (주소는 텔레그램으로)
-if exist tools\cloudflared.exe start /min "pennybot 외부 주소" cmd /c run_forever.bat tunnel
+if exist tools\cloudflared.exe (
+  start /min "pennybot 외부 주소" cmd /c run_forever.bat tunnel
+) else (
+  echo.
+  echo [안내] 휴대폰용 외부 주소는 꺼져 있습니다. 이 폴더에 tools\cloudflared.exe 가 없어서입니다.
+  echo        폴더를 새로 받았다면 tunnel.bat 을 한 번 실행하세요 ^(받아 오고 외부 주소를 텔레그램으로 보냅니다^).
+  echo        이후로는 start.bat 이 외부 주소도 같이 켭니다.
+  timeout /t 10 >nul
+)
