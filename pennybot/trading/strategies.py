@@ -1,4 +1,4 @@
-"""페니 급등주 전략: 데이마켓에 사서 그날 밤(프리마켓~정규장 개장 직후)에 판다.
+"""페니 급등주 전략. (처음 구조 '데이마켓에 사서 그날 밤 판다'는 2026-11-15 에 버림 — 아래 데이마켓 전략 넷은 기본 꺼짐)
 
 급등주는 평균적으로 장중에 되밀리고(소형주 +50% 갭 3,133건 연구), 급등 직후 회사가 주식을 파는 일이 많다.
 그래서 (1) 개장 전 개인 매수세가 몰릴 때 팔고, (2) '지금 주식을 팔 수 없는' 회사만 고르는 것이 핵심이다.
@@ -45,7 +45,20 @@ STRATEGY_KO = {
     "session_pop": "세션 터짐 눌림",
     "day_handoff": "데이 거래량 핸드오프",
     "after_dip": "애프터 눌림 마감 반등",
+    "wave2_b1": "2차 파동 B1",
+    "alert_limit": "알림 지정가 (전략A)",
 }
+# 대시보드에서 비슷한 전략끼리 묶어 보여 주는 이름 (2026-11-18). 순서 = 화면 순서.
+STRATEGY_GROUP = {
+    "눌림·반등 매수": ["pullback", "pump", "session_pop", "rebound", "reversal", "day_dip", "after_dip"],
+    "급등 추격·점화": ["surge", "day_ignition", "scalp", "regular_momentum", "combined"],
+    "지정가 대기·스윙": ["alert_limit", "wave2_b1"],
+    "매집·수급": ["steady_trend", "accumulation", "squeeze"],
+    "뉴스·공시": ["news", "dilution_catalyst"],
+    "데이 → 밤 구조 (보류)": ["runner_overnight", "day_handoff", "session_gap"],
+}
+GROUP_OF = {n: g for g, ns in STRATEGY_GROUP.items() for n in ns}
+GROUP_ORDER = list(STRATEGY_GROUP)
 SESSION_KO = {"DAY": "데이마켓", "PRE": "프리마켓", "REGULAR": "정규장", "AFTER": "애프터마켓", "CLOSED": "휴장"}
 LABEL = {"ATM_TERMINATED": "ATM 종료", "REGISTRATION_WITHDRAWN": "증자 등록 철회",
          "OFFERING_TERMINATED": "공모 철회", "BUYBACK": "자사주 매입"}
@@ -580,3 +593,7 @@ ALL[AfterDip.name] = AfterDip
 from .wave2 import Wave2B1   # noqa: E402
 
 ALL[Wave2B1.name] = Wave2B1
+
+from .alertlimit import AlertLimit   # noqa: E402
+
+ALL[AlertLimit.name] = AlertLimit

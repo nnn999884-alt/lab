@@ -19,6 +19,9 @@ CREATE TABLE IF NOT EXISTS quotes (
     symbol TEXT, ts TEXT, trade_date TEXT, session TEXT,
     bid REAL, bid_size REAL, ask REAL, ask_size REAL, levels INTEGER, book_ts TEXT,
     PRIMARY KEY (symbol, ts));
+CREATE TABLE IF NOT EXISTS depth_pre (
+    symbol TEXT, ts TEXT, trade_date TEXT, session TEXT, kind TEXT, event_ts TEXT, depth TEXT,
+    PRIMARY KEY (symbol, ts, event_ts));
 CREATE TABLE IF NOT EXISTS bars_1m (
     symbol TEXT, ts TEXT, trade_date TEXT, session TEXT,
     open REAL, high REAL, low REAL, close REAL, volume REAL,
@@ -137,6 +140,7 @@ class Store:
     def put_live_ticks(self, rows): return self._put("live_tick", rows)
     def put_price_now(self, rows): return self._put("price_now", rows)
     def put_quotes(self, rows): return self._put("quotes", rows)
+    def put_depth_pre(self, rows): return self._put("depth_pre", rows)
     def put_bars(self, rows): return self._put("bars_1m", rows)
     def put_rankings(self, rows): return self._put("rankings", rows)
     def put_filings(self, rows): return self._put("filings", rows)
@@ -189,7 +193,7 @@ class Store:
         r = self.query("SELECT MAX(ts) FROM bars_1m WHERE symbol=?", (symbol,))
         return r[0][0] if r else None
 
-    def prune(self, tick_cutoff_date: str, bar_cutoff_date: str) -> dict[str, int]:
+    def prune(self, tick_cutoff_date: str, bar_cutoff_date: str, price_cutoff_date: str | None = None) -> dict[str, int]:
         """원시 틱(prices/quotes/rankings)은 짧게, 1분봉(bars_1m)은 길게 보관한다.
 
         prices/quotes 는 PK가 (symbol, ts) 라 trade_date 인덱스(ix_*_day)로 지워진다.
@@ -198,8 +202,10 @@ class Store:
         counts = {}
         with self.db:
             for table in ("prices", "quotes", "rankings"):
-                cur = self.db.execute(f"DELETE FROM {table} WHERE trade_date < ?", (tick_cutoff_date,))
+                cutoff = (price_cutoff_date or tick_cutoff_date) if table == "prices" else tick_cutoff_date
+                cur = self.db.execute(f"DELETE FROM {table} WHERE trade_date < ?", (cutoff,))
                 counts[table] = cur.rowcount
+            self.db.execute("DELETE FROM depth_pre WHERE trade_date < ?", (tick_cutoff_date,))
             cur = self.db.execute("DELETE FROM events WHERE ts < ?", (tick_cutoff_date,))
             counts["events"] = cur.rowcount
             cur = self.db.execute("DELETE FROM bars_1m WHERE trade_date < ?", (bar_cutoff_date,))

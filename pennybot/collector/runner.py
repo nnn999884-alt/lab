@@ -15,6 +15,8 @@
 from __future__ import annotations
 
 import json
+from collections import deque
+from pathlib import Path
 import logging
 import statistics
 import time
@@ -42,6 +44,8 @@ RANKINGS = [  # (type, duration)
     ("TOSS_SECURITIES_TRADING_VOLUME", "realtime"),
     ("TOP_GAINERS", "1d"),
     ("TOP_LOSERS", "1d"),
+    ("TURNOVER", "realtime"),      # 11/19: 회전율(거래량÷발행주식) 순위 — LS g3112 rankgubun 4 / 트레이딩뷰 거래대금÷시총
+    ("LS_POPULAR", "realtime"),    # 11/19: LS 인기 TOP50(g3111) — 토스증권 순위(한국 개인 투자자가 많이 사는 종목)에 해당
 ]
 # SCHEDULE 13D: 5% 이상 대량지분 취득 (2024-12 이후 EDGAR 양식 이름, 피드에서는 대상 회사가 'Subject' 행).
 # 2026-11-05 검증(SEC 인덱스 2년치 423건): 다음날 시가 매수 3일 평균은 대조보다 +2~3%p 였지만 상위 1% 빼면 −1.4% —
@@ -116,6 +120,8 @@ class Collector:
         self._rt_seeded: set = set()              # 1분봉으로 평소 거래량을 채운 종목
         self._rt_fired: dict = {}                 # 종목 → 마지막 실시간 신호 시각(초)
         self._rt_shares: dict = {}
+        self._depth_ring: dict = {}               # 종목별 최근 10호가 스냅샷 (급등 신호 때만 DB 로 저장)
+        self._depth_cap: dict = {}                # 종목 → (저장 종료 시각, 종류, 신호 시각)
         self._rb_levels: dict = {}                # 며칠 전 급등주 → 그 뒤 최고가 (넘기 전에 접근·임박 알림)
         self._rb_sent: set = set()                # 오늘 보낸 (종목, 단계)
         self._rt_last: dict = {}                  # 종목 → 직전 체결가 (선을 아래에서 위로 넘는 순간만)
@@ -170,7 +176,9 @@ class Collector:
               "ws": {"on": bool(rt), "connected": bool(rt and rt.connected), "healthy": bool(rt and rt.healthy),
                      "last_frame_sec": round(rt.clock() - rt.last_frame, 1) if rt and rt.last_frame else None,
                      "connects": rt.connects if rt else 0, "subscribed": len(rt.desired()) if rt else 0,
-                     "error": rt.last_error if rt else ""},
+                     "error": rt.last_error if rt else "",
+                     **({"tracked": len(getattr(rt, "_sub_trade", ())), "cache": len(rt.last), "frames": rt.frames,
+                         "frames_by_session": dict(rt.sess_frames)} if hasattr(rt, "sess_frames") else {})},
               "watch": len(self.watch), "watch_buckets": dict(self._watch_buckets),
               "rt": len(self._rt_syms), "promoted": len(self._promoted),
               "open": sum(len(v) for v in self._vopen.values()),
@@ -278,7 +286,8 @@ class Collector:
         쓰기를 막으므로 여기서는 하지 않는다 — 필요하면 수집기를 멈추고 `python -m pennybot vacuum-db`."""
         tick_cutoff = (now.date() - timedelta(days=self.cfg.db_retain_tick_days)).isoformat()
         bar_cutoff = (now.date() - timedelta(days=self.cfg.db_retain_bar_days)).isoformat()
-        counts = self.store.prune(tick_cutoff, bar_cutoff)
+        price_cutoff = (now.date() - timedelta(days=self.cfg.db_retain_price_days)).isoformat()
+        counts = self.store.prune(tick_cutoff, bar_cutoff, price_cutoff)
         total = sum(counts.values())
         if total:
             log.info("DB 정리: %s (틱 기준 %s 이전, 1분봉 기준 %s 이전)", counts, tick_cutoff, bar_cutoff)
@@ -398,17 +407,22 @@ class Collector:
             self._maybe_research_refresh(now)
             return
         # 애프터마켓도 1분마다 (11/03 MERC: 애프터에 터졌는데 10분 간격이라 순위 변화를 늦게/못 봄). CLOSED 는 위에서 이미 빠짐.
-        every = timedelta(seconds=c.ranking_poll_live_seconds)
+        tv = getattr(self, "_tv", None)               # 트레이딩뷰가 살아 있으면 순위 편입을 10초마다 (기록·감시 재선정은 1분마다)
+        tv_live = bool(tv and time.time() - tv[0] < 30 and tv[1])
+        every = timedelta(seconds=min(10, c.ranking_poll_live_seconds) if tv_live else c.ranking_poll_live_seconds)
         if self._due("rankings", now, every):
+            self._rank_wrote = True
             self._run("rankings", self.poll_rankings, now, trade_date, session)
-            self._run("watch", self.select_watch, now, trade_date)
-            self._run("steady_flow", self.poll_steady_flow, now, trade_date, session)
+            if getattr(self, "_rank_wrote", True):
+                self._run("watch", self.select_watch, now, trade_date)
+                self._run("steady_flow", self.poll_steady_flow, now, trade_date, session)
         if self._due("prices", now, timedelta(seconds=c.price_poll_seconds)):
             self._run("prices", self.poll_prices, now, trade_date, session)
             if c.vsignal:
                 self._run("vsignals", self.check_vsignals, now, session)
                 if session == DAY:
                     self._run("model_picks", self.model_picks, now)
+            self._run("night_cands", self.night_cands, now)
         if self._due("orderbook", now, timedelta(seconds=c.orderbook_poll_seconds)):
             self._run("orderbook", self.poll_orderbooks, now, trade_date, session)
         if self._due("candles", now, timedelta(minutes=c.candle_sync_minutes)):
@@ -435,14 +449,20 @@ class Collector:
                 # 한 연결에 구독 100건: 체결 70종목 + 호가 30종목(맨 앞 = 가장 활발한 종목). 토스는 같은 키로 연결을 2개 열면
                 # 서로 끊어 버린다(2026-11-05 확인: 둘 다 몇 초마다 '서버가 연결을 닫음').
                 books = getattr(self.cfg, "rt_book_symbols", 30)
-                self._rt = stream.TossStream(self.c, None, channels=("trade",), on_trade=self._on_trade,
-                                             on_book=self._on_book, book_max=books).start()
+                mk = getattr(self.c, "make_stream", None)         # 11/17: LS 클라이언트면 LS 웹소켓 (전 종목 캐시 + 감시 종목 콜백)
+                self._rt = (mk(channels=("trade",), on_trade=self._on_trade, on_book=self._on_book, book_max=books) if mk else
+                            stream.TossStream(self.c, None, channels=("trade",), on_trade=self._on_trade,
+                                              on_book=self._on_book, book_max=books)).start()
                 threading.Thread(target=self._rt_worker, name="rt-alert", daemon=True).start()
                 log.info("실시간 체결 알림 켜짐 (웹소켓, 체결 최대 %d종목 + 호가 %d종목 → 물량 흡수·ticks.db)",
                          self._rt.max_symbols, books)
             else:
                 log.warning("websocket-client 패키지가 없어 실시간 알림 없이 1분 확인만 씁니다")
+        import faulthandler
+        _fh = open(Path(self.cfg.db_path).parent / "logs" / "stall_trace.txt", "w", encoding="utf-8")   # 11/17: 틱이 안 끝날 때 어디서 막혔는지 남김
         while True:
+            faulthandler.cancel_dump_traceback_later()
+            faulthandler.dump_traceback_later(150, repeat=False, file=_fh)
             try:
                 self.tick()
             except Exception:
@@ -524,7 +544,8 @@ class Collector:
 
     def _rotation_pool(self, picked) -> list[str]:
         low = getattr(self, "_lowpri", None) or set()    # 뒷순위(시총 큼·평소 거래 없음)는 순환 감시에서 뺀다
-        return [s for s in self.universe if s not in picked and s not in low]
+        nc = set(getattr(self, "_ncands", None) or [])  # 11/15: 오늘 급등 후보는 뒷순위여도 넣음
+        return [s for s in self.universe if s not in picked and (s not in low or s in nc)]
 
     def refresh_universe(self, now: datetime) -> None:
         listed: dict[str, dict] = {}
@@ -572,7 +593,44 @@ class Collector:
         if last and (now - last).total_seconds() < 600:
             return
         self._ev_last[key] = now
+        if kind in ("spike_start", "burst"):
+            self._depth_dump(sym, now, kind, store)
         (store or self.store).put_events([{"ts": iso(now), "symbol": sym, "kind": kind, "text": text, "value": value}])
+        from ..alertperf import ALL_KINDS
+        if kind in ALL_KINDS:
+            try:
+                self._a1_order(now, sym, kind, store or self.store)
+            except Exception as e:                      # 가상 전략 실패가 알림·피드를 막지 않게
+                log.debug("A1 주문 실패 %s: %s", sym, e)
+
+    def _a1_order(self, now: datetime, sym: str, kind: str, store) -> None:
+        """전략A(알림 지정가): 종목·거래일마다 **첫 알림**의 가격보다 dip% 아래에 지정가, minutes 분 안에 닿지 않으면 취소.
+        체결·익절·손절·2시간 정리는 check_vsignals 가 한다. 매매 봇의 alert_limit 전략이 이 ORDER 행을 읽어 모의 주문을 낸다."""
+        from ..alertperf import LABELS, trade_day
+        from ..vstrat import STRATEGIES
+        st = STRATEGIES["A1"]
+        if "A1" not in self.cfg.vsignal_strategies or not self._settings.get()["strategies"].get("A1", True):
+            return
+        d0 = trade_day(now)
+        if store.query("SELECT 1 FROM vsignals WHERE symbol=? AND d0=? AND strat='A1'", (sym, d0)):
+            return
+        px = None
+        qn = getattr(self.c, "quote_now", None)
+        if qn:                                           # 알림가는 LS 시세(g3101) 지금 값 — 10초 지난 트레이딩뷰 값이 아님
+            q = qn(sym, ttl=2.0)
+            px = (q or {}).get("price") or None
+        px = px or self._last_price(sym, None)
+        if not px:
+            return
+        limit = px * (1 - st["dip"] / 100)
+        session = self.cal.classify(now)[1]
+        reason = f"{LABELS.get(kind, kind)} 알림가 {px:.4g} → −{st['dip']}% 지정가 {st['minutes']}분"
+        with store.db:
+            c = store.db.execute(
+                "INSERT INTO vsignals (symbol, d0, opened, session, entry, score, reason, status, high, low, last, tp, sl, strat) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (sym, d0, iso(now), session, limit, 0, reason, "ORDER", limit, limit, px, st["tp"], st["sl"], "A1"))
+        log.info("A1 알림 지정가 주문 %s $%.4g (알림가 %.4g)", sym, limit, px)      # 알림이 많아서 주문 메시지는 안 보냄 (체결·정리만)
 
     def poll_prices(self, now: datetime, trade_date, session: str) -> None:
         # '1분새 급등' 비교 기준 = 약 1분 전 가격 (조회 주기가 20초여도 1분 변화로 판단)
@@ -842,6 +900,39 @@ class Collector:
                 self._gsend(sym, last, after_move_text(sym, (self.universe.get(sym) or {}).get("name"), chg, last))
             self._event(now, sym, "after_move", f"🌆 {sym} 애프터마켓 누적 {chg:+.1f}% (정규장 종가 대비)", chg)
 
+    DEPTH_RING = 45                                   # 급등 직전 몇 번의 호가 스냅샷을 들고 있을지 (1분 간격 ≈ 45분)
+    DEPTH_AFTER_S = 600                               # 급등 뒤 10분은 계속 저장 (벽이 사라지는지)
+
+    def _depth_note(self, sym: str, now: datetime, trade_date, session: str, bids: list, asks: list) -> None:
+        """10호가(잔량 있는 칸만)를 종목별 링에 쌓고, 급등 뒤 10분 안이면 같이 저장한다. 평소엔 DB 에 쓰지 않는다."""
+        b = [[float(x["price"]), float(x["volume"])] for x in bids if float(x.get("volume") or 0) > 0]
+        a = [[float(x["price"]), float(x["volume"])] for x in asks if float(x.get("volume") or 0) > 0]
+        if not b and not a:
+            return
+        snap = (iso(now), trade_date.isoformat(), session, json.dumps({"b": b, "a": a}, separators=(",", ":")))
+        ring = self._depth_ring.setdefault(sym, deque(maxlen=self.DEPTH_RING))
+        ring.append(snap)
+        cap = self._depth_cap.get(sym)
+        if cap:
+            if now.timestamp() > cap[0]:
+                self._depth_cap.pop(sym, None)
+            else:
+                self.store.put_depth_pre([{"symbol": sym, "ts": snap[0], "trade_date": snap[1], "session": snap[2],
+                                           "kind": cap[1], "event_ts": cap[2], "depth": snap[3]}])
+
+    def _depth_dump(self, sym: str, now: datetime, kind: str, store=None) -> None:
+        """급등 신호가 난 순간: 직전 링을 전부 저장하고 이후 10분 저장을 켠다 (이벤트 스레드에서도 부르므로 예외는 삼킨다)."""
+        try:
+            ring = self._depth_ring.get(sym)
+            if not ring:
+                return
+            ev = iso(now)
+            (store or self.store).put_depth_pre([{"symbol": sym, "ts": t, "trade_date": d, "session": ss, "kind": kind,
+                                                  "event_ts": ev, "depth": dp} for t, d, ss, dp in list(ring)])
+            self._depth_cap[sym] = (now.timestamp() + self.DEPTH_AFTER_S, kind, ev)
+        except Exception as e:
+            log.debug("호가 급등 전 저장 실패 %s: %s", sym, e)
+
     def poll_orderbooks(self, now: datetime, trade_date, session: str) -> None:
         rows = []
         for sym in self.watch:
@@ -859,12 +950,17 @@ class Collector:
                 "ask_size": float(asks[0]["volume"]) if asks else None,
                 "levels": min(len(bids), len(asks)), "book_ts": ob.get("timestamp"),
             })
+            self._depth_note(sym, now, trade_date, session, bids, asks)
         self.store.put_quotes(rows)
 
     def poll_rankings(self, now: datetime, trade_date, session: str) -> None:
         rows = []
+        tvsnap = None                       # 트레이딩뷰 전 종목(시장 전체) 스냅샷이 30초 안이면 순위 원천으로 (구독 2,600 밖 급등주도 잡힘)
+        tv = getattr(self, "_tv", None)
+        if tv and time.time() - tv[0] < 30 and tv[1]:
+            tvsnap = tv[1]
         for type_, duration in RANKINGS:
-            res = self.c.rankings(type_, duration) or {}
+            res = (self._rank_results(type_, now, tvsnap, tv_only_first=True) or [{}])[0]
             for r in res.get("rankings", []):
                 pr = r.get("price") or {}
                 rows.append({
@@ -875,11 +971,23 @@ class Collector:
                     "volume": float(r.get("tradingVolume") or 0), "amount": float(r.get("tradingAmount") or 0),
                     "ranked_at": res.get("rankedAt"),
                 })
+        src = "트레이딩뷰" if tvsnap is not None else ("LS 순위(g3112)" if (hasattr(self.c, "rank_items") and self.c.rank_items("MARKET_TRADING_AMOUNT")) else "웹소켓 캐시")
+        prev_src = getattr(self, "_rank_src", None)
+        self._rank_src = src
+        if prev_src and prev_src != src and self.notifier:
+            self.notifier.send(f"🔀 순위 원천이 바뀌었어요: {prev_src} → {src}" + ("\n(트레이딩뷰가 끊겨 LS 순위로 대신 보는 중)" if prev_src == "트레이딩뷰" else ""),
+                               key="rank_src", every=300)
+        last_w = getattr(self, "_rank_write_t", 0.0)
+        if tvsnap is not None and time.time() - last_w < 55:
+            self._rank_wrote = False                  # 10초 주기 중간 회차: 편입만 하고 DB 기록·순위 변동 알림·감시 재선정은 건너뜀
+            self._admit_from_rankings(rows, now)
+            return
+        self._rank_write_t = time.time()
         self.store.put_rankings(rows)
         self._admit_from_rankings(rows, now)
         names = {"MARKET_TRADING_AMOUNT": "시장 거래대금", "TOSS_SECURITIES_TRADING_AMOUNT": "토스 거래대금",
                  "MARKET_TRADING_VOLUME": "시장 거래량", "TOSS_SECURITIES_TRADING_VOLUME": "토스 거래량",
-                 "TOP_GAINERS": "급등률", "TOP_LOSERS": "급락률"}
+                 "TOP_GAINERS": "급등률", "TOP_LOSERS": "급락률", "TURNOVER": "회전율", "LS_POPULAR": "LS 인기"}
         cur: dict[str, dict[str, int]] = {}
         for r in rows:
             if r["symbol"] in self.universe:               # 페니주 유니버스만 (대형주 순위 변화는 소음)
@@ -895,6 +1003,54 @@ class Collector:
                         self._event(now, sym, f"rank:{typ}", f"📈 {sym} {nm} {names.get(typ, typ)} {moved}".replace("  ", " "), rk)
             self._rank_prev[typ] = ranks
 
+    def _rank_results(self, type_: str, now: datetime, tvsnap, tv_only_first: bool = False) -> list[dict]:
+        """한 순위 종류의 원천별 결과들: 트레이딩뷰 스냅샷(전 종목) → LS 시장 전체 순위(g3112) → (둘 다 없으면) 웹소켓 캐시.
+        초소형주만: 시총이 universe_max_mcap($5억)을 넘는 종목은 뺀다. LS 순위는 시총을 shareprc(천 달러)로 준다."""
+        out = []
+        if tvsnap is not None:
+            out.append(self._tv_rankings(tvsnap, type_, now))
+        if not (tvsnap is not None and tv_only_first and type_ != "LS_POPULAR"):
+            items = self.c.rank_items(type_) if hasattr(self.c, "rank_items") else None
+            if items:
+                try:
+                    max_mc = float(self._settings.get().get("universe_max_mcap") or 0)
+                except Exception:
+                    max_mc = 0.0
+                if max_mc:
+                    items = [x for x in items if not (x.get("mcapK") and x["mcapK"] * 1000 > max_mc)]
+                out.append({"rankings": [dict(x, rank=i) for i, x in enumerate(items, 1)], "rankedAt": now.isoformat()})
+        if not out and type_ != "TURNOVER":
+            out.append(self.c.rankings(type_, "realtime") or {})
+        return out
+
+    def _tv_rankings(self, snap: dict, type_: str, now: datetime, count: int = 100) -> dict:
+        """트레이딩뷰 스냅샷 → 토스 순위 모양 ({rankings: [...]}). 거래대금=현재가×세션 누적 거래량(USD), 등락률은 비율."""
+        if type_.startswith("TOSS_") or type_ == "LS_POPULAR":
+            return {"rankings": []}                      # 토스 전용 순위는 없음 (시장 순위와 중복) · 인기 순위는 LS 에만 있음
+        key = {"MARKET_TRADING_AMOUNT": lambda d: d["px"] * (d.get("vol") or 0),
+               "MARKET_TRADING_VOLUME": lambda d: d.get("vol") or 0,
+               "TOP_GAINERS": lambda d: d.get("chg") if d.get("chg") is not None else -1e9,
+               "TOP_LOSERS": lambda d: -(d.get("chg") if d.get("chg") is not None else 1e9),
+               # 회전율 ≈ 하루 거래대금 ÷ 시총 (트레이딩뷰엔 발행주식이 없어 시총으로)
+               "TURNOVER": lambda d: (d["px"] * (d.get("vol") or 0) / d["mcap"]) if d.get("mcap") else 0.0}.get(type_)
+        if not key:
+            return {"rankings": []}
+        items = []
+        try:                                             # 초소형주만: 시총이 universe_max_mcap($5억) 넘는 종목은 순위에서 미리 뺀다 (시총 모르면 둠)
+            max_mc = float(self._settings.get().get("universe_max_mcap") or 0)
+        except Exception:
+            max_mc = 0.0
+        if max_mc:
+            snap = {k: v for k, v in snap.items() if not (v.get("mcap") and v["mcap"] > max_mc)}
+        top = sorted(snap.items(), key=lambda kv: -key(kv[1]))[:count]
+        for i, (sym, d) in enumerate(top, 1):
+            chg = d.get("chg") or 0.0
+            items.append({"rank": i, "symbol": sym, "tradingVolume": d.get("vol") or 0,
+                          "tradingAmount": d["px"] * (d.get("vol") or 0),
+                          "price": {"lastPrice": d["px"], "basePrice": round(d["px"] / (1 + chg / 100), 4) if chg > -99 else d["px"],
+                                    "changeRate": chg / 100.0}})
+        return {"rankings": items, "rankedAt": now.isoformat()}
+
     def _admit_from_rankings(self, rows: list[dict], now: datetime) -> None:
         """감시 목록(유니버스)은 몇 시간에 한 번만 새로 만들어서, 그 사이에 새로 뜬 종목은 놓친다
         (11/03 MERC: 전날 $0.126 → $0.37, 급등률 순위 2~7위였는데 목록에 없어 알림 0건). 가격대가 아니라 **조건**으로 넣는다:
@@ -906,7 +1062,7 @@ class Collector:
             s = r["symbol"]
             if s in self.universe or s in new or s not in listed:
                 continue
-            if r.get("type") == "TOP_LOSERS" or (r.get("rank") or 0) > self.cfg.admit_rank_max:
+            if r.get("type") in ("TOP_LOSERS", "LS_POPULAR") or (r.get("rank") or 0) > self.cfg.admit_rank_max:
                 continue
             if self.cfg.min_price <= (r["last"] or 0) <= self.cfg.max_price:
                 new[s] = {**listed[s], "last": r["last"]}
@@ -990,9 +1146,43 @@ class Collector:
         """감시 목록: 거래대금·거래량·회전율 상위 + 새 수급 + 순환. 등락률은 쓰지 않는다."""
         c = self.cfg
         size = c.watch_size
-        rank_cap = max(0, min(c.watch_rank_slots, size))
+        # 11/19: 거래대금·회전율·거래량·급상승 순위와 트레이딩뷰 스크리너 핫 종목을 번갈아 섞은 후보 (ETF·워런트는 유니버스에 없고,
+        # 순위 표는 시총 상한 안의 종목만이라 걸러 나면 100개 안쪽이다). 이걸 칸 수로 자르지 않고 전부 감시한다.
+        lists: dict[str, list[str]] = {}
+        for typ, sym, _rk in self.store.query(
+                "SELECT type, symbol, rank FROM rankings WHERE ts=(SELECT MAX(ts) FROM rankings) "
+                "AND type IN ('MARKET_TRADING_AMOUNT','TURNOVER','MARKET_TRADING_VOLUME','TOP_GAINERS') ORDER BY type, rank"):
+            if sym in self.universe:
+                lists.setdefault(typ, []).append(sym)
+        order = [lists.get("MARKET_TRADING_AMOUNT", []), lists.get("TURNOVER", []),
+                 [x for x in (getattr(self, "_tv_hot", None) or []) if x in self.universe],
+                 lists.get("MARKET_TRADING_VOLUME", []), lists.get("TOP_GAINERS", [])]       # LS 인기(관심도)는 점수에 안 섞는다
+        mixed: list[str] = []
+        for k in range(max((len(x) for x in order), default=0)):
+            for lst in order:
+                if k < len(lst) and lst[k] not in mixed:
+                    mixed.append(lst[k])
+        # 수급이 빠진 종목은 다시 뺀다 (실시간 구독 칸 `_rt_set` 과 같은 규칙): 목록에 든 지 2분이 지났는데 최근 5분 거래대금이
+        # 세션 기준(sweep_min_dollar)에도 못 미치면 제외 — 트레이딩뷰 5분봉 거래대금 또는 웹소켓 5분 대금 중 큰 쪽. 두 정보가 다 없으면 둔다.
+        min_d = self._sweep_min_dollar(now)
+        tvc = getattr(self, "_tv", None)
+        d5 = {k: (v.get("d5") or 0) for k, v in tvc[1].items()} if tvc and time.time() - tvc[0] < 30 and tvc[1] else {}
+        mnow = int(time.time() // 60)
+        dmin = getattr(self, "_rt_dmin", None) or {}
+        since = self.__dict__.setdefault("_rank_since", {})
+        keep: list[str] = []
+        for sym in mixed:
+            t0 = since.setdefault(sym, now)
+            act = sum(v for k, v in (dmin.get(sym) or {}).items() if k >= mnow - 4)
+            if (now - t0).total_seconds() < 120 or max(d5.get(sym, 0), act) >= min_d or (not d5 and sym not in dmin):
+                keep.append(sym)
+        for sym in [x for x in since if x not in set(mixed)]:
+            del since[sym]
+        mixed = keep
+        flow_reserve = max(0, min(c.watch_flow_slots, size))
+        rank_cap = max(0, min(max(len(mixed), c.watch_rank_slots), size - flow_reserve)) if mixed else max(0, min(c.watch_rank_slots, size))
         flow_cap = max(0, min(c.watch_flow_slots, size - rank_cap))
-        rot_cap = max(0, min(c.watch_rotation_slots, size - rank_cap - flow_cap))
+        rot_cap = max(0, min(max(c.watch_rotation_slots, size - rank_cap - flow_cap), size - rank_cap - flow_cap))
         caps = {"rank": rank_cap, "flow": flow_cap, "rotation": rot_cap}
         picked: list[str] = []
         buckets = {"rank": 0, "flow": 0, "rotation": 0}
@@ -1025,7 +1215,11 @@ class Collector:
             turnover = (volume / shares[sym] * 100) if shares.get(sym) and volume else 0.0
             ranked.append((amount or 0, turnover, volume or 0, -(rank or 10**9), sym))
         ranked.sort(reverse=True)
-        for _, _, _, _, sym in ranked:
+        for sym in mixed:
+            if buckets["rank"] >= rank_cap:
+                break
+            add(sym, "rank")
+        for _, _, _, _, sym in ranked:                   # 모자라면 기존처럼 거래대금 큰 순으로 채움
             if buckets["rank"] >= rank_cap:
                 break
             add(sym, "rank")
@@ -1044,8 +1238,12 @@ class Collector:
         due = self._rotation_at is None or (now - self._rotation_at) >= timedelta(minutes=c.watch_rotation_minutes)
         if due or not self._rotation:
             pool = self._rotation_pool(picked)
-            pool.sort(key=lambda s: (self._watch_seen.get(s, epoch), s))
-            self._rotation = pool[:max(rot_cap * 2, rot_cap)]
+            seen_key = lambda s: (self._watch_seen.get(s, epoch), s)
+            # 11/15: 순환 칸 중 NCAND_ROT 칸은 오늘 급등 후보(일봉 모델 상위 200)가 오래 안 본 순으로 돌아가며 씀 (~70분에 한 바퀴)
+            nc = set(getattr(self, "_ncands", None) or [])
+            first = sorted((s for s in pool if s in nc), key=seen_key)[:min(self.NCAND_ROT, rot_cap)]
+            fs = set(first)
+            self._rotation = (first + sorted((s for s in pool if s not in fs), key=seen_key))[:max(rot_cap * 2, rot_cap)]
             self._rotation_at = now
         for sym in self._rotation:
             if buckets["rotation"] >= rot_cap:
@@ -1884,8 +2082,11 @@ class Collector:
         rest = [s for s in list(symbols) if s not in quiet] + [s for s in list(symbols) if s in quiet]
         probe = list(getattr(self, "_sweep_probe", None) or {})   # 훑기로 막 잡혀 거래대금 확인 중 (맨 앞, 2분까지)
         tvhot = list(getattr(self, "_tv_hot", None) or [])          # 트레이딩뷰: 지금 5분 거래대금 큰 순 (10초마다 바뀜)
-        want = list(dict.fromkeys(probe + tvhot + recent + active + dna + rest + stale))
+        ncand = list(getattr(self, "_ncands", None) or [])[:self.NCAND_RT_MAX]   # 오늘 급등 후보 (전날 밤 점수 5점↑)
+        want = list(dict.fromkeys(probe + tvhot + recent + active + ncand + dna + rest + stale))
         if self._rt:
+            if hasattr(self._rt, "track"):                # LS: 유니버스 전체는 콜백 없이 가격·분봉·순위 캐시용으로 구독
+                self._rt.track(list(want))                # 11/18: 유니버스 2,600 전부 구독하던 것 중단 — 순위(g3112·트레이딩뷰)가 후보를 올리고 구독은 그 후보만
             want = want[:self._rt.max_symbols]
             self._rt.pin(want)
             self._rt.pin_books(want)                     # 앞쪽(랭킹 훑기로 잡은 활발한 종목 먼저) book_max 개만 호가도
@@ -2131,6 +2332,11 @@ class Collector:
         import queue
         store = Store(self.cfg.db_path)                  # 스레드 전용 연결
         self._rt_shares = dict(store.query("SELECT symbol, shares FROM stock_info WHERE shares > 0"))
+        try:        # 재시작 전 프로세스가 남긴 60초 값은 이어서 줄어들 창이 없어 영원히 맨 위에 박힌다 → 시작할 때 비움
+            with store.db:
+                store.db.execute("UPDATE live_tick SET vol_60s=0, amt_60s=0 WHERE vol_60s>0 OR amt_60s>0")
+        except Exception:
+            pass
         last_refresh = 0.0
         while True:
             if self._rt_px and time.time() - self._rt_flush >= 1:      # 대시보드 실시간 가격 (11/09: 3초 → 1초)
@@ -2417,6 +2623,11 @@ class Collector:
                     self.fast_scan(now, trade_date, session, store)
             except Exception as e:
                 log.warning("랭킹 훑기 실패: %s", str(e)[:160])
+            try:
+                if session in (DAY, PRE, REGULAR, AFTER) and self.cfg.vsignal and "A1" in self.cfg.vsignal_strategies:
+                    self._a1_tick(now, session, store)
+            except Exception as e:
+                log.warning("A1 관리 실패: %s", str(e)[:160])
             time.sleep(max(1.0, self.cfg.fast_scan_seconds - (time.time() - t0)))
 
     # 전 종목 현재가 따로 훑기 (2026-11-09): 메인 루프의 가격 폴링은 다른 일과 같이 돌아 실제 20~60초 간격이었음.
@@ -2506,6 +2717,10 @@ class Collector:
                         raise RuntimeError("실시간 아님 (15분 지연) — 쿠키 만료? .env TV_SESSIONID 다시 넣기")
                     self._tv = (time.time(), snap)
                     self._trig_feed(snap, now, session, store)       # 연구용 기록만 — 실패해도 TV 루프·감시·알림에 영향 없음
+                    try:
+                        self._tv_gap_scan(snap, now, session)        # LS 시세가 없는 시간(미국 17~20시)의 거래 터짐
+                    except Exception as e:
+                        log.debug("트레이딩뷰 공백 시간 감지 실패: %s", e)
                     if fails:
                         log.info("트레이딩뷰 다시 연결 → 트레이딩뷰 + 토스 같이 씀")
                     self._tv_err, fails = "", 0
@@ -2540,6 +2755,55 @@ class Collector:
                 elif fails == 1:
                     log.warning("트레이딩뷰 조회 실패 → 이번엔 토스만: %s", self._tv_err)
             time.sleep(max(1.0, self.cfg.tv_scan_seconds - (time.time() - t0)))
+
+    @staticmethod
+    def _ls_gap(now: datetime, session: str) -> bool:
+        """LS 가 시세를 안 주는 시간: 미국 동부 17:00~20:00 (LS 하루는 20:00 시작 ~ 다음 날 17:00 끝 — g3203 s_time/e_time).
+        그 사이에도 애프터마켓 거래는 계속돼서 트레이딩뷰만 데이터가 있다."""
+        if session != AFTER:
+            return False
+        return 17 <= now.astimezone(ET).hour < 20
+
+    def _tv_gap_scan(self, snap: dict, now: datetime, session: str, t: float | None = None) -> list[str]:
+        """LS 공백 시간에는 웹소켓 체결이 없어 '실시간 거래 터짐'이 안 뜬다 → 트레이딩뷰 스냅샷(10초)의 누적 거래량 증가로 대신 잡는다.
+        최근 약 60초 동안 거래대금이 세션 기준(rt_min_dollar_by_session['AFTER'])을 넘고, 회전율이 rt_min_turnover 이상이거나
+        거래대금이 rt_min_dollar 이상이면 실시간 처리 큐로 보내 기존 거래 터짐 알림과 같은 경로로 알린다 (같은 종목 재알림 간격은 거기서)."""
+        if not getattr(self.cfg, "tv_gap_alerts", True) or not self._ls_gap(now, session):
+            self._tvg_hist = []
+            return []
+        t = time.time() if t is None else t
+        hist = getattr(self, "_tvg_hist", None)
+        if hist is None:
+            hist = self._tvg_hist = []
+        cur = {k: ((d.get("vol") or 0) + (d.get("post_vol") or 0), d.get("px") or 0) for k, d in snap.items()}
+        hist.append((t, cur))
+        del hist[:max(0, len(hist) - 10)]
+        old = [h for h in hist if t - h[0] >= 50]
+        if not old:
+            return []                                    # 약 1분치 비교 대상이 쌓일 때까지
+        base = old[-1]
+        need = self.cfg.rt_min_dollar_by_session.get("AFTER", self.cfg.rt_min_dollar_after)
+        hits = []
+        for sym, (vol, px) in cur.items():
+            if sym not in self.universe or not px or sym not in base[1]:
+                continue
+            dv = vol - base[1][sym][0]
+            d60 = dv * px
+            if dv <= 0 or d60 < need:
+                continue
+            sh = (getattr(self, "_rt_shares", None) or {}).get(sym)
+            turn = dv / sh * 100 if sh else None
+            if not (d60 >= self.cfg.rt_min_dollar or (turn is not None and self.cfg.rt_min_turnover <= turn <= 1000)):
+                continue
+            hits.append((d60, sym, dv, px))
+        hits.sort(reverse=True)
+        out = []
+        for d60, sym, dv, px in hits[:5]:
+            self._rt_q.put(("burst", sym, d60, dv, px))
+            out.append(sym)
+        if out:
+            log.info("트레이딩뷰 공백 시간 거래 터짐(LS 시세 없음): %s", ", ".join(out))
+        return out
 
     def _tv_promote(self, now: datetime, new: list[str], store) -> None:
         if not new:
@@ -2585,6 +2849,13 @@ class Collector:
         store = store or self.store
         t = time.time()
         ps = prices if prices is not None else self.c.prices(sorted(self.universe))
+        if prices is None:                               # 구독 밖 종목 가격은 트레이딩뷰 스냅샷(10초)으로 (웹소켓 값이 있으면 그게 우선)
+            tv_ = getattr(self, "_tv", None)
+            if tv_ and time.time() - tv_[0] < 30 and tv_[1]:
+                live = {p["symbol"] for p in ps if p.get("timestamp")}
+                ps = [p for p in ps if p["symbol"] in live] + [
+                    {"symbol": s_, "lastPrice": d_["px"], "timestamp": None} for s_, d_ in tv_[1].items()
+                    if s_ in self.universe and s_ not in live]
         cur = {p["symbol"]: float(p["lastPrice"]) for p in ps if p.get("lastPrice")}
         if prices is None and cur:                       # 대시보드 등락률용 지금 가격 (3초마다)
             try:
@@ -2682,16 +2953,19 @@ class Collector:
         if self._fast_hot[0] != d0:
             self._fast_hot = (d0, set())
         seen = []
-        for type_ in ("MARKET_TRADING_AMOUNT", "TOSS_SECURITIES_TRADING_AMOUNT", "MARKET_TRADING_VOLUME", "TOSS_SECURITIES_TRADING_VOLUME"):
+        tv = getattr(self, "_tv", None)                  # 트레이딩뷰 전 종목 스냅샷(30초 이내)이 있으면 순위 원천으로 (구독 밖 급등주도 보임)
+        tvsnap = tv[1] if tv and time.time() - tv[0] < 30 and tv[1] else None
+        for type_ in ("MARKET_TRADING_AMOUNT", "MARKET_TRADING_VOLUME", "TOP_GAINERS", "TURNOVER"):
             try:
-                res = self.c.rankings(type_, "realtime") or {}
+                reslist = self._rank_results(type_, now, tvsnap)
             except Exception as e:
                 log.debug("랭킹 실패 %s: %s", type_, e)
                 continue
-            for r in res.get("rankings", [])[:50]:
-                s = r.get("symbol")
-                if s in self.universe and s not in seen:
-                    seen.append(s)
+            for res in reslist:                          # 트레이딩뷰 순위 + LS 시장 전체 순위(g3112) 둘 다 (먼저 본 종목부터)
+                for r in res.get("rankings", [])[:50]:
+                    s = r.get("symbol")
+                    if s in self.universe and s not in seen:
+                        seen.append(s)
         last = getattr(self, "_fast_seen", None)
         if last is None:
             last = self._fast_seen = {}
@@ -2843,14 +3117,91 @@ class Collector:
                     store.db.execute("UPDATE vsignals SET entry=?, high=?, low=?, last=? WHERE id=?",
                                           (p["limit"], p["limit"], p["limit"], today[-1][4], vid))
 
+    # ---------- 오늘 급등 후보 (11/15): 전날까지 일봉 점수 5점↑ → 실시간 감시 앞쪽 + 텔레그램 목록 (거래일마다 한 번) ----------
+    NCAND_RT_MAX = 30                # 실시간 칸에 앞쪽으로 넣을 후보 수 (점수 높은 순)
+    NCAND_ROT = 30                   # 감시 순환 칸(45) 중 후보 몫
+    NCAND_SEND_MAX = 15              # 텔레그램에 보여 줄 수
+
+    def night_cands(self, now: datetime) -> bool:
+        """거래일이 바뀌면 한 번 (뒤에서): nightscore.candidates → self._ncands, 알림. → 시작했나."""
+        from ..alertperf import trade_day
+        d = trade_day(now)
+        if getattr(self, "_ncand_d", None) == d:
+            return False
+        th = getattr(self, "_ncand_thread", None)
+        if th and th.is_alive():
+            return False
+        last = getattr(self, "_ncand_try", None)
+        if last and now - last < timedelta(minutes=10):
+            return False
+        self._ncand_try = now
+        import threading
+        self._ncand_thread = threading.Thread(target=self._night_cands_job, args=(d,), name="night_cands", daemon=True)
+        self._ncand_thread.start()
+        return True
+
+    def _night_cands_job(self, d: str) -> list[dict]:
+        import sqlite3
+        from .. import nightscore
+        from .store import ro_uri
+        con = sqlite3.connect(ro_uri(self.cfg.db_path), uri=True, timeout=30)
+        try:
+            q = lambda sql, a=(): con.execute(sql, a).fetchall()
+            if not q("SELECT 1 FROM daily_bars WHERE d < ? AND d >= date(?, '-5 days') LIMIT 1", (d, d)):
+                return []                                   # 전날 일봉이 아직 없음 → 10분 뒤 다시
+            model = None
+            try:                                            # 일봉 모델: 새 거래일마다 다시 학습 (~20초), 실패하면 모양 점수 순
+                model = nightscore.load_model(self.cfg.db_path)
+                if nightscore.needs_train(self.cfg.db_path, d):
+                    model = nightscore.train(q, self.cfg.db_path, d) or model
+                    if model:
+                        log.info("오늘 급등 후보 모델 학습 (사용 %s): %s", model.get("mode"), model.get("compare"))
+            except Exception as e:
+                log.warning("오늘 급등 후보 모델 실패 (모양 점수로): %s", e)
+            cs = nightscore.rank(q, d, symbols=list(self.universe) or None, model=model)
+        finally:
+            con.close()
+        if not model:
+            cs = [r for r in cs if r["score"] >= nightscore.MIN_SCORE]
+        self._ncands = [r["symbol"] for r in cs[:nightscore.WIDE]]
+        self._ncand_d = d
+        log.info("오늘 급등 후보 %s: 앞쪽 %d종목 (%s)", d, len(self._ncands), "모델" if model else "모양 점수 5점↑")
+        if cs and self.notifier and self._on("night_cands"):
+            self.notifier.send(self._night_cands_text(d, cs, model))
+        return cs
+
+    def _night_cands_text(self, d: str, cs: list[dict], model: dict | None = None) -> str:
+        from .. import nightscore
+        from ..trading.messages import px
+        m = (model or {}).get("metrics") or {}
+        if m:
+            head = (f"🔭 오늘 급등 후보 {d} · 일봉 모델 상위 {self.NCAND_SEND_MAX}\n"
+                    f"최근 {nightscore.HOLDOUT_DAYS}거래일 성적: 그날 2배 간 급등주 중 상위 {self.NCAND_SEND_MAX}에 {m[15]['recall']}% "
+                    f"(하루 {m[15]['per_day']:.1f}개꼴) · 상위 {nightscore.WIDE}에 {m[nightscore.WIDE]['recall']}%")
+        else:
+            head = (f"🔭 오늘 급등 후보 {d} · {len(cs)}종목 (일봉 모양 점수 5점↑)\n"
+                    f"과거: 5~6점 그날 2배 {nightscore.P2X[5]}% · 7점↑ {nightscore.P2X[7]:.0f}% (평소 0.15%)")
+        lines = [head, f"상위 {nightscore.WIDE}종목은 감시 앞쪽에 — 사라는 뜻 아님, 움직이면 알림으로 따로 옴", ""]
+        for i, r in enumerate(cs[:self.NCAND_SEND_MAX], 1):
+            name = (self.universe.get(r["symbol"]) or {}).get("name") or ""
+            name = name if len(name) <= 16 else name[:15] + "…"
+            lines.append(f"{i}. {r['symbol']} · {px(r['pc'])} {name}".rstrip())
+            lines.append(f"   {' · '.join(r['why'][:4])}" + (f" (−{' · '.join(r['minus'])})" if r["minus"] else ""))
+        lt = nightscore.learn_text(model)
+        if lt:
+            lines += ["", lt]
+        return "\n".join(lines)
+
     # ---------- 데이마켓 후보 (11/10): 한국 낮 12시 데이마켓 모델 상위 12개 → 알림 + 가상 매수 (전략 M1) ----------
+    # 11/15: '데이마켓에 사서 밤에 판다' 구조를 버리면서 기본 꺼짐 (설정 strategies.M1 = true 로만 켬)
     DM_FILL_MAX = 900                # 그 시각 1분봉을 채울 종목 수 상한 (전날 종가 뒤 거래가 있었던 종목, 일봉 모델 확률 순)
 
     def model_picks(self, now: datetime) -> bool:
         """데이마켓 중 전날 22:00 ET 가 지나면 하루 한 번: 1분봉 채우기 → 점수 → 알림·가상 매수 (뒤에서). → 시작했나."""
         from .. import rankmodel
         from ..alertperf import trade_day
-        if not self._settings.get()["strategies"].get("M1", True):
+        st = self._settings.get()
+        if not (st["strategies"].get("M1", False) or st["alerts"].get("dm_pick", False)):   # 11/16: 알림(dm_pick)만 켜도 12시 후보는 보냄 (가상 매수는 M1 일 때만)
             return False
         th = getattr(self, "_mpick_thread", None)
         if th and th.is_alive():
@@ -2868,7 +3219,7 @@ class Collector:
         t = iso(now)
         if t < T or t >= b1:
             return False
-        if self.store.query("SELECT 1 FROM vsignals WHERE d0=? AND strat='M1' LIMIT 1", (d0,)):
+        if st["strategies"].get("M1", False) and self.store.query("SELECT 1 FROM vsignals WHERE d0=? AND strat='M1' LIMIT 1", (d0,)):
             self._mpick_d = d
             return False
         self._mpick_try = now
@@ -2937,10 +3288,11 @@ class Collector:
         cut = (datetime.fromisoformat(T) - timedelta(minutes=rankmodel.DM_FRESH_MIN)).isoformat()
         cur = dict(store.query("SELECT symbol, last FROM price_now"))
         t = self.clock()
+        m1_on = self._settings.get()["strategies"].get("M1", False)      # 가상 매수는 M1 이 켜져 있을 때만
         for r in picks:
             r["fresh"] = bool(r.get("last_ts") and r["last_ts"] >= cut)
             r["entry"] = cur.get(r["symbol"]) or r["price"]
-            if not r["fresh"] or not r["entry"]:
+            if not r["fresh"] or not r["entry"] or not m1_on:
                 continue
             reason = (f"데이마켓 후보 {picks.index(r) + 1}위 · +20% 더 갈 확률 {r['prob']:.0f}% · 전날 종가 대비 "
                       f"{(r['entry'] / r['close'] - 1) * 100:+.0f}%")
@@ -2973,11 +3325,17 @@ class Collector:
             return [f"{i:>2}. {r['symbol']}  {px(r['entry'])}{chg} · 확률 {r['prob']:.0f}%", f"      {name}".rstrip()]
 
         bought = [(i, r) for i, r in enumerate(picks, 1) if r.get("vid")]
-        skip = [(i, r) for i, r in enumerate(picks, 1) if not r.get("vid")]
+        live = [(i, r) for i, r in enumerate(picks, 1) if not r.get("vid") and r.get("fresh")]       # 알림만(M1 꺼짐): 거래 있는 후보
+        skip = [(i, r) for i, r in enumerate(picks, 1) if not r.get("vid") and not r.get("fresh")]
         L = [f"🌞 데이마켓 후보 TOP {len(picks)}", f"{t.month}/{t.day}({'월화수목금토일'[t.weekday()]}) 한국 {t:%H:%M} · 정규장 +20% 갈 확률 순", ""]
         if bought:
             L.append(f"🧪 가상 매수 {len(bought)}종목")
             for i, r in bought:
+                L += row(i, r)
+            L.append("")
+        if live:
+            L.append(f"📈 최근 1시간 안에 거래된 {len(live)}종목")
+            for i, r in live:
                 L += row(i, r)
             L.append("")
         if skip:
@@ -2987,7 +3345,10 @@ class Collector:
                 when = f" · 마지막 거래 {datetime.fromisoformat(last).astimezone(kst):%H:%M}" if last else ""
                 L += [row(i, r)[0], row(i, r)[1] + when]
             L.append("")
-        L += ["📋 익절 +20% · 손절 −15% · 정규장 마감 정리", "실제 주문 아님 · 과거 1건 평균 +3.9% (171건) · 보장 아님"]
+        if bought:
+            L += ["📋 익절 +20% · 손절 −15% · 정규장 마감 정리", "실제 주문 아님 · 과거 1건 평균 +3.9% (171건) · 보장 아님"]
+        else:
+            L += ["👀 알림만 · 매수 없음 (데이마켓 첫 체결가에 사면 과거 검증에서 전부 손실)", "거래 없이 멈춘 가격은 실제로 못 삼 · 보장 아님"]
         return "\n".join(L)
 
     def _vnotify(self, kind: str, vid: int, session: str, store=None) -> None:
@@ -3016,6 +3377,35 @@ class Collector:
             return last
         r = self.store.query("SELECT last FROM prices WHERE symbol=? ORDER BY ts DESC LIMIT 1", (sym,))
         return r[0][0] if r and r[0][0] else fallback
+
+    def _a1_tick(self, now: datetime, session: str, store) -> None:
+        """전략A 지정가·보유 관리 — 막히기 쉬운 메인 틱(공시 조회 등) 대신 빠른 훑기 스레드에서 2~3초마다 (스레드 전용 연결 store).
+        ORDER: minutes 분이 지나면 취소, 현재가나 그 뒤 1분봉 저가가 지정가에 닿으면 체결(알림). OPEN: 익절·손절·2시간 정리."""
+        from ..vstrat import STRATEGIES
+        st = STRATEGIES["A1"]
+        for r in store.query("SELECT * FROM vsignals WHERE strat='A1' AND status IN ('ORDER','OPEN')"):
+            v = self._vrow(r)
+            sym = v["symbol"]
+            last = (self.universe.get(sym) or {}).get("last")
+            opened = datetime.fromisoformat(v["opened"])
+            if v["status"] == "OPEN":
+                if last:
+                    self._vupdate(store, v, last, now, session)
+                continue
+            if now - opened >= timedelta(minutes=st["minutes"]) or session == AFTER:
+                with store.db:
+                    store.db.execute("UPDATE vsignals SET status='EXPIRED', closed=? WHERE id=? AND status='ORDER'", (iso(now), v["id"]))
+                continue
+            lo = store.query("SELECT MIN(low) FROM bars_1m WHERE symbol=? AND ts>=?", (sym, v["opened"]))
+            cand = [x for x in (last, lo[0][0] if lo else None) if x]
+            if cand and min(cand) <= v["entry"]:
+                fill = min(v["entry"], last) if last else v["entry"]
+                with store.db:
+                    cur = store.db.execute(
+                        "UPDATE vsignals SET status='OPEN', opened=?, entry=?, high=?, low=?, last=? WHERE id=? AND status='ORDER'",
+                        (iso(now), fill, fill, min(min(cand), fill), last or fill, v["id"]))
+                if cur.rowcount:
+                    self._vnotify("buy", v["id"], session, store)
 
     def check_vsignals(self, now: datetime, session: str, eod: bool = False, older_hours: float | None = None) -> None:
         """보유 중 가상 포지션: 1분 현재가로 익절·손절 → 가상 매도 알림. eod=True(애프터장 마감)면 남은 것 모두 정리
@@ -3048,6 +3438,10 @@ class Collector:
             return f"익절 +{tp:g}%"
         if ret <= -sl:
             return f"손절 −{sl:g}%"
+        if v.get("strat") == "A1":                       # 알림 지정가: 체결 뒤 hold_h 시간(또는 애프터장 마감)에 정리, 밀림 정리 없음
+            from ..vstrat import STRATEGIES
+            h = STRATEGIES["A1"]["hold_h"]
+            return f"{h}시간 뒤 정리" if eod or now - datetime.fromisoformat(v["opened"]) >= timedelta(hours=h) else None
         if v.get("strat") == "M1":                       # 데이마켓 후보: 검증 그대로 (밀림 정리 없음, 정규장 마감 정리)
             from ..alertperf import trade_day
             close_at = datetime.fromisoformat(f"{trade_day(datetime.fromisoformat(v['opened']))}T16:00").replace(tzinfo=ET)

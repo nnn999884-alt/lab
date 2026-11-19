@@ -39,7 +39,7 @@ def test_read_endpoints(server):
     assert ov["mode"] == "paper" and ov["open_trades"] == 3
     st = {s["strategy"]: s for s in get(base + "/api/strategies")}
     assert set(st) == {"runner_overnight", "dilution_catalyst", "day_ignition", "day_dip", "regular_momentum",
-                       "scalp", "steady_trend", "squeeze", "news", "session_gap", "accumulation", "reversal", "pullback", "rebound", "surge", "pump", "session_pop", "day_handoff", "after_dip", "wave2_b1"}
+                       "scalp", "steady_trend", "squeeze", "news", "session_gap", "accumulation", "reversal", "pullback", "rebound", "surge", "pump", "session_pop", "day_handoff", "after_dip", "wave2_b1", "alert_limit"}
     assert st["day_ignition"]["trades"] == 12 and st["day_dip"]["config_enabled"] is False
     pos = get(base + "/api/positions")
     assert {p["symbol"] for p in pos} == {"PENX", "BIOZ", "NANO"}
@@ -70,7 +70,7 @@ def test_read_endpoints(server):
     assert b["found"] and b["ssr"] and b["short"]["ratio"] and b["borrow"]["fee_rate"] and b["halts"]
     assert get(base + "/api/symbol?s=NOPE")["found"] is False
     with urllib.request.urlopen(base + "/") as r:
-        assert b"Pennybot" in r.read()
+        assert b"Mongbot" in r.read()                    # 페이지 제목 (사용자가 Pennybot → Mongbot 으로 바꿈)
 
 
 def test_password_required_when_set(tmp_path):

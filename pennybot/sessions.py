@@ -49,10 +49,54 @@ def parse_api_day(d: dict) -> TradingDay:
     return day
 
 
+def _easter(y: int) -> date:
+    a, b, c = y % 19, y // 100, y % 100
+    d, e = b // 4, b % 4
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i, k = c // 4, c % 4
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    mo, da = divmod(h + l - 7 * m + 114, 31)
+    return date(y, mo, da + 1)
+
+
+def _nth_weekday(y: int, month: int, weekday: int, n: int) -> date:
+    d = date(y, month, 1)
+    d += timedelta(days=(weekday - d.weekday()) % 7)
+    return d + timedelta(weeks=n - 1)
+
+
+def nyse_holidays(y: int) -> set[date]:
+    """NYSE 휴장일 (11/19: 전엔 평일이면 다 연다고 봤다). 토요일이면 금요일, 일요일이면 월요일로 옮겨 쉰다(새해는 토요일이면 안 쉼)."""
+    def obs(d: date, sat_back: bool = True) -> date | None:
+        if d.weekday() == 5:
+            return d - timedelta(days=1) if sat_back else None
+        return d + timedelta(days=1) if d.weekday() == 6 else d
+    last_mon_may = date(y, 5, 31) - timedelta(days=(date(y, 5, 31).weekday() - 0) % 7)
+    out = {obs(date(y, 1, 1), False), _nth_weekday(y, 1, 0, 3), _nth_weekday(y, 2, 0, 3), _easter(y) - timedelta(days=2),
+           last_mon_may, obs(date(y, 6, 19)), obs(date(y, 7, 4)), _nth_weekday(y, 9, 0, 1), _nth_weekday(y, 11, 3, 4), obs(date(y, 12, 25))}
+    return {d for d in out if d}
+
+
+def nyse_early_close(d: date) -> bool:
+    """오후 1시(ET) 조기폐장: 추수감사절 다음 날, 12/24 (평일이고 휴장이 아닐 때)."""
+    if d == _nth_weekday(d.year, 11, 3, 4) + timedelta(days=1):
+        return True
+    return d.month == 12 and d.day == 24 and d.weekday() < 5 and d not in nyse_holidays(d.year)
+
+
 def static_day(d: date) -> TradingDay:
-    """평일 기준 근사 (휴장일 미반영). 애프터마켓은 토스 기준 19:50 ET 종료."""
+    """평일 기준 근사 + NYSE 휴장일·조기폐장 반영. 애프터마켓은 토스 기준 19:50 ET 종료."""
     day = TradingDay(d)
-    if d.weekday() >= 5:
+    if d.weekday() >= 5 or d in nyse_holidays(d.year):
+        return day
+    if nyse_early_close(d):
+        at = lambda dd, hh, mm: datetime.combine(dd, time(hh, mm), tzinfo=ET)
+        prev = d - timedelta(days=1)
+        day.sessions = {DAY: (at(prev, 20, 0), at(d, 4, 0)), PRE: (at(d, 4, 0), at(d, 9, 30)),
+                        REGULAR: (at(d, 9, 30), at(d, 13, 0)), AFTER: (at(d, 13, 0), at(d, 17, 0))}
         return day
     at = lambda dd, hh, mm: datetime.combine(dd, time(hh, mm), tzinfo=ET)
     prev = d - timedelta(days=1)

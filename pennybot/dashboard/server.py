@@ -30,20 +30,47 @@ STATIC = Path(__file__).parent / "static"
 # 2026-11-05: 급등 후보(/api/precursor)는 한 번 계산에 1초 남짓인데 화면마다 3초씩 요청해 처리 중 스레드가
 # 540개까지 쌓이고 메모리 4GB 에서 멈췄다 → 같은 주소 요청은 TTL 초 동안 결과를 같이 쓰고, 계산 중이면 기다렸다 받는다.
 SHARED_TTL = {"/api/precursor": 2.5, "/api/condscan": 10, "/api/chart30": 30, "/api/bigruns": 60, "/api/research": 30,
-              "/api/runners": 30, "/api/detections": 5, "/api/symbol": 3, "/api/symbol_extra": 10, "/api/dna": 3}
+              "/api/runners": 30, "/api/detections": 5, "/api/symbol": 3, "/api/symbol_extra": 10, "/api/dna": 3,
+              # 2026-11-18: 홈이 3초마다 부르는 것들 — 캐시가 없으면 화면마다 따로 계산 (collector 는 3~4초, 처음엔 18초 걸리기도)
+              "/api/vsignals": 3, "/api/events": 3, "/api/signal_reasons": 10, "/api/briefing": 30, "/api/collector": 30,
+              "/api/signals": 3, "/api/trades": 3}
+STALE_MAX = 600.0                 # 이 시간(초) 안의 오래된 값은 기다리지 않고 바로 주고, 새 값은 뒤에서 계산한다 (stale-while-revalidate)
 _shared_lock = threading.Lock()
 _shared_val: dict = {}            # key → (시각, 결과)
 _shared_key_locks: dict = {}
 
 
+_shared_busy: set = set()          # 뒤에서 새로 계산 중인 key
+
+
 def _shared(key: str, ttl: float, fn):
+    """같은 주소 요청은 TTL 초 동안 결과를 같이 쓴다. TTL 이 지나도 STALE_MAX 안이면 **기다리지 않고 지난 값을 바로 주고**
+    새 값은 뒤 스레드에서 계산한다 (11/18: 계산이 끝날 때까지 기다리던 화면이 3초 갱신 때마다 멈췄다)."""
     import time
     with _shared_lock:
         hit = _shared_val.get(key)
-        if hit and time.monotonic() - hit[0] < ttl:
+        age = time.monotonic() - hit[0] if hit else None
+        if hit and age < ttl:
             return hit[1]
         kl = _shared_key_locks.setdefault(key, threading.Lock())
-    with kl:                                      # 같은 key 는 한 번에 하나만 계산
+        if hit and age < STALE_MAX:
+            if key not in _shared_busy:
+                _shared_busy.add(key)
+
+                def _bg():
+                    try:
+                        with kl:
+                            val = fn()
+                            with _shared_lock:
+                                _shared_val[key] = (time.monotonic(), val)
+                    except Exception:
+                        log.debug("뒤에서 갱신 실패 %s", key, exc_info=True)
+                    finally:
+                        with _shared_lock:
+                            _shared_busy.discard(key)
+                threading.Thread(target=_bg, name="swr", daemon=True).start()
+            return hit[1]
+    with kl:                                      # 처음(지난 값 없음): 같은 key 는 한 번에 하나만 계산
         with _shared_lock:
             hit = _shared_val.get(key)
             if hit and time.monotonic() - hit[0] < ttl:
@@ -406,7 +433,9 @@ class Data:
             recent = self.t("SELECT pnl FROM trades WHERE status='CLOSED' AND strategy=? ORDER BY id DESC LIMIT ?",
                             (name, n))
             auto_off = len(recent) >= n and sum(x["pnl"] for x in recent) / n < 0
+            from ..trading.strategies import GROUP_OF, GROUP_ORDER
             out.append({"strategy": name, "strategy_name": self._strat_names().get(name, name),
+                        "group": GROUP_OF.get(name, "기타"), "group_order": GROUP_ORDER.index(GROUP_OF[name]) if name in GROUP_OF else 99,
                         "config_enabled": params.get("enabled", True),
                         "toggle": ctl.get(name, True), "auto_disabled": auto_off,
                         "trades": r.get("trades", 0), "win_rate": (r["wins"] / r["trades"]) if r.get("trades") else None,
@@ -841,9 +870,31 @@ class Handler(BaseHTTPRequestHandler):
         self._json(d)
 
 
+WARM_PATHS = ("/api/precursor?limit=300&all=1", "/api/detections?hours=36", "/api/vsignals?limit=500",
+              "/api/events?limit=300", "/api/signal_reasons?hours=6", "/api/briefing", "/api/dna", "/api/collector")
+
+
+def _warm_loop(cfg, host: str, port: int) -> None:
+    """홈이 부르는 무거운 API 를 서버가 4초마다 미리 불러 캐시를 데워 둔다 — 사용자는 기다리지 않고, 10GB DB 파일 캐시도 식지 않는다."""
+    import urllib.request
+    hdr = {}
+    if cfg.dashboard_password:
+        hdr["Authorization"] = "Basic " + base64.b64encode(b"x:" + cfg.dashboard_password.encode()).decode()
+    time.sleep(2)
+    while True:
+        for p in WARM_PATHS:
+            try:
+                urllib.request.urlopen(urllib.request.Request(f"http://{host}:{port}{p}", headers=hdr), timeout=60).read()
+            except Exception:
+                pass
+        time.sleep(4)
+
+
 def make_server(cfg, host: str = "127.0.0.1", port: int = 8050) -> ThreadingHTTPServer:
     handler = type("BoundHandler", (Handler,), {"data": Data(cfg)})
-    return ThreadingHTTPServer((host, port), handler)
+    srv = ThreadingHTTPServer((host, port), handler)
+    threading.Thread(target=_warm_loop, args=(cfg, "127.0.0.1", port), name="warm", daemon=True).start()
+    return srv
 
 
 def serve(cfg, port: int = 8050, open_browser: bool = True) -> None:

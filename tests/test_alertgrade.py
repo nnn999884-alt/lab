@@ -75,3 +75,27 @@ def test_wave_scales_with_day_range():
     assert G.waves([1.0, 2.0, 1.7, 2.2], 15, 0.35)[0] == 1
     assert G.waves([1.0, 2.0, 1.3, 2.2], 15, 0.35)[0] == 2
     assert G.waves([1.0, 1.2, 1.0, 1.25], 15, 0.35)[0] == 2           # 작게 노는 날엔 작은 꺾임도 파동
+
+
+def test_day_patterns_bad_shapes():
+    base = [(f"d{i}", 1.0, 1.05, 0.95, 1.0, 1000) for i in range(25)]
+    acc = base + [("a", 1.0, 1.6, 1.0, 1.5, 9000)] + [(f"e{i}", 1.4, 1.45, 1.1, 1.2, 1000) for i in range(2)]
+    assert G.day_patterns(acc) == {"good": [], "bad": []}           # 매집봉은 2시간 기준 검증에서 빠짐 (11/14)
+    flat = base + [(f"f{i}", 1.02, 1.04, 0.98, 1.0, 1000) for i in range(3)]
+    p = G.day_patterns(flat)
+    assert not p["good"] and {"20일 고점 근처", "5일 횡보", "3일 연속 음봉"} <= set(p["bad"])
+    assert G.day_patterns(base[:10]) == {"good": [], "bad": []}
+
+
+def test_intraday_patterns_and_line():
+    from datetime import datetime, timedelta, timezone
+    now = datetime(2026, 11, 12, 15, 0, tzinfo=timezone.utc)
+    swing = [((now - timedelta(minutes=29 - k)).isoformat(), 1.0 + 0.02 * k) for k in range(20)]
+    assert G.intraday_patterns(swing, 1.4, now)["good"] == ["30분 25%↑ 출렁임"]
+    flat = [((now - timedelta(minutes=59 - k)).isoformat(), 1.0) for k in range(40)]
+    assert G.intraday_patterns(flat, 1.02, now) == {"good": [], "bad": ["1시간 횡보"]}
+    hot = {"pc": 1.0, "run5": 80, "prev_vx": 4.0, "prev": -20.0}
+    line = G.grade(hot, 1.3, 1, False, {"good": ["30분 25%↑ 출렁임"], "bad": []})["line"]
+    assert "\n🧩 👍 30분 25%↑ 출렁임 → 이런 모양 220건: 2시간 안 +20% 34% (보통 14%)" in line
+    assert "👎 1시간 횡보" in G.grade(hot, 1.3, 1, False, {"good": ["30분 25%↑ 출렁임"], "bad": ["1시간 횡보"]})["line"]
+    assert "🧩" not in G.grade(hot, 1.3, 1, False)["line"]

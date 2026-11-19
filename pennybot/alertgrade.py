@@ -23,6 +23,15 @@ STATS = {
 }
 WAVE_BAR_MIN, WAVE_RANGE, WAVE_FLOOR = 3, 0.35, 15.0
 STATS_SPAN = "10/29~11/12"
+# 차트 모양 (11/14 검증, 10/29~11/13 보낸 알림 ~1,800건). '그날 결국'은 이른 알림일수록 남은 시간이 길어 유리하므로
+# 알림 뒤 2시간 안 +20% 로(2시간이 다 남은 알림만) 같은 세션끼리 비교해서 세 기간 모두 유지된 것만.
+# 👍 알림 전 30분 25%↑ 출렁임   👎 20일 고점 근처(90%↑) · 알림 전 1시간 10%↓ 횡보 · 5일 박스 20%↓ · 3일 연속 음봉
+# (매집봉 = 최근 5일 거래 5배↑ 장대양봉은 '결국'으론 좋아 보였지만 2시간 기준으론 평균과 같아 뺌)
+PAT_BASE = 14   # 보낸 알림 전체의 2시간 안 +20% %
+PAT_STATS = {   # (2시간 안 +20% %, +50% %, 건수, 기간별 +20%)
+    "good": (34, 12, 220, "35/28/36"), "mixed": (20, 9, 109, "0/13/29"),
+    "bad": (9, 3, 773, "6/11/9"), "none": (14, 4, 712, "15/17/13"),
+}
 
 
 def waves(px: list[float], X: float = 10.0, k: float = 0.0) -> tuple[int, list[float]]:
@@ -62,7 +71,53 @@ def day_feats(daily: list[tuple]) -> dict | None:
             "prev": (pc / pp - 1) * 100 if pp else 0}
 
 
-def grade(f: dict | None, price: float, wn: int, above_prev: bool) -> dict:
+def day_patterns(rows: list[tuple]) -> dict:
+    """rows = [(d, open, high, low, close, volume)] 오래된 것부터, 오늘 제외 → {good: [...], bad: [...]}."""
+    good, bad = [], []
+    if len(rows) < 26:
+        return {"good": good, "bad": bad}
+    o, h, l, c = ([float(x[i] or 0) for x in rows] for i in (1, 2, 3, 4))
+    pc = c[-1]
+    if pc and pc >= 0.9 * max(h[-20:]):
+        bad.append("20일 고점 근처")
+    if min(l[-5:]) > 0 and max(h[-5:]) / min(l[-5:]) - 1 < 0.2:
+        bad.append("5일 횡보")
+    if all(c[-k] < o[-k] for k in (1, 2, 3)):
+        bad.append("3일 연속 음봉")
+    return {"good": good, "bad": bad}
+
+
+def intraday_patterns(seq: list[tuple], price: float, now: datetime) -> dict:
+    """seq = [(ts iso, close)] 오늘 1분봉 → 알림 전 30분 출렁임(👍) · 1시간 횡보(👎)."""
+    good, bad = [], []
+
+    def win(sec):
+        out = []
+        for ts, c in seq:
+            try:
+                if (now - datetime.fromisoformat(ts)).total_seconds() <= sec:
+                    out.append(c)
+            except Exception:
+                pass
+        return out + [price]
+    w30, w60 = win(1800), win(3600)
+    if len(w30) >= 11 and min(w30) > 0 and max(w30) / min(w30) - 1 >= 0.25:
+        good.append("30분 25%↑ 출렁임")
+    if len(w60) >= 21 and min(w60) > 0 and max(w60) / min(w60) - 1 < 0.10:
+        bad.append("1시간 횡보")
+    return {"good": good, "bad": bad}
+
+
+def pattern_line(pat: dict | None) -> str:
+    g, b = (pat or {}).get("good") or [], (pat or {}).get("bad") or []
+    if not g and not b:
+        return ""
+    p20, p50, n, _ = PAT_STATS["mixed" if g and b else "good" if g else "bad"]
+    head = " · ".join(([f"👍 {' · '.join(g)}"] if g else []) + ([f"👎 {' · '.join(b)}"] if b else []))
+    return f"\n🧩 {head} → 이런 모양 {n}건: 2시간 안 +20% {p20}% (보통 {PAT_BASE}%) · +50% {p50}%"
+
+
+def grade(f: dict | None, price: float, wn: int, above_prev: bool, pat: dict | None = None) -> dict:
     """→ {skip, key, stars, chg, line}."""
     if not f or not price:
         return {"skip": False, "key": None, "line": ""}
@@ -75,7 +130,7 @@ def grade(f: dict | None, price: float, wn: int, above_prev: bool) -> dict:
     badge = "★★" if st >= 2 else "★" if st == 1 else "등급 없음"
     wave = f"오늘 {wn}번째 파동" + (" · 직전 파동 고점 위" if wn >= 2 and above_prev else "") if wn else ""
     line = (f"\n{badge}" + (f" ({' · '.join(why)})" if why else "") + (f" · {wave}" if wave else "")
-            + f"\n📈 비슷한 알림 {n}건: 결국 +20% {p20}% · +50% {p50}% · 가기 전 보통 {dd}% (나쁠 때 {bad}%)")
+            + f"\n📈 비슷한 알림 {n}건: 결국 +20% {p20}% · +50% {p50}% · 가기 전 보통 {dd}% (나쁠 때 {bad}%)" + pattern_line(pat))
     return {"skip": key == "⚠", "key": key, "stars": st, "chg": chg, "line": line}
 
 
@@ -90,20 +145,27 @@ def for_symbol(db_path_uri: str, sym: str, price: float, now: datetime | None = 
             key = (sym, td.isoformat())
             f = cache.get(key) if cache is not None else None
             if f is None:
-                rows = con.execute("SELECT d, high, close, volume FROM daily_bars WHERE symbol=? AND d < ? ORDER BY d DESC LIMIT 25",
-                                   (sym, td.isoformat())).fetchall()
-                f = day_feats(list(reversed(rows))) or {}
+                rows = list(reversed(con.execute(
+                    "SELECT d, open, high, low, close, volume FROM daily_bars WHERE symbol=? AND d < ? ORDER BY d DESC LIMIT 30",
+                    (sym, td.isoformat())).fetchall()))
+                f = day_feats([(r[0], r[2], r[4], r[5]) for r in rows]) or {}
+                if f:
+                    f["pat"] = day_patterns(rows)
                 if cache is not None:
                     cache[key] = f
-            b5 = {}
+            b5, seq = {}, []
             for ts, c in con.execute("SELECT ts, close FROM bars_1m WHERE symbol=? AND ts >= ? AND ts <= ? ORDER BY ts",
                                      (sym, start.astimezone(timezone.utc).isoformat(), now.astimezone(timezone.utc).isoformat())):
                 if c:
                     b5[ts[:14] + str(int(ts[14:16]) // WAVE_BAR_MIN)] = c     # 3분 구간 마지막 종가
+                    seq.append((ts, c))
             px = list(b5.values())
         finally:
             con.close()
     except Exception:
         return {"skip": False, "key": None, "line": ""}
     wn, highs = waves(px + [price], WAVE_FLOOR, WAVE_RANGE)
-    return grade(f or None, price, wn, bool(highs) and price > max(highs))
+    dp = (f or {}).get("pat") or {"good": [], "bad": []}
+    ip = intraday_patterns(seq, price, now)
+    pat = {"good": dp["good"] + ip["good"], "bad": dp["bad"] + ip["bad"]}
+    return grade(f or None, price, wn, bool(highs) and price > max(highs), pat)

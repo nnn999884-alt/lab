@@ -41,7 +41,13 @@ STRATEGIES = {
 STRATEGIES["M1"] = {"name": "전략M 데이마켓 후보", "entry": "model", "tp": 20, "sl": 15, "close": "regular",
                     "why": "데이마켓 순위 모델 상위 12개 (그 시각보다 정규장 +20% 더 갈 확률 순) 중 최근 1시간 거래가 있는 종목입니다.",
                     "test": "9/15~11/6 · 171건 · 비용 3% 뒤 1건 +3.9%, 이긴 66%"}
-LIMIT_KO = {"vwap": "VWAP −{dip}% (VWAP 따라 움직임)", "signal": "신호가 −{dip}%", "high": "신호 뒤 고점 −{dip}% (고점 따라 올라감)",
+# 알림 지정가 (11/16): 보낸 알림(종목·거래일마다 첫 알림)의 가격보다 5% 아래에 지정가, 3분 안 닿으면 취소. 체결되면 +30% 익절 · −30% 손절 ·
+# 2시간 뒤(또는 애프터장 마감) 정리. 다른 사람 봇이 쓰는 규칙을 우리 알림에 적용한 모의 기록 — 수익이 난다는 검증이 아니라 쌓아서 보려는 것.
+# 11/02~11/16 우리 알림 재현: 11/10 이후 체결 93건 건당 +1.4% (95% −1.9~+4.9), 10월 말엔 −3% — 장에 따라 흔들려 비용 뒤 플러스인지 아직 모름.
+STRATEGIES["A1"] = {"name": "전략A 알림 지정가", "entry": "alert", "dip": 5, "minutes": 3, "tp": 30, "sl": 30, "hold_h": 2,
+                    "why": "보낸 알림 가격보다 5% 내려와야 체결되고, 안 내려오면 안 삽니다. 익절 +30% · 손절 −30% · 2시간 뒤 정리.",
+                    "test": "11/10~11/16 재현 93건 +1.4%, 이전 기간엔 −3% (불안정)"}
+LIMIT_KO = {"alert": "알림가 −{dip}%", "vwap": "VWAP −{dip}% (VWAP 따라 움직임)", "signal": "신호가 −{dip}%", "high": "신호 뒤 고점 −{dip}% (고점 따라 올라감)",
             "hold_lim": "눌린 지금 가격, 3분 안 미체결 취소 · 고점 돌파 시 시장가"}
 
 
@@ -84,7 +90,7 @@ def plan(bars: list[tuple], prev_close: float, shares: float | None, st: dict) -
     (아직 wait 분이 안 지났으면 {waiting: True}) /
     hold_lim = hold 와 같은 조건이면 그 종가에 지정가 3분, 그사이 신호 뒤 고점을 넘으면 시장가(고점 +0.5%).
     1분봉이라 '3분 30초 뒤' 는 신호 4번째 봉(wait=4) 종가로 본다."""
-    if st.get("entry") == "model":                       # 데이마켓 후보(M1)는 신호로 사지 않는다 (수집기 model_picks)
+    if st.get("entry") in ("model", "alert"):            # 데이마켓 후보(M1)·알림 지정가(A1)는 +5% 신호로 사지 않는다 (수집기가 따로)
         return None
     t = signal_k(bars, prev_close, shares)
     if t is None or not in_hours(bars[t][0], st["hours"]):

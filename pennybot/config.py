@@ -119,6 +119,7 @@ class CollectorConfig:
     rt_min_dollar_by_session: dict = field(default_factory=lambda: {"DAY": 2e4, "PRE": 3e4, "REGULAR": 5e4, "AFTER": 2e4})
     rt_surge_by_session: dict = field(default_factory=lambda: {"DAY": 2.5, "PRE": 3.0, "REGULAR": 3.5, "AFTER": 2.5})
     rt_min_dollar_3m: float = 0.0
+    tv_gap_alerts: bool = True       # LS 시세가 없는 미국 17~20시(한국 07~10시)에 트레이딩뷰 스냅샷으로 '거래 터짐' 알림 (2026-11-19)
     second_wave_min_minutes: int = 5
     second_wave_max_drop_pct: float = 8.0
     rt_cooldown_seconds: int = 180     # 같은 종목 실시간 알림 재발송 최소 간격 (기존 600초는 너무 느림)
@@ -156,6 +157,7 @@ class CollectorConfig:
     research_refresh_days: int = 7   # 이 날짜 간격으로 (휴장 중에만 시작, 장중엔 안 건드림)
     db_cleanup: bool = True          # 하루에 한 번 오래된 원시 데이터를 지워 market.db 가 무한정 커지는 것을 막음
     db_retain_tick_days: int = 14    # prices/quotes/rankings/events (틱·호가·랭킹 원본) 보관 기간
+    db_retain_price_days: int = 7    # prices (전 종목 20초 가격, 하루 250~460만 행으로 가장 큼) 보관 기간 — 호가·순위보다 짧게
     db_retain_bar_days: int = 400    # bars_1m (1분봉, 백테스트·signal-audit 재료) 보관 기간 — 길게
 
 
@@ -362,6 +364,13 @@ class TradingConfig:
                      "max_d1_vol": 0.3, "limit_ratio": 0.6, "window_days": 10,
                      "take_profit_pct": 15.0, "stop_loss_pct": 30.0,
                      "stop_loss_pct_override": 0.0, "take_profit_pct_override": 0.0, "gap_risk_pct": 30.0},
+        # 2026-11-18 알림 지정가(전략A): 알림가 −5% 지정가 3분(entry_ttl_seconds, 재호가 없음) → +30%/−30%/2시간 정리.
+        # 수집기가 알림마다 남기는 가상 기록(vsignals A1 ORDER)을 읽어 모의 주문. 11/10~11/16 재현 +1.4%/건(불안정) —
+        # 수익 검증이 아니라 모의로 쌓아 보려는 것이라 예산 작게. 매매 가격대($0.5~$5) 안의 알림만.
+        "alert_limit": {"enabled": True, "budget_pct": 0.10, "max_positions": 3, "entry_ttl_seconds": 180,
+                        "entry_reprice": False, "min_price": 0.5, "max_price": 5.0, "hold_hours": 2,
+                        "take_profit_pct": 30.0, "stop_loss_pct": 30.0,
+                        "stop_loss_pct_override": 0.0, "take_profit_pct_override": 0.0, "gap_risk_pct": 30.0},
         "day_handoff": {"enabled": False, "budget_pct": 0.10, "max_positions": 2,
                         "late_window_minutes": 120, "min_vol_ratio": 5.0, "min_dollar": 5e5,
                         "entry_discount_pct": 0.5, "stop_loss_pct_override": 0.0,

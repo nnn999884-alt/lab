@@ -1,4 +1,4 @@
-"""세션 매매 엔진: 데이마켓에 사고 그날 밤(프리마켓~정규장 개장 직후)에 판다.
+"""세션 매매 엔진 (모의 기본). 처음 '데이마켓 매수 → 그날 밤 매도' 구조는 2026-11-15 에 버림.
 
 매 틱(기본 5초):
   1. 주문 상태 확인 → 체결을 trades 에 반영, 매수 미체결 TTL 취소, 매도 재호가
@@ -247,7 +247,21 @@ class Trader:
         age = (now - w.placed_at).total_seconds()
         if w.cancel_sent:
             return bool(w.cancel_at and (now - w.cancel_at).total_seconds() > 60)
-        return age > (self.tcfg.entry_ttl_seconds if w.purpose == "entry" else self.tcfg.exit_reprice_seconds)
+        return age > (self._entry_ttl(w) if w.purpose == "entry" else self.tcfg.exit_reprice_seconds)
+
+    def _entry_param(self, w: Working, key: str, default):
+        """매수 주문의 전략별 설정 (예: alert_limit 은 TTL 180초·재호가 없음). 거래 id → 전략 이름은 한 번만 조회."""
+        cache = self.__dict__.setdefault("_strat_of_trade", {})
+        if w.trade_id not in cache:
+            try:
+                r = self.journal.q("SELECT strategy FROM trades WHERE id=?", (w.trade_id,))
+                cache[w.trade_id] = r[0]["strategy"] if r else ""
+            except Exception:
+                cache[w.trade_id] = ""
+        return (self.tcfg.strategies.get(cache[w.trade_id]) or {}).get(key, default)
+
+    def _entry_ttl(self, w: Working) -> float:
+        return self._entry_param(w, "entry_ttl_seconds", self.tcfg.entry_ttl_seconds)
 
     def poll_orders(self, now: datetime, session: str) -> None:
         changed = self._changed_orders()
@@ -307,8 +321,8 @@ class Trader:
             if cur["status"] == "REPLACED" or w.cancel_sent:
                 continue          # 정정·취소 처리 중
             age = (now - w.placed_at).total_seconds()
-            if w.purpose == "entry" and age > self.tcfg.entry_ttl_seconds:
-                if not self._reprice_entry(key, w, now, session):
+            if w.purpose == "entry" and age > self._entry_ttl(w):
+                if not (self._entry_param(w, "entry_reprice", True) and self._reprice_entry(key, w, now, session)):
                     self._cancel(key, "매수 미체결 TTL", now)
             elif w.purpose == "exit" and age > self.tcfg.exit_reprice_seconds:
                 self._reprice(key, w, now, session)

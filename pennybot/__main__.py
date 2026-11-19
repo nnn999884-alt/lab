@@ -32,10 +32,32 @@ from .engine import Engine
 from .toss_api import TossApiError, TossClient, us_price_str
 
 
-def make_client(cfg: Config, role: str = "other") -> TossClient:
+_LS_CLIENT = None
+
+
+def use_ls() -> bool:
+    """LS 키가 있으면 시세는 LS (2026-11-17 토스 계좌를 닫음). PENNYBOT_DATA_SOURCE=toss 로 토스로 되돌릴 수 있다."""
+    return bool(os.getenv("LS_APP_KEY") and os.getenv("LS_APP_SECRET")) and os.getenv("PENNYBOT_DATA_SOURCE", "").lower() != "toss"
+
+
+def make_client(cfg: Config, role: str = "other"):
+    global _LS_CLIENT
+    if role in ("collector", "trader") and use_ls():
+        if _LS_CLIENT is None:
+            from .ls_api import LsClient
+            _LS_CLIENT = LsClient(os.environ["LS_APP_KEY"], os.environ["LS_APP_SECRET"], cfg.state_dir, cfg.collector.db_path)
+        return _LS_CLIENT
     t = cfg.toss
     share = {"collector": t.rate_share_collector, "trader": t.rate_share_trader}.get(role, t.rate_share_other)
     return TossClient(t.client_id, t.client_secret, t.account or None, t.token_path, t.base_url, rate_share=share)
+
+
+def make_history_client(cfg: Config):
+    """과거 데이터 백필(backfill-daily·backfill-minutes)용: LS 에는 과거 봉 조회가 없어 야후 과거 봉을 같은 모양으로 쓴다."""
+    if use_ls():
+        from .dailysync import YahooHistoryClient
+        return YahooHistoryClient()
+    return make_client(cfg, "collector")
 
 
 def _feed(cfg: Config):
@@ -105,7 +127,7 @@ def cmd_backfill_daily(cfg: Config, args) -> None:
     from .collector import Store
     from .collector.backfill import backfill_daily
     setup_file_log(cfg, "backfill")
-    client = make_client(cfg, "collector")
+    client = make_history_client(cfg)
     store = Store(cfg.collector.db_path)
     syms = [r[0] for r in store.query("SELECT symbol FROM stock_info WHERE symbol IS NOT NULL ORDER BY symbol")]
     if not syms:
@@ -117,13 +139,29 @@ def cmd_backfill_daily(cfg: Config, args) -> None:
     log.info("일봉 백필 끝: %s", rep)
 
 
+def cmd_daily_sync(cfg: Config, args) -> None:
+    """비어 있는 최근 일봉을 야후(정규장 기준)로 채운다 — DB 마지막 일봉 다음 날부터 가장 최근 마감일까지 (--since 로 시작일 지정).
+    수집기도 장 마감 뒤 알아서 하지만(LS 어댑터), 며칠 꺼져 있었거나 처음 옮길 때 직접 돌린다."""
+    from . import dailysync
+    from .collector import Store
+    setup_file_log(cfg, "backfill")
+    db = cfg.collector.db_path
+    target, last = dailysync.needed(db)
+    since = args.since or (last or "2025-01-01")
+    store = Store(db)
+    syms = [r[0] for r in store.query("SELECT DISTINCT symbol FROM universe WHERE snapshot_date=(SELECT MAX(snapshot_date) FROM universe)")]
+    log.info("일봉 동기화 시작: %d종목, %s 부터 (목표 %s, DB 마지막 %s)", len(syms), since, target, last)
+    rep = dailysync.sync(db, syms, since=since)
+    log.info("일봉 동기화 끝: %s", rep)
+
+
 def cmd_backfill_minutes(cfg: Config, args) -> None:
     from datetime import date, timedelta
 
     from .collector import Store
     from .collector.backfill import backfill_minutes
     setup_file_log(cfg, "backfill")
-    client = make_client(cfg, "collector")
+    client = make_history_client(cfg)
     store = Store(cfg.collector.db_path)
     syms = [r[0] for r in store.query(
         "SELECT symbol, MAX(ts) AS last FROM prices GROUP BY symbol ORDER BY last DESC")]
@@ -144,7 +182,7 @@ def cmd_collect(cfg: Config, once: bool) -> None:
     from .news import NewsClient
     from .shortdata import ShortData
     ua = cfg.sec_user_agent or "pennybot/1.0"
-    col = Collector(client, Store(cfg.collector.db_path), SessionCalendar(client), cfg.collector,
+    col = Collector(client, Store(cfg.collector.db_path), SessionCalendar(None if use_ls() else client), cfg.collector,
                     dil.edgar if dil else None, dilution=dil, fundamentals=fund,
                     news=NewsClient(cfg.collector.news_feeds or None, ua),
                     short=ShortData(ua) if cfg.collector.short_data else None,
@@ -289,7 +327,9 @@ def cmd_trade(cfg: Config, once: bool) -> None:
         from . import stream as ws
         if ws.available():
             # 계정당 웹소켓 2개까지 → 매매 봇만 1개. 모의 모드는 시세만 (모의 주문은 토스에 없으므로)
-            stream = ws.TossStream(client, cfg.toss.account if cfg.is_live else None).start()
+            mk = getattr(client, "make_stream", None)         # 11/17: LS 클라이언트면 LS 웹소켓 (호가·체결)
+            stream = (mk(daily=False, name="ls-trade").start() if mk else
+                      ws.TossStream(client, cfg.toss.account if cfg.is_live else None).start())
             market = ws.StreamMarket(stream, market, t.stream_max_age_seconds)
         else:
             logging.warning("websocket-client 미설치 → REST 폴링만 사용 (pip install websocket-client)")
@@ -298,7 +338,7 @@ def cmd_trade(cfg: Config, once: bool) -> None:
         logging.warning("⚠️  실거래 모드: 토스증권 계좌로 실제 주문이 나갑니다.")
     else:
         ex = PaperExchange(market, t.paper_cash, Path(cfg.state_dir) / "paper_account.json", fee_pct=t.fee_pct)
-    cal = SessionCalendar(client)
+    cal = SessionCalendar(None if use_ls() else client)      # LS 에는 장 캘린더가 없어 평일 근사(static_day)
     if not Path(cfg.collector.db_path).exists():
         logging.warning("수집기 DB(%s)가 없습니다. 'python -m pennybot collect' 를 같이 돌려야 전략이 후보를 찾습니다.",
                         cfg.collector.db_path)
@@ -385,12 +425,18 @@ def cmd_tunnel(cfg: Config, port: int) -> None:
     # 비밀번호가 없으면 외부 주소는 보기 전용 (대시보드가 외부에서 온 제어 요청을 거절)
     how = ("아이디 아무거나, 비밀번호는 .env 의 PENNYBOT_DASHBOARD_PASSWORD" if cfg.dashboard_password
            else "비밀번호 없음 · 보기 전용, 조작은 이 컴퓨터나 텔레그램으로")
-    exe = next((p for p in (Path("tools/cloudflared.exe"), Path("tools/cloudflared")) if p.exists()), None) \
+    # 11/17: 다른 프로그램(AXIS start_dashboard.py)이 시작할 때 'cloudflared.exe' 를 전부 종료해서 우리 터널이 코드 15 로 같이 죽었음
+    #        → 같은 파일을 다른 이름(pbtunnel.exe)으로 복사해서 쓴다 (프로세스 이름이 달라 그 종료에 안 걸림)
+    own, src = Path("tools/pbtunnel.exe"), Path("tools/cloudflared.exe")
+    if not own.exists() and src.exists():
+        shutil.copy2(src, own)
+    exe = next((p for p in (own, src, Path("tools/cloudflared")) if p.exists()), None) \
         or shutil.which("cloudflared")
     if not exe:
         raise SystemExit("cloudflared 가 없습니다. tunnel.bat 이 받아 오거나,"
                          " https://github.com/cloudflare/cloudflared/releases 에서 tools 폴더에 넣으세요.")
     t = cfg.trading
+    setup_file_log(cfg, "tunnel")                         # 11/16: 터널이 왜 끊기는지 남기려고 파일 로그 (state/logs/tunnel.log)
     notifier = Notifier(t.notify_webhook, t.telegram_token, t.telegram_chat, background=False)
     url_file = Path(cfg.state_dir) / "tunnel_url.txt"     # 매매 봇이 알림·/대시보드 에 붙인다
     url_file.unlink(missing_ok=True)
@@ -406,11 +452,13 @@ def cmd_tunnel(cfg: Config, port: int) -> None:
                 url_file.write_text(m.group(0), encoding="utf-8")
                 print(f"외부 주소: {m.group(0)}  ({how})")
                 notifier.send(f"🌐 대시보드 외부 주소\n{m.group(0)}\n{how}")
-            elif " ERR " in line:
-                logging.warning("cloudflared: %s", line.strip())
+            elif any(w in line for w in (" ERR ", " WRN ", "Unregistered", "Retrying", "connection", "Connection")):
+                logging.warning("cloudflared: %s", line.strip()[:300])
     finally:
         url_file.unlink(missing_ok=True)
-    raise SystemExit(f"cloudflared 종료 (코드 {p.wait()})")
+    code = p.wait()
+    logging.warning("cloudflared 종료 (코드 %s) — 자동 재시작되면 외부 주소가 바뀝니다", code)
+    raise SystemExit(f"cloudflared 종료 (코드 {code})")
 
 
 def tunnel_url(cfg: Config) -> str | None:
@@ -705,7 +753,7 @@ def main() -> None:
     ap.add_argument("command", nargs="?", default="collect",
                     choices=["check", "accounts", "collect", "summarize", "audit", "signal-audit", "alert-stats", "trade", "dashboard",
                              "probe-orders", "backtest", "research", "bigruns", "chart30", "trigger", "anatomy",
-                             "telegram-setup", "tunnel", "screen", "run", "backfill-daily", "backfill-minutes",
+                             "telegram-setup", "tunnel", "screen", "run", "backfill-daily", "backfill-minutes", "daily-sync",
                              "vacuum-db", "rule-eval", "screen-eval", "overnight", "halt-resume", "rank-train"])
     ap.add_argument("--config", default="config.yaml")
     ap.add_argument("--rule", default="session-score", help="rule-eval: 검증할 규칙 이름 (ruleeval.RULES)")
@@ -806,6 +854,7 @@ def _dispatch(cfg, args) -> None:
         "run": lambda: cmd_run(cfg, args.once),
         "backfill-daily": lambda: cmd_backfill_daily(cfg, args),
         "backfill-minutes": lambda: cmd_backfill_minutes(cfg, args),
+        "daily-sync": lambda: cmd_daily_sync(cfg, args),
         "vacuum-db": lambda: cmd_vacuum_db(cfg),
     }[args.command]()
 

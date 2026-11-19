@@ -680,7 +680,7 @@ def test_model_picks_buy_fresh_only_and_close_at_regular_end(tmp_path, monkeypat
     from pennybot import rankmodel
     from pennybot import settings
     col, st, sent = make(tmp_path)
-    settings.save(str(tmp_path), {"alerts": {"vtrade": False}})       # 가상 매매 알림을 꺼도 후보 알림은 온다 (11/11)
+    settings.save(str(tmp_path), {"alerts": {"vtrade": False, "dm_pick": True}, "strategies": {"M1": True}})   # 11/15 부터 기본 꺼짐 → 켜고 시험
     col.universe = {"AAA": {"name": "에이", "last": 1.0}, "BBB": {"name": "비", "last": 2.0}}
     d0, d = "2026-11-06", "2026-11-09"
     T = rankmodel.dm_time(d0, d)
@@ -716,6 +716,11 @@ def test_model_picks_runs_once_in_window(tmp_path, monkeypatch):
     started = []
     monkeypatch.setattr(Collector, "_model_picks_job", lambda self, *a, **k: started.append(a))
     T = datetime.fromisoformat(rankmodel.dm_time("2026-11-06", "2026-11-09"))
+    from pennybot import settings
+    settings.save(str(tmp_path), {"alerts": {"dm_pick": False}})
+    assert col.model_picks(T + timedelta(minutes=1)) is False                    # M1 도 알림도 꺼지면 안 함
+    settings.save(str(tmp_path), {"alerts": {"dm_pick": True}, "strategies": {"M1": True}})
+    col._mpick_try = None
     assert col.model_picks(T - timedelta(minutes=5)) is False                    # 22:00 ET 전
     assert col.model_picks(T + timedelta(minutes=1)) is True
     col._mpick_thread.join()

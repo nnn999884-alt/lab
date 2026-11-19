@@ -166,7 +166,7 @@ def test_watch_splits_rank_flow_rotation_and_rotates(tmp_path):
         {"ts": now.isoformat(), "trade_date": "2026-10-21", "session": "DAY", "type": "MARKET_TRADING_AMOUNT",
          "duration": "realtime", "rank": i + 1, "symbol": f"S{i:02d}", "last": 1.0, "base": 1.0,
          "change_rate": 1.0, "volume": 1000 - i, "amount": 10_000 - i * 100, "ranked_at": now.isoformat()}
-        for i in range(6)])
+        for i in range(4)])     # 순위 후보가 수급 칸(4)과 같을 때 — 후보가 더 많으면 11/19 부터 칸을 넓혀 전부 감시
     store.put_events([
         {"ts": (now - timedelta(minutes=5)).astimezone(timezone.utc).isoformat(), "symbol": f"S{i}", "kind": "burst",
          "text": "x", "value": 1.0}

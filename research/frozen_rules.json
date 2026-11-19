@@ -1,0 +1,21 @@
+{
+ "frozen_at": "2026-11-15",
+ "forward_from": "2026-11-16",
+ "min_symbols_per_day": 2300,
+ "range30_min": 0.2,
+ "rule": "P1: V0 거래량 첫 폭발 트리거(early_study.py) AND 직전 30분 폭 >= 20% → 다음 봉 매도1호가 진입, 3xATR 손절/2R 익절/120분(S2), 계좌위험 1%·포지션 상한 25%, 수수료 0.2%",
+ "criteria": {
+  "min_trades": 150,
+  "min_days": 15,
+  "account_pnl_per_trade_gt": 0,
+  "day_bootstrap_95_lower_gt": 0,
+  "fills": "호가(quotes)가 진입·청산 시각 180초 안에 있는 거래만 체결 인정"
+ },
+ "note": "탐색 기간(2026-10-20~11-11)은 규칙 설계에만 사용. 2026-11-16 이후 거래일만 검증. 코드가 바뀌면 검증 무효.",
+ "code_sha256": {
+  "early_study.py": "cf7da55a826617518c3b27390992951905ecc3dcea7f531cb4f8e65e6ca41cc9",
+  "forward_eval.py": "6fa853fc140355b377f0b6cc607e027d911402c9ae485259525f58b9478a90da",
+  "surge_v2.py": "eda6956d886ad68a67456e4133dcfd344a47eadd8ab04c1babd050831ccedca5",
+  "surge_study.py": "511e54ad28045a398f7b082759005d60098265219d121034a704a29a001b08a6"
+ }
+}
