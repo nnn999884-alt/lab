@@ -168,6 +168,18 @@ class Collector:
         """설정 탭의 알림 켜기·끄기."""
         return bool(self._settings.get()["alerts"].get(alert, True))
 
+    def _stock_name(self, sym: str, store=None) -> str:
+        """메모리 유니버스 갱신 중 이름이 비면 영속 종목 정보로 보완한다."""
+        name = (self.universe.get(sym) or {}).get("name") or ""
+        if name:
+            return name
+        try:
+            rows = (store or self.store).query(
+                "SELECT name FROM stock_info WHERE symbol=? AND name IS NOT NULL AND name != ''", (sym,))
+            return rows[0][0] if rows else ""
+        except Exception:
+            return ""
+
     def write_status(self, now: datetime, session: str) -> None:
         """설정 탭 '시스템 상태' 용: 웹소켓·구독·보유 (state/collector_status.json)."""
         from pathlib import Path
@@ -1780,7 +1792,7 @@ class Collector:
             out |= set(self._fast_hot[1])
         td = trade_date.isoformat() if trade_date else None
         if td:
-            for s, mx in self.store.query("SELECT symbol, MAX(last) FROM prices WHERE trade_date=? GROUP BY symbol", (td,)):
+            for s, mx in self.store.query("SELECT symbol, high FROM day_high WHERE trade_date=?", (td,)):
                 r = all_rows.get(s)
                 if r and r[4] and mx and mx >= r[4] * 1.3:
                     out.add(s)
@@ -1923,7 +1935,7 @@ class Collector:
             except Exception:
                 pass
             oh = self._overhead(store, sym, r["price"])
-            self._gsend(sym, r["price"], reaccel_text(sym, (self.universe.get(sym) or {}).get("name"), r, pc, SESSION_KO.get(session, session), n,
+            self._gsend(sym, r["price"], reaccel_text(sym, self._stock_name(sym, store), r, pc, SESSION_KO.get(session, session), n,
                                             d2, [oh] if oh else None) + self._chase_line(store, sym, r["price"]),
                                buttons=alert_buttons(sym, link))
         return True

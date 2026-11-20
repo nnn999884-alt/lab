@@ -268,6 +268,23 @@ def test_catch_up_summaries_on_start(tmp_path):
     assert store.query("SELECT COUNT(*) FROM session_summary WHERE trade_date='2026-10-21'")[0][0] >= 1
 
 
+def test_put_prices_keeps_small_daily_high_table(tmp_path):
+    store = Store(tmp_path / "m.db")
+    store.put_prices([
+        {"symbol": "PEN", "ts": "2026-10-30T10:00:00+00:00", "trade_date": "2026-10-30",
+         "session": "PRE", "last": 1.40, "price_ts": None},
+        {"symbol": "FLAT", "ts": "2026-10-30T10:00:00+00:00", "trade_date": "2026-10-30",
+         "session": "PRE", "last": 2.00, "price_ts": None},
+    ])
+    store.put_prices([
+        {"symbol": "PEN", "ts": "2026-10-30T10:01:00+00:00", "trade_date": "2026-10-30",
+         "session": "PRE", "last": 1.10, "price_ts": None},
+    ])
+
+    assert store.query("SELECT symbol, high FROM day_high WHERE trade_date='2026-10-30' ORDER BY symbol") == [
+        ("FLAT", 2.0), ("PEN", 1.4)]
+
+
 def test_prune_keeps_recent_ticks_and_old_bars(tmp_path):
     store = Store(tmp_path / "m.db")
     store.put_prices([{"symbol": "PEN", "ts": "2026-01-01T00:00:00+00:00", "trade_date": "2026-01-01",

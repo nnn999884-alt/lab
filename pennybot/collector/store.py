@@ -15,6 +15,9 @@ CREATE TABLE IF NOT EXISTS universe (
 CREATE TABLE IF NOT EXISTS prices (
     symbol TEXT, ts TEXT, trade_date TEXT, session TEXT, last REAL, price_ts TEXT,
     PRIMARY KEY (symbol, ts));
+CREATE TABLE IF NOT EXISTS day_high (
+    trade_date TEXT, symbol TEXT, high REAL,
+    PRIMARY KEY (trade_date, symbol));
 CREATE TABLE IF NOT EXISTS quotes (
     symbol TEXT, ts TEXT, trade_date TEXT, session TEXT,
     bid REAL, bid_size REAL, ask REAL, ask_size REAL, levels INTEGER, book_ts TEXT,
@@ -136,7 +139,19 @@ class Store:
         return len(rows)
 
     def put_universe(self, rows): return self._put("universe", rows)
-    def put_prices(self, rows): return self._put("prices", rows)
+    def put_prices(self, rows):
+        if not rows:
+            return 0
+        cols = list(rows[0])
+        price_sql = f"INSERT OR REPLACE INTO prices ({','.join(cols)}) VALUES ({','.join('?' * len(cols))})"
+        high_sql = """
+            INSERT INTO day_high (trade_date, symbol, high) VALUES (?, ?, ?)
+            ON CONFLICT(trade_date, symbol) DO UPDATE SET high=MAX(day_high.high, excluded.high)
+        """
+        with self.db:
+            self.db.executemany(price_sql, [tuple(r[c] for c in cols) for r in rows])
+            self.db.executemany(high_sql, [(r["trade_date"], r["symbol"], r["last"]) for r in rows if r.get("last") is not None])
+        return len(rows)
     def put_live_ticks(self, rows): return self._put("live_tick", rows)
     def put_price_now(self, rows): return self._put("price_now", rows)
     def put_quotes(self, rows): return self._put("quotes", rows)
@@ -205,6 +220,7 @@ class Store:
                 cutoff = (price_cutoff_date or tick_cutoff_date) if table == "prices" else tick_cutoff_date
                 cur = self.db.execute(f"DELETE FROM {table} WHERE trade_date < ?", (cutoff,))
                 counts[table] = cur.rowcount
+            self.db.execute("DELETE FROM day_high WHERE trade_date < ?", (price_cutoff_date or tick_cutoff_date,))
             self.db.execute("DELETE FROM depth_pre WHERE trade_date < ?", (tick_cutoff_date,))
             cur = self.db.execute("DELETE FROM events WHERE ts < ?", (tick_cutoff_date,))
             counts["events"] = cur.rowcount

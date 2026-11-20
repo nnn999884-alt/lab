@@ -137,6 +137,9 @@ def test_realtime_reaccel_after_alert(tmp_path):
     col._rt_alert(st, "PENX", 80000.0, 70000.0, 1.08)          # 첫 알림 (가상 매매 알림은 세지 않음)
     alerts = lambda: [m[0] for m in sent.msgs if m[0].startswith(("📶", "🚨", "🔁"))]
     assert len(alerts()) == 1
+    # 유니버스 메모리 이름이 갱신 중 잠깐 비어도 DB 이름으로 보완한다.
+    col.universe["PENX"]["name"] = ""
+    st.put_stock_info([{"symbol": "PENX", "name": "펜엑스", "shares": 1e6, "list_date": None, "updated": "x"}])
     # 2.0 까지 갔다가 1.6 (−20%) → 1.8 (저점 +12%) 다시 붙음
     path += [(1.1, 2.0, 1.9), (1.9, 1.9, 1.7), (1.7, 1.7, 1.6), (1.6, 1.62, 1.62), (1.62, 1.8, 1.8)]
     col.clock = lambda: T0 + td(minutes=9)
@@ -157,6 +160,25 @@ def test_keep_watch_includes_faded_runners(tmp_path):
         rows[sym] = (sym, 1, "[]", "{}", 1.0)
     keep = col._keep_watch("2026-10-22", None, rows)
     assert keep == {"RUNR"}                                    # 어제 +80% 찍고 제자리로 온 종목은 계속 감시
+
+
+def test_keep_watch_uses_compact_day_high_not_raw_prices(tmp_path):
+    from datetime import date
+
+    col, st, sent = make(tmp_path)
+    st.put_prices([
+        {"symbol": "PENX", "ts": "2026-10-23T08:00:00+00:00", "trade_date": "2026-10-23",
+         "session": "PRE", "last": 1.40, "price_ts": None},
+        {"symbol": "PENX", "ts": "2026-10-23T08:01:00+00:00", "trade_date": "2026-10-23",
+         "session": "PRE", "last": 1.10, "price_ts": None},
+    ])
+    sql = []
+    st.db.set_trace_callback(sql.append)
+
+    keep = col._keep_watch("2026-10-22", date(2026, 10, 23), {"PENX": ("PENX", 1, "[]", "{}", 1.0)})
+
+    assert keep == {"PENX"}
+    assert not any("FROM prices" in statement for statement in sql)
 
 
 def test_runners_and_approach_before_breakout(tmp_path):
