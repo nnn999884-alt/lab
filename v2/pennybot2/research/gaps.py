@@ -25,6 +25,7 @@ ET = ZoneInfo("America/New_York")
 URL = "https://openapi.ls-sec.co.kr:8080/overseas-stock/chart"
 EXCH = {"NASDAQ": "82", "NYSE": "81", "AMEX": "83"}
 LIMIT_CODE = "IGW00201"
+RETRIES, RETRY_WAIT = 5, 30
 GAP_SCHEMA = "CREATE TABLE IF NOT EXISTS gap_jobs (symbol TEXT, trade_date TEXT, status TEXT, rows INTEGER, done_at TEXT, PRIMARY KEY (symbol, trade_date))"
 
 
@@ -34,10 +35,14 @@ def market_days(day_symbol_counts: dict[str, int], min_symbols: int = 300) -> li
 
 
 def missing_days(have: dict[str, set[str]], days: list[str]) -> dict[str, list[str]]:
-    """종목 → 시장에는 데이터가 있는데 그 종목은 0봉인 날 목록 (빠진 날이 있는 종목만)."""
+    """종목 → 시장에는 데이터가 있는데 그 종목은 0봉인 날 목록 (빠진 날이 있는 종목만).
+    그 종목의 첫·마지막 기록일 **사이**의 구멍만 센다: 마지막 기록 뒤는 상장폐지·거래정지·수집 중단인지 구분이 안 되고(예: SHFS 는 11/17 이후 기록이 끊겨 LS 에도 봉이 없음), LS 호출만 낭비한다."""
     out = {}
     for sym, got in have.items():
-        miss = [d for d in days if d not in got]
+        if not got:
+            continue
+        lo, hi = min(got), max(got)
+        miss = [d for d in days if lo < d < hi and d not in got]
         if miss:
             out[sym] = miss
     return out
@@ -77,36 +82,60 @@ class LimitHit(Exception):
     pass
 
 
-def fetch_day(token: str, sym: str, market: str, trade_date: str, call_budget: list[int], gap: float = 2.5) -> tuple[list[tuple], int]:
-    """한 영업일(전날 20:00 ET ~ 그날 19:50 ET)의 분봉. 최신 → 과거로 이어 조회. 반환: (행, 쓴 호출 수). call_budget[0] 는 남은 호출 수."""
-    code = EXCH.get(market, "82")
+NO_SYMBOL = "해당종목이 없습니다"
+
+
+def exch_order(market: str) -> list[str]:
+    """마스터에 있는 거래소 코드를 먼저, 나머지를 뒤에 (마스터에 없는 종목은 AMEX 등일 수 있음)."""
+    first = EXCH.get(market)
+    return ([first] if first else []) + [c for c in ("82", "81", "83") if c != first]
+
+
+def fetch_day(token: str, sym: str, market: str, trade_date: str, call_budget: list[int], gap: float = 20.0) -> tuple[list[tuple], int, str]:
+    """한 영업일(전날 20:00 ET ~ 그날 19:50 ET)의 분봉. 최신 → 과거로 이어 조회.
+    반환: (행, 쓴 호출 수, 상태) — 상태: 'ok'(봉 있음) · 'empty'(조회 성공, 그날 봉 없음) · 'nosym'(어느 거래소에도 종목이 없다고 함 → 빈 날로 치면 안 됨)."""
     d = date.fromisoformat(trade_date)
     sdate, edate = (d - timedelta(days=1)).strftime("%Y%m%d"), d.strftime("%Y%m%d")
-    cts_date = cts_time = key = ""
-    cont = "N"
-    got, used = [], 0
-    while call_budget[0] > 0:
-        call_budget[0] -= 1
-        used += 1
-        h = {"content-type": "application/json; charset=UTF-8", "authorization": f"Bearer {token}", "tr_cd": "g3203", "tr_cont": cont, "tr_cont_key": key}
-        body = {"g3203InBlock": {"delaygb": "R", "keysymbol": (code + sym).ljust(18), "exchcd": code, "symbol": sym, "ncnt": 1, "qrycnt": 500,
-                                 "comp_yn": "N", "sdate": sdate, "edate": edate, "cts_date": cts_date, "cts_time": cts_time}}
-        r = requests.post(URL, headers=h, data=json.dumps(body), timeout=20)
-        j = r.json() if r.content else {}
-        time.sleep(gap)
-        if j.get("rsp_cd") == LIMIT_CODE:
-            raise LimitHit
-        rows = j.get("g3203OutBlock1") or []
-        if not rows:
-            break
-        got += rows
-        o = j.get("g3203OutBlock") or {}
-        if r.headers.get("tr_cont") != "Y" or not o.get("cts_date"):
-            break
-        cts_date, cts_time, key, cont = o["cts_date"], o["cts_time"], r.headers.get("tr_cont_key") or "", "Y"
-        if o["cts_date"] < sdate:
-            break
-    return parse_rows(got, trade_date), used
+    used, nosym = 0, 0
+    for code in exch_order(market):
+        cts_date = cts_time = key = ""
+        cont = "N"
+        got = []
+        while call_budget[0] > 0:
+            call_budget[0] -= 1
+            used += 1
+            h = {"content-type": "application/json; charset=UTF-8", "authorization": f"Bearer {token}", "tr_cd": "g3203", "tr_cont": cont, "tr_cont_key": key}
+            body = {"g3203InBlock": {"delaygb": "R", "keysymbol": (code + sym).ljust(18), "exchcd": code, "symbol": sym, "ncnt": 1, "qrycnt": 500,
+                                     "comp_yn": "N", "sdate": sdate, "edate": edate, "cts_date": cts_date, "cts_time": cts_time}}
+            for retry in range(RETRIES + 1):
+                r = requests.post(URL, headers=h, data=json.dumps(body), timeout=20)
+                j = r.json() if r.content else {}
+                time.sleep(gap)
+                if j.get("rsp_cd") != LIMIT_CODE:
+                    break
+                if retry == RETRIES:
+                    raise LimitHit                           # 계속 거절 → 오늘은 여기까지
+                time.sleep(RETRY_WAIT)                        # 실측: 25초 간격이면 약 2/3 가 통과(한도는 호출 속도에 따라 풀림)
+            rows = j.get("g3203OutBlock1") or []
+            if not rows:
+                if NO_SYMBOL in (j.get("rsp_msg") or "") and not got:
+                    nosym += 1
+                break
+            got += rows
+            o = j.get("g3203OutBlock") or {}
+            if r.headers.get("tr_cont") != "Y" or not o.get("cts_date"):
+                break
+            cts_date, cts_time, key, cont = o["cts_date"], o["cts_time"], r.headers.get("tr_cont_key") or "", "Y"
+            if o["cts_date"] < sdate:
+                break
+        else:
+            raise LimitHit                                   # 호출 예산이 이 종목-일 도중에 바닥남 → 결과를 믿을 수 없으니 기록하지 않고 멈춤
+        if got:
+            return parse_rows(got, trade_date), used, "ok"
+        if not nosym:
+            return [], used, "empty"                         # 이 거래소에서는 종목이 있고 그날만 비어 있음
+        nosym = 0                                            # 이 거래소엔 종목 없음 → 다음 거래소로
+    return [], used, "nosym"
 
 
 def _opts(args: list[str]) -> tuple[list[str], dict[str, str]]:
@@ -117,7 +146,7 @@ def _opts(args: list[str]) -> tuple[list[str], dict[str, str]]:
 def main(args: list[str]) -> int:
     pos, opt = _opts(args)
     if not pos:
-        print("사용: python -m pennybot2 gaps DB경로 [--token=ls_token.json 경로] [--out=state/gaps.db] [--since=2026-11-16] [--max-calls=20] [--dry-run]")
+        print("사용: python -m pennybot2 gaps DB경로 [--token=ls_token.json 경로] [--out=state/gaps.db] [--since=2026-11-16] [--max-calls=20] [--gap=20] [--dry-run]")
         return 2
     since, max_calls = opt.get("since", "2026-11-16"), int(opt.get("max-calls", "20"))
     src = sqlite3.connect(f"file:{Path(pos[0]).as_posix()}?mode=ro", uri=True)
@@ -133,8 +162,9 @@ def main(args: list[str]) -> int:
     mkt = dict(src.execute("SELECT symbol, market FROM universe WHERE snapshot_date=(SELECT MAX(snapshot_date) FROM universe)").fetchall()) if _has(src, "universe") else {}
     out = Store(opt.get("out", "state/gaps.db"))
     out.db.execute(GAP_SCHEMA)
-    done = {(s, d) for s, d in out.db.execute("SELECT symbol, trade_date FROM gap_jobs WHERE status IN ('ok','empty')")}
-    jobs = build_jobs(have, days, runners, done)
+    done = {(s, d) for s, d in out.db.execute("SELECT symbol, trade_date FROM gap_jobs WHERE status IN ('ok','empty','nosym')")}
+    nosym = {s for (s,) in out.db.execute("SELECT DISTINCT symbol FROM gap_jobs WHERE status='nosym'")}      # LS 에 없는 종목은 통째로 건너뜀
+    jobs = [j for j in build_jobs(have, days, runners, done) if j[0] not in nosym]
     print(f"시장 거래일 {len(days)}일 · 대기 작업 {len(jobs)}건(종목-일) · 이미 처리 {len(done)}건 · 이번 호출 한도 {max_calls}회")
     if "dry-run" in opt or "--dry-run" in args:
         for s, d in jobs[:15]:
@@ -152,14 +182,14 @@ def main(args: list[str]) -> int:
         for sym, d in jobs:
             if budget[0] <= 0:
                 break
-            rows, used = fetch_day(tj["token"], sym, mkt.get(sym, "NASDAQ"), d, budget)
+            rows, used, status = fetch_day(tj["token"], sym, mkt.get(sym, ""), d, budget, gap=float(opt.get("gap", "20")))
             rows = [(sym,) + r[1:] for r in rows]
             if rows:
                 out.put_bars(rows)
-            out.db.execute("INSERT OR REPLACE INTO gap_jobs VALUES (?,?,?,?,?)", (sym, d, "ok" if rows else "empty", len(rows), datetime.now(timezone.utc).isoformat()))
+            out.db.execute("INSERT OR REPLACE INTO gap_jobs VALUES (?,?,?,?,?)", (sym, d, status, len(rows), datetime.now(timezone.utc).isoformat()))
             out.db.commit()
             nfetch, nrows = nfetch + 1, nrows + len(rows)
-            print(f"  {sym} {d}: {len(rows)}봉 (호출 {used})")
+            print(f"  {sym} {d}: {status} {len(rows)}봉 (호출 {used})")
     except LimitHit:
         print("LS 호출 한도(IGW00201)에 걸려 멈춤 — 나중에 다시 실행하면 이어서 함")
     print(f"처리 {nfetch}건 · 새 봉 {nrows}개 · 남은 대기 작업 약 {max(len(jobs) - nfetch, 0)}건 → {opt.get('out', 'state/gaps.db')}")

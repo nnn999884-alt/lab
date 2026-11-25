@@ -137,5 +137,5 @@ v2/PLAN.md 맨 아래 '보완할 점' 4번과 v2/LESSONS.md 를 먼저 읽어. �
 ```
 
 ## 구멍 메우기 (LESSONS T절)
-- [x] `gaps` 명령(순위·한도 내 조회·이어하기). **LS 한도(IGW00201)가 풀린 뒤 실제 호출 확인 필요**: `gaps DB --token=ls_token.json --max-calls=20` → `state/gaps.db` 에 봉이 쌓이는지, 빈 날(`empty`)과 채워진 날(`ok`) 비율
+- [x] `gaps` 명령(순위·한도 내 조회·이어하기). 실제 호출 확인함(LESSONS T-4). 남은 638건은 `gaps DB --token=ls_token.json --max-calls=300` 처럼 길게 돌리면 됨(약 한나절)
 - [ ] 채워진 뒤 `precursor` 를 원본+`gaps.db` 합쳐서 다시 돌려 결과가 바뀌는지 비교 (합치는 방법은 아직 없음: 지금 `precursor` 는 DB 하나만 읽음)
