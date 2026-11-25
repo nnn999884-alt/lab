@@ -8,6 +8,8 @@
   train DB경로        일봉으로 '오늘 급등 확률' 모델 학습·시험(시간순 분할, 기존 규칙 점수와 비교). 시험을 통과하면 채택·저장
   featurelab DB경로   일봉 점수 항목별로 급등을 실제로 늘렸는지 검증 (기간 3등분·신뢰구간)
   daily               일봉(야후) 동기화 + 전날 밤 점수로 오늘 급등 후보 선정
+  ignite              조기 감지: 거래가 붙기 시작하는 순간을 체결 단위로 (규칙 여러 개 동시 기록, 하나만 알림)
+  backtest-ignite DB경로  과거 1분봉으로 조기 감지(+ 비교용 늦은 감지)를 돌려 신호 저장 → grade --alerts-db 로 채점
   surge | notify      감지 일꾼 / 알림 일꾼
   replay [종목 ...]   저장된 1분봉을 허브로 재생 (허브·감지·알림이 켜져 있어야 함)"""
 from __future__ import annotations
@@ -42,7 +44,7 @@ def main(argv: list[str]) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
     role = argv[0] if argv else ""
     cfg = config.load()
-    if role in ("run", "hub", "ls", "daily", "surge", "notify", "monitor") and not acquire(cfg.state_dir, role):
+    if role in ("run", "hub", "ls", "daily", "ignite", "surge", "notify", "monitor") and not acquire(cfg.state_dir, role):
         print(f"'{role}' 은(는) 이미 실행 중입니다 (state/locks/{role}.lock). 중복 실행을 막기 위해 종료합니다.")
         return ALREADY_RUNNING
     if role == "status":
@@ -56,6 +58,12 @@ def main(argv: list[str]) -> int:
     elif role == "monitor":
         from .workers import monitor
         monitor.run(cfg)
+    elif role == "backtest-ignite":
+        from .workers import ignite
+        return ignite.main_backtest(argv[1:])
+    elif role == "ignite":
+        from .workers import ignite
+        ignite.run(cfg)
     elif role == "surge":
         from .workers import surge
         surge.run(cfg)

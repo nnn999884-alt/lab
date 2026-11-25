@@ -29,8 +29,15 @@ def send(cfg, text: str, timeout: float = 10) -> bool:
     return ok
 
 
+def should_send(d: dict) -> bool:
+    """notify=False 인 신호는 허브에 기록만 하고 알리지 않는다 (비교용 규칙·검증 전 규칙)."""
+    return d.get("notify", True) is not False
+
+
 def run(cfg) -> None:
     def on_msg(topic: str, d: dict) -> None:
+        if not should_send(d):
+            return
         print(d["text"], flush=True)
         send(cfg, d["text"])
 

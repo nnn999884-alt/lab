@@ -1,5 +1,5 @@
 """채점기: 저장된 알림을 1분봉으로 채점해 등급·세션별 성과표를 만든다. 기존 pennybot 의 events 표와 v2 의 signals 표 둘 다 읽는다(읽기 전용).
-사용: python -m pennybot2 grade [DB경로] [--kind 종류] [--cost 1.0] [--controls 3000]"""
+사용: python -m pennybot2 grade DB경로 [--kind=종류] [--cost=1.0] [--controls=3000] [--alerts-db=신호DB]"""
 from __future__ import annotations
 
 import random
@@ -128,7 +128,11 @@ def main(argv: list[str]) -> int:
         return 2
     cost, n_ctrl = float(opt.get("--cost", 1.0)), int(opt.get("--controls", 3000))
     db = sqlite3.connect(f"file:{Path(path).as_posix()}?mode=ro", uri=True)
-    alerts = load_alerts(db, opt.get("--kind"))
+    if "--alerts-db" in opt:              # 신호는 따로 저장된 DB(예: 백테스트 결과)에서, 1분봉은 위 DB 에서
+        adb = sqlite3.connect(f"file:{Path(opt['--alerts-db']).as_posix()}?mode=ro", uri=True)
+        alerts = load_alerts(adb, opt.get("--kind"))
+    else:
+        alerts = load_alerts(db, opt.get("--kind"))
     graded = grade_alerts(db, alerts, cost)
     sessions = {g["session"] for g in graded} or {REGULAR}
     prices = [g["entry"] for g in graded] or [0.5, 5.0]

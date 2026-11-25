@@ -58,7 +58,9 @@ def run(cfg) -> None:
             return
         sig = det.feed(d["s"], d["ts"], d["p"] if topic == "tick" else d["c"])
         if sig:
-            client.publish("signal", enrich(sig, cands.get(sig["s"])))
+            sig = enrich(sig, cands.get(sig["s"]))
+            sig["notify"] = False          # 이미 오른 뒤의 신호(늦음) — 비교용으로만 기록하고 알림은 조기 감지(ignite)가 맡는다
+            client.publish("signal", sig)
 
     client = HubClient(cfg.hub_port, ["tick", "bar", "candidates"], on_msg)
     heartbeat.start(client, "surge", lambda: {"candidates": len(cands)})
