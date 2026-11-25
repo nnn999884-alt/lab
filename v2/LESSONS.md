@@ -213,3 +213,30 @@ Reddit 은 검색 도구가 접근할 수 없어 못 봄(`reddit.com` 차단). X
 - **Halt/Resume 알림**(Trade Ideas)은 소형주에서 고전적 급등 순간이지만, LS 에서 거래정지·재개를 이벤트로 받는지 **확인 못 함**(g3101 의 `suspend` 상태값만 아는 상태).
 
 출처: [edkim/realtime-scanner](https://gh.r-mj.com/edkim/realtime-scanner) · [alpacahq/Momentum-Trading-Example](https://awesome.ecosyste.ms/projects/github.com%2Falpacahq%2FMomentum-Trading-Example) · [Jayanth7416/ross-cameron-stock-scanner](https://github.com/Jayanth7416/ross-cameron-stock-scanner) · [Trade Ideas 모멘텀 스캐너](https://www.trade-ideas.com/momentum-stock-scanner/) · [Trade Ideas 소형주 스캐너](https://www.trade-ideas.com/small-cap-stock-scanner/) · [Ross Cameron 5 Pillars 스크립트](https://it.tradingview.com/script/mbqMf3pF-Ross-Cameron-5-Pillars-Filter) · [gap/float 예제](https://jefrnc.github.io/start-your-quant/docs/indicators/gap_float.html) · [알고랩 오픈소스 봇 비교](https://algolab.co.kr/blog/opensource-algotrading-bots-comparison-2026) · [알고랩 해외주식 가이드](https://algolab.co.kr/blog/us-stock-algotrading-overseas-guide-2026)
+
+## O. 다른 곳 추가 조사 — 학술·규제·소셜·한국어·GitHub (2026-11-25, 웹 검색 6건)
+**결론부터**: 이번엔 '소형주 급등을 미리 알려 주는 것'을 직접 검증한 자료를 **하나도 못 찾았다.** 아래는 간접 근거와 '없다는 것'의 기록이다.
+
+**1. 주문 흐름(호가 불균형) — 가장 근거가 센 '선행' 후보지만 소형주 검증은 없음**
+- Cont·Kukanov·Stoikov(미국 50종목): 최우선 호가의 **주문 흐름 불균형(OFI)이 단기 가격 변화를 거래량보다 잘 설명**하고, 가격 반응은 호가 깊이가 얇을수록 큼. 다른 연구: 호가 잔량 불균형이 다음 시장가 주문의 도착 속도와 방향을 예측, 정보 거래의 도착은 전체 거래량보다 과거 불균형에 더 반응.
+- **한계**: 대부분 크고 유동성 큰 종목, 동시적·초단기 가격 영향이지 '급등 경보'가 아님. 심천의 극단적 장중 급변동 연구는 급변동 뒤 **반전**이 뚜렷해 흐름 신호가 예측보다 동시 측정에 가깝다고 시사. 소형주·Hawkes(자기 흥분) 모형 연구는 못 찾음.
+- 우리 쪽: 지금은 체결(GSC)만 받음. LS 는 호가(GSH 10호가)도 줌(기존 봇이 구독했음). 호가는 종목 수가 많으면 부담이라 **'거래만 먼저'(stir) 신호가 난 종목에만 호가를 구독해 기록**하는 2단계 안이 가능(기존 봇의 트리거 호가 로거와 같은 발상, 당시 호가가 사건의 18~34% 에만 있었음 — L절). 가설 **H18: 호가 불균형이 가격 반응보다 먼저 움직인다**(미검증, PC 에서 실제 호가로만 확인 가능).
+- 같은 연구: **회사 고유 뉴스는 거시 뉴스보다 급변동(jump) 확률을 약 2배** → 뉴스 유무(H4) 근거를 조금 보강(대형주 30종목).
+
+**2. 거래정지·재개(LULD) — 소형주에 흔하고, 재개 직후는 위험**
+- SEC 스태프 논문(Moise·Flaherty): Tier 2 종목(작고 싼 종목)에서 제한 상태·정지가 **훨씬 자주** 발생, 정지 뒤 가격은 **정지 전 가격대로 되돌아오는** 경향. 토론토 연구: 개별 종목 서킷브레이커가 하락·상승을 되돌리지 않음, 변동성 증가는 하락 뒤가 더 큼. 정지가 공개 정보의 틈을 만들어 가격 발견이 서서히 진행된다는 연구도. 실무 글(Trade Ideas): 얇은 소형주는 하루에 여러 번 정지되고 재개 때마다 새로운 유동성 이벤트, 재개가는 정지 전과 다르게 열리는 일이 흔함.
+- 미시구조 연구(TAQ)로 **소형주 정지 직후 행태를 직접 본 연구는 못 찾음.**
+- 우리 쪽 함의: **재개 직후 신호는 별도 취급**(추격 위험, 가격이 되돌아올 수 있음). 단 LS 에서 정지·재개 이벤트를 받는지 **미확인**(g3101 의 `suspend` 상태만 앎).
+
+**3. 소셜 미디어(StockTwits 등) — '선행'이 아니라 오히려 반전 신호**
+- 여러 논문: **관심(메시지 양)은 다음 날 수익률을 낮추고**(반전), 감정(긍정)은 높임. 메시지 급증 같은 사건에 조건을 걸면 감정이 예측력을 갖지만 수익률은 점프 직후 곧 정상화(짧음). StockTwits 는 소형주 비중이 큼. **메시지 양이 가격 급등을 앞서는지 직접 시험한 연구는 못 봄**(동시 또는 이후 반전만 보임). → 소셜 언급량을 '반응 전 징후'로 쓸 근거 없음, 오히려 '이미 관심이 몰린 뒤'일 수 있음. (Reddit 은 검색 도구가 접근 불가.)
+
+**4. 공시·뉴스 종류별 반응**: 8-K·보도자료 종류(FDA·역합병·계약)별 소형주 초과수익을 잰 사건 연구는 **검색에서 못 찾음**(홍보성 뉴스뿐). 공백으로 기록. 직접 재려면 우리 뉴스·공시 일꾼(PLAN 5-3)과 `grade` 로 종류별 채점.
+
+**5. 한국어 자료**: 체결강도·호가 잔량을 미국 소형주에 적용한 구체적 기준은 **못 찾음**(미국에서는 Level 2·Time & Sales 라고 부름). 소형주 모멘텀을 뉴스 촉매와 주문 흐름으로 확인하라는 일반론(Bookmap), TradingView '조기 모멘텀' 스크립트는 거래량 배수·RSI·OBV 등 7개를 신호등처럼 쌓아 **4개 이상이면 조기 진입**이라 하나 검증 없음(지표 쌓기).
+
+**6. GitHub 의 급등 알림 봇**: 주식 1분봉 거래량 이상 탐지 + 텔레그램/디스코드 알림을 하는 저장소는 **못 찾음**(대부분 코인용, 주식은 가격 알림이나 TradingView 웹훅 중계). 우리 `ignite`(종목별 기준선 + 창 + 저점 대비 상한) 같은 구조의 공개 구현은 흔하지 않음 → 가져올 코드 없음.
+
+**이번 조사로 바뀐 것**: 없음(코드·계획 변경 없음). 새 가설 H18 하나와 '재개 직후는 별도 취급' 주의만 추가. 조사는 한계 수확 체감 — 근거는 결국 우리 데이터(PC)에서 나온다.
+
+출처: [Cont·Kukanov·Stoikov OFI(arXiv 2209.10334)](https://arxiv.org/html/2209.10334v2) · [호가·주문 흐름 예측력(JFEC)](https://academic.oup.com/jfec/article/6/2/171/874320) · [주문 흐름 필터링과 단기 수익률](https://arxiv.org/html/2507.22712v2) · [극단 장중 변동의 주문 흐름](https://arxiv.org/pdf/1003.0168) · [SEC LULD 스태프 논문](https://sec.gov/dera/staff-papers/white-papers/dera_wp_luld_pilot_plan_and_extraordinary_transitory_volatility) · [SEC LULD Amendment 10](https://sec.gov/dera/staff-papers/white-papers/dera_wp_effect_of_amendment_10_of_luld_pilot_plan) · [Trade Ideas 거래정지 설명](https://www.trade-ideas.com/learning-center/market-events/trading-halts-explained/) · [StockTwits 관심과 감정(AEA 2024)](https://aeaweb.org/conference/2024/program/paper/EB9zskn5) · [메시지 급증 사건과 감정(Digital Finance)](https://link.springer.com/content/pdf/10.1007/s42521-023-00102-z.pdf) · [Bookmap 소형주 모멘텀](https://bookmap.com/blog/small-cap-momentum-strategies-from-news-catalysts-to-breakouts-with-order-flow) · [TradingView 조기 모멘텀 스크립트](https://kr.tradingview.com/script/pwo7X0Tf-Early-Momentum-Dashboard-Small-Caps)
