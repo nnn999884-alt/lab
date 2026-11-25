@@ -240,3 +240,27 @@ Reddit 은 검색 도구가 접근할 수 없어 못 봄(`reddit.com` 차단). X
 **이번 조사로 바뀐 것**: 없음(코드·계획 변경 없음). 새 가설 H18 하나와 '재개 직후는 별도 취급' 주의만 추가. 조사는 한계 수확 체감 — 근거는 결국 우리 데이터(PC)에서 나온다.
 
 출처: [Cont·Kukanov·Stoikov OFI(arXiv 2209.10334)](https://arxiv.org/html/2209.10334v2) · [호가·주문 흐름 예측력(JFEC)](https://academic.oup.com/jfec/article/6/2/171/874320) · [주문 흐름 필터링과 단기 수익률](https://arxiv.org/html/2507.22712v2) · [극단 장중 변동의 주문 흐름](https://arxiv.org/pdf/1003.0168) · [SEC LULD 스태프 논문](https://sec.gov/dera/staff-papers/white-papers/dera_wp_luld_pilot_plan_and_extraordinary_transitory_volatility) · [SEC LULD Amendment 10](https://sec.gov/dera/staff-papers/white-papers/dera_wp_effect_of_amendment_10_of_luld_pilot_plan) · [Trade Ideas 거래정지 설명](https://www.trade-ideas.com/learning-center/market-events/trading-halts-explained/) · [StockTwits 관심과 감정(AEA 2024)](https://aeaweb.org/conference/2024/program/paper/EB9zskn5) · [메시지 급증 사건과 감정(Digital Finance)](https://link.springer.com/content/pdf/10.1007/s42521-023-00102-z.pdf) · [Bookmap 소형주 모멘텀](https://bookmap.com/blog/small-cap-momentum-strategies-from-news-catalysts-to-breakouts-with-order-flow) · [TradingView 조기 모멘텀 스크립트](https://kr.tradingview.com/script/pwo7X0Tf-Early-Momentum-Dashboard-Small-Caps)
+
+## P. 해외 사이트 조사 — 영어 포럼·블로그·QuantConnect·일본어·중국어·SEC (2026-11-25, 웹 검색 6건)
+**결론**: 여기서도 **검증된 선행 징후는 없다.** 대신 ① 체결 테이프 모양에 대한 구체적 묘사(가설 H19), ② 시세조종 위험 신호(H20), ③ '스캐너를 어떻게 굴려야 하는지' 실무 교훈을 얻었다. 접근 못 한 곳: EliteTrader·Reddit 글 자체(검색에 안 잡힘), 일본어·중국어는 순위 도구 설명 페이지뿐(분석 글 없음).
+
+**1. 급등 직전의 체결 테이프 묘사 (트레이더 글, 미검증)** — 가격이 **망설이는 단계**(작은 체결 수량 + 작은 가격 변화 + 느린 체결 흐름) 다음에 **더 큰 가격 간격과 빨라진 체결 흐름**이 나온다고 설명(Stocks To Trade 외). → 우리가 이미 저장하는 신호 직전 체결 틱(`signals.attrs.ticks`, 직전 200건)으로 **체결 간격 단축·평균 체결 크기 변화**를 나중에 계산할 수 있음(새 코드 필요 없음). 가설 **H19: 체결 간격이 짧아지고 체결 크기 분포가 바뀌는 것이 가격 반응보다 먼저 나온다.**
+- 함께 나온 주의: **얇은 float 은 가벼운 거래량으로도 +30% 가 찍혀** 폭넓은 참여가 있는 진짜 러너와 차트가 똑같이 보임 → '체결 건수·참여 폭'이 구분 후보(우리 `ignite` 의 체결 건수 하한이 이 용도). float 회전이 한 바퀴 이상이면 구조가 다르다는 글(H2 와 같은 방향).
+- **스파이크는 shelf 가 유효한 회사가 증자하는 바로 그 순간**(H5 와 같은 방향). **재개(halt resume) 뒤 첫 스파이크는 쫓지 말 것**(여러 글이 공통).
+
+**2. 스캐너를 굴리는 실무 교훈 (Trade Ideas·Scanz·TradeZero, 홍보 섞임)**
+- 최소 **거래대금 하한 + 거래대금 급증 기준**을 함께 두면 소액·얇은 호가 오탐이 줄고, **RVOL 은 같은 시각의 과거 평균과 비교**(H13). 우리 `ignite` 가 이미 거래대금 하한·종목별 기준선을 둠.
+- **거짓 신호를 이유와 함께 기록**하고, **필터를 더하기 전에 알림만 30거래일** 보라(Trade Ideas) — 우리 방침(검증 전 알림만, `signals` 에 속성 저장)과 일치.
+- **임계값이 낡는다**: 과거 장세에 맞춘 스캐너는 시장이 달라지면 옛 패턴만 계속 띄움(TradeZero: 변동성 상한을 15% 로 잡아 두면 지금의 16%↑ 돌파를 놓침) → 임계값을 고정하지 말고 **정기 재채점**(`grade`·`train`·`precursor` 를 주기적으로 다시 돌리기).
+- 같은 급증에 알림이 **중복**으로 나오는 문제(TradingView 스크립트 주석) — 우리는 종목·규칙별 30분 쿨다운.
+
+**3. QuantConnect 포럼의 페니주 백테스트 교훈 (사용자 글, 미검증)**
+- **첫날 데이터가 늦어 못 잡는다**(2일째엔 거래량이 크게 줄어 있음) — 데이터 지연이 곧 놓침. 체결 가정은 유동성이 있다고 가정해서 **페니주에선 낙관적**, **슬리피지는 시가·손절 주문에서 가장 크다**("백테스트는 실거래를 대표하지 않는다"). 올라온 백테스트 다수가 **거래 3건·승률 100%** 같은 표본 부족, 진입·청산 규칙이 모호. → 우리 원칙(가짜·적은 표본을 근거로 쓰지 않기, 비용 반영, 표본 부족은 '판단 보류')과 같은 방향.
+
+**4. SEC·Investor.gov 시세조종 위험 신호 (수치 기준은 없음)**: 이유 없는 가격·거래량 급변, **홍보(이메일·문자·소셜)와 맞물린 급등**, **임원·홍보자가 지분을 크게 보유**, 얇게 거래되는 저유통 종목·**역합병 껍데기 회사(티커·사명 잦은 변경)**, SEC 거래정지(최대 10일, 현재 정보 부족 시). Bloomberg 2026 분석은 많은 소형주에서 시세조종 의심 패턴을 보고(해당 회사가 기소된 것은 아님). → 가설 **H20: 최근 티커·사명 변경, 역분할, 역합병(껍데기) 이력은 급등 뒤 급락 위험 표지다** — 공시 일꾼(PLAN 5-3)으로 8-K 에서 기록해 채점. 위험 신호가 많은 종목의 급등 알림에는 경고를 붙이는 용도.
+
+**5. 대체 데이터원 메모(미검증)**: 후쿠(Futu) OpenAPI 에 미국 프리마켓 순위(상승률·거래대금·거래량) 조회가 있고, 일본 Kabutan·TradingView 에도 프리마켓 상승률 순위가 있음 — LS 시세가 막힐 때의 보조 후보일 뿐, 접근 조건·비용·지연은 확인 못 함.
+
+**이번 조사로 바뀐 것**: 코드·계획 변경 없음. 가설 H19(체결 테이프 가속 — 이미 저장하는 틱으로 계산 가능)·H20(시세조종 위험 표지)만 추가. 조사는 한계 수확 체감 — 새로 나오는 건 '일반론의 반복'이고 우리 데이터 없이는 더 나아갈 수 없다.
+
+출처: [Stocks To Trade 급등 전 패턴](https://stockstotrade.com/pattern-that-led-traders/) · [Stocks To Trade 예감](https://stockstotrade.com/i-knew-this-stock-would-rip/) · [Low Float Runner 전략](https://daytradingtoolkit.com/strategies/low-float-runner-trading-strategy) · [Trade Ideas 스캐닝 설명](https://www.trade-ideas.com/learning-center/stock-scanning/stock-scanning-explained/) · [Scanz 비정상 거래량 스캔](https://scanz.com/scanning-for-stocks-with-abnormal-volume/) · [TradeZero 스캐너 실수 5가지](https://tradezero.com/blog/five-scanner-mistakes-that-can-quietly-cost-active-traders) · [QuantConnect 포럼 #7734](https://www.quantconnect.com/forum/discussion/7734/custom-fill-models-or-course-fine-universe/) · [QuantConnect 포럼 #7867](https://www.quantconnect.com/forum/discussion/7867) · [Investor.gov 소액주 기초](https://investor.gov/additional-resources/news-alerts/alerts-bulletins/investor-bulletin-microcap-stock-basics-part-3-3) · [Investor.gov 허위 홍보 경보](https://www.investor.gov/additional-resources/news-alerts/alerts-bulletins/investor-alert-fraudulent-stock-promotions) · [SEC 펌프앤덤프](https://www.sec.gov/answers/pumpdump.htm) · [Bloomberg 2026 분석](https://www.bloomberg.com/graphics/2026-wall-street-apparent-pump-and-dump-investor-scam/) · [Futu OpenAPI 프리마켓 순위](https://openapi.futunn.com/futu-api-doc/quote/get-us-pre-market-rank.html) · [Kabutan 프리마켓 순위](https://us.kabutan.jp/warnings/pre_market_price_increase?type=adr)
