@@ -5,7 +5,7 @@ import subprocess
 import sys
 import time
 
-DEFAULT = ("hub", "surge", "notify")      # 시세 입력 일꾼(ls 등)은 3단계에서 추가
+DEFAULT = ("hub", "surge", "notify", "ls")
 
 
 def supervise(roles=DEFAULT, poll: float = 1.0) -> None:

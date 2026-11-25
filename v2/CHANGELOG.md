@@ -16,3 +16,9 @@
 - 일꾼: `workers/surge.py`(급등: 5분 +10%, 종목별 15분 쿨다운), `workers/notify.py`(디스코드·텔레그램), `workers/replay.py`(저장 봉 재생).
 - `supervisor.py`: `python -m pennybot2 run` 이 허브·일꾼을 각각 켜고 죽은 것만 재시작(연속 실패 시 대기 늘림).
 - 삭제: 이벤트 버스(`core/bus.py`, `core/events.py`), `feeds/`, `detectors/`, `sinks/`, `app.py`.
+
+## 2026-11-25 (3단계: LS 시세 일꾼)
+
+- `python -m pennybot2 ls`: LS증권 웹소켓 체결(GSC)을 받아 `tick` 을 허브로 보내고 1분이 끝나면 `bar` 도 보낸다. `run` 의 기본 일꾼에 포함.
+- 구성: `workers/ls/auth.py`(토큰, 매일 07:00 KST 전 갱신·파일 재사용), `master.py`(종목 마스터 g3190 → 가격대·거래정지·ETF류 걸러 keysymbol 목록), `frames.py`(프레임 해석·구독 메시지·1분봉 조립), `workers/ls_feed.py`(연결·재연결·초당 90건씩 구독·토큰 만료 전 재연결).
+- 연결이 끊기면 5초 뒤 새로 접속. `requirements.txt` 추가(websocket-client 포함). 테스트는 가짜 LS 서버로 구독→체결→허브 전달까지 확인(진짜 LS 접속은 미검증).

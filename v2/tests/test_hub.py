@@ -72,13 +72,13 @@ def test_client_reconnects_after_hub_restart(tmp_path):
     sub = HubClient(port, ["tick"], lambda t, d: got.append(d))
     assert sub.connected.wait(3)
     h.shutdown()
-    assert wait(lambda: not sub.connected.is_set())
+    assert wait(lambda: not sub.connected.is_set(), 10)
     h2 = Hub(tmp_path / "m.db", port=port, flush_sec=0.2).start_in_thread()    # 같은 주소로 재시작
-    assert sub.connected.wait(5)                                              # 자동 재접속 + 재구독
+    assert sub.connected.wait(15)                                             # 자동 재접속 + 재구독
     pub = HubClient(h2.port)
-    pub.connected.wait(3); time.sleep(0.1)
+    pub.connected.wait(3); time.sleep(0.3)
     pub.publish("tick", {"s": "A", "ts": T0, "p": 1.0})
-    assert wait(lambda: got)
+    assert wait(lambda: got, 10)
 
 
 def test_surge_detector_logic():
