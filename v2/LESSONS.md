@@ -65,3 +65,23 @@
 **지금 코드에 반영**: 새 규칙을 만들 땐 위 속성(float·회전율·RVOL·뉴스·희석 공시·돌파·체결 건수)을 **신호에 같이 저장**해서 나중에 어느 속성이 실제로 갈랐는지 `grade` 로 본다 (5-2 의 입력 설계). 최소 거래대금 하한은 여러 값으로 비교.
 
 출처: [Gap 연구 thedesperatetrader](https://thedesperatetrader.com/gap-study) · [SmallCapLab](https://www.smallcaplab.com/research) · [scanz 갭 필](https://scanz.com/gap-fill-strategy/) · [arXiv 2011.04939 급등 전 마이크로 거래 패턴](https://arxiv.org/pdf/2011.04939) · [RES 2018](https://public.econ.duke.edu/~boller/Published_Papers/restud_18.pdf) · [MarketBeat: 급등 뒤 급락 이유](https://www.marketbeat.com/articles/why-do-penny-stocks-often-crash-after-rallies/) · [Benzinga 저유동성](https://www.benzinga.com/money/what-are-low-float-stocks) · [tradealgo 페니주 데이트레이딩](https://www.tradealgo.com/trading-guides/day-trading/day-trading-penny-stocks-high-risk-strategies-for-low-float-otc-and-small-cap-stocks)
+
+## F. X(트위터) 실전 트레이더 자료 (2026-11-25) — 일화 수준, 역시 '가설'
+Reddit 은 검색 도구가 접근할 수 없어 못 봄(`reddit.com` 차단). X 게시물은 실전 방법론일 뿐 성과 검증은 없다. 출처: [Dilution Tracker](https://x.com/DilutionTracker/status/1678591298465406980) · [AskEdgar](https://x.com/AskEdgarIO/status/2057800927587811514) · [Anun.Trades 6가지 기준](https://x.com/AnunTrades/status/2043910284423909649) · [Niv Goren: 시간대별 평균 거래량 비교](https://x.com/hackertrader/status/1861704235534192848) · [Market Rebellion 아침 점검표](https://x.com/RebellioMarket/status/1966112581048832177) · [Renata Vega 저유동 러너 예시](https://x.com/Ren_Veg_62/status/2043666308227555715/photo/2)
+
+**새로 알게 된 것**
+- **희석이 진행 중인 '테이프 모양'** (Dilution Tracker): ① 상대거래량 높음 ② 가격은 **떨어짐** ③ 봉 범위가 거래량에 비해 **좁음** → 유통 주식이 빠르게 늘고 있을 때의 전형. 1분봉만으로 계산 가능 → **'지금 팔리고 있다' 경고(청산·회피용)** 후보.
+- **희석 가능성은 '조달 능력'부터** (AskEdgar): 유효한 shelf·S-1·1-A 가 없으면 즉시 희석 위험이 낮고, 과거 증자가 잦았던 회사는 또 한다. 일일 공시 목록(offering·shelf·ATM·PIPE)을 공개로 올리는 계정이 있어 공시 일꾼의 대조 자료가 됨.
+- **유통주식(float) 수치는 틀리기 쉽다**: 여러 데이터 업체가 float 을 잘못 주거나 비워 둔다는 증언. 우리 LS 마스터 `share` 는 **발행주식 수**(내부자 보유 포함, 예: 내부자 68%)이지 float 이 아님 → H1·H2 는 '발행주식 기준'이라고 밝히고, 공시로 float 을 보정하기 전엔 구간 경계를 느슨하게 둔다.
+- **재료 없는 소액 리테일 스퀴즈**(예: 일본 초소형주)는 위험이 높다고 따로 분류됨 → 뉴스 없는 급등은 별도 묶음으로 채점(H4).
+- **다음 날 되돌림(day-2) 통계는 공개된 게 없음** → 우리 기록(급등일 다음 날 시가 −8%·저가 −20%·종가 −9%)이 사실상 유일한 수치. SmallCapRoom 방식(과거 갭마다 평균 갭·평균 급등·평균 하락 폭을 직접 쌓기)을 `grade` 에 같은 식으로 포함할 것.
+
+**추가 가설**
+| # | 가설 | 자료의 주장(미검증) | 확인하는 법 |
+|---|---|---|---|
+| H10 | 희석 중 테이프(거래량↑·가격↓·봉 범위 좁음)가 나오면 이후 하락이 크다 | Dilution Tracker | 1분봉 3조건 점수를 신호 이후 구간에 계산해 하락 폭과 비교 |
+| H11 | 거래량이 먼저 늘고 가격이 뒤따른다(RVOL 2배↑가 선행) | 여러 계정 | 신호 전 N분 RVOL 가속 vs 대조군. **H9(거래량만으로는 거짓 신호)와 같이** 비교 |
+| H12 | 당일 거래량이 float(발행주식)을 넘으면 폭발 가능성이 크다 | Anun.Trades '보너스 조건' | H2 와 같은 회전율 구간으로 채점 |
+| H13 | 시간대별 평균 거래량 대비로 보면 오탐이 줄어든다 | Niv Goren | 같은 시각(분) 평균 거래량 기준 RVOL vs 하루 평균 기준 RVOL 비교 |
+
+**기억할 것**: 자료의 진입 규칙 중 'VWAP 위 10~15% 돌파에서 진입', '이미 +10% 오른 뒤 진입'은 우리 기록상 **추격**(LESSONS A-3: +10% 뒤 진입은 −5% 먼저 61%)과 같은 모양이다. 그대로 믿지 말고 채점으로 확인.
