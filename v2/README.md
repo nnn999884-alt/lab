@@ -15,11 +15,12 @@
 - 허브는 디스크를 기다리지 않는다(저장은 별도 스레드·배치). 느린 구독자는 그 구독자 몫만 버린다.
 - 재생(`replay`)은 저장된 봉을 실시간 일꾼과 같은 통로로 흘리므로 감지기는 구분하지 못한다 = 백테스트.
 
-폴더: `pennybot2/core`(설정·세션·저장소) · `hub`(서버·클라이언트) · `workers`(일꾼 하나 = 파일 하나) · `scoring`(후보 점수) · `supervisor.py`
+폴더: `pennybot2/core`(설정·세션·저장소) · `hub`(서버·클라이언트) · `workers`(일꾼 하나 = 파일 하나) · `scoring`(후보 점수) · `grading`(알림 채점) · `supervisor.py`
 
 ## 실행 (v2/ 안에서)
 - `python -m pytest -q` 테스트
 - `python -m pennybot2 run` 허브 + 감지 + 알림을 각각 따로 켬 → 다른 창에서 `python -m pennybot2 replay` 로 저장된 1분봉 재생
+- `python -m pennybot2 grade DB경로` 저장된 알림을 같은 기준으로 채점 (기존 봇의 `market.db` 도 가능)
 - 개별 실행: `hub` · `ls`(LS 시세) · `daily`(일봉·후보) · `surge` · `notify` · `replay [종목…]`
 
 ## 메시지 규칙 (허브)
