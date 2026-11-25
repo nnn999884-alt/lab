@@ -50,7 +50,7 @@ def test_second_process_exits_with_code_3(tmp_path):
     try:
         (tmp_path / "locks").mkdir()
         (tmp_path / "locks" / "ignite.lock").write_text(str(holder.pid), encoding="utf-8")
-        r = subprocess.run([sys.executable, "-m", "pennybot2", "ignite"], env=env, cwd=V2, capture_output=True, text=True, timeout=20)
+        r = subprocess.run([sys.executable, "-m", "pennybot2", "ignite"], env=env, cwd=V2, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=20)
         assert r.returncode == lock.ALREADY_RUNNING and "이미 실행 중" in r.stdout
     finally:
         holder.kill()

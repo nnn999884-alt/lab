@@ -264,3 +264,43 @@ Reddit 은 검색 도구가 접근할 수 없어 못 봄(`reddit.com` 차단). X
 **이번 조사로 바뀐 것**: 코드·계획 변경 없음. 가설 H19(체결 테이프 가속 — 이미 저장하는 틱으로 계산 가능)·H20(시세조종 위험 표지)만 추가. 조사는 한계 수확 체감 — 새로 나오는 건 '일반론의 반복'이고 우리 데이터 없이는 더 나아갈 수 없다.
 
 출처: [Stocks To Trade 급등 전 패턴](https://stockstotrade.com/pattern-that-led-traders/) · [Stocks To Trade 예감](https://stockstotrade.com/i-knew-this-stock-would-rip/) · [Low Float Runner 전략](https://daytradingtoolkit.com/strategies/low-float-runner-trading-strategy) · [Trade Ideas 스캐닝 설명](https://www.trade-ideas.com/learning-center/stock-scanning/stock-scanning-explained/) · [Scanz 비정상 거래량 스캔](https://scanz.com/scanning-for-stocks-with-abnormal-volume/) · [TradeZero 스캐너 실수 5가지](https://tradezero.com/blog/five-scanner-mistakes-that-can-quietly-cost-active-traders) · [QuantConnect 포럼 #7734](https://www.quantconnect.com/forum/discussion/7734/custom-fill-models-or-course-fine-universe/) · [QuantConnect 포럼 #7867](https://www.quantconnect.com/forum/discussion/7867) · [Investor.gov 소액주 기초](https://investor.gov/additional-resources/news-alerts/alerts-bulletins/investor-bulletin-microcap-stock-basics-part-3-3) · [Investor.gov 허위 홍보 경보](https://www.investor.gov/additional-resources/news-alerts/alerts-bulletins/investor-alert-fraudulent-stock-promotions) · [SEC 펌프앤덤프](https://www.sec.gov/answers/pumpdump.htm) · [Bloomberg 2026 분석](https://www.bloomberg.com/graphics/2026-wall-street-apparent-pump-and-dump-investor-scam/) · [Futu OpenAPI 프리마켓 순위](https://openapi.futunn.com/futu-api-doc/quote/get-us-pre-market-rank.html) · [Kabutan 프리마켓 순위](https://us.kabutan.jp/warnings/pre_market_price_increase?type=adr)
+
+## Q. 실제 데이터로 돌린 결과 (2026-11-25) — `D:\pennybot-live\state\market.db`(약 12.7GB, 읽기 전용으로 열림)
+테스트: `pytest -q` 102 통과·1 실패(`test_ops.py::test_second_process_exits_with_code_3`, 윈도우 cp949 가 자식 출력을 읽다 깨짐. `PYTHONUTF8=1` 이면 통과 — 테스트에 `encoding="utf-8"` 지정해 고침 → 103개 전부 통과. 한 번은 `test_ls` 가 전체 실행에서만 실패했다가 재실행에 통과(타이밍 흔들림 가능성, 원인 미확인)). 결과 파일은 임시 폴더에 저장했고, `train` 이 채택한 `model.json` 은 `v2/state/model.json` 에 복사해 적용(2026-11-25, 사용자 승인).
+
+**1. `train` (일봉 2,868종목, 학습 39만·조정 20만·시험 23만건, 시험 급등 509건 = 0.22%)**
+- 확률 손실 모델 0.0126 < 평균 비율 0.0158. AUC 0.903 vs 기존 규칙 0.872. 하루 상위 56종목 포착 42.6% vs 37.9%, 상위 200종목 74.1% vs 66.6%. 교정은 대체로 맞음(최상위 1.68% 예측 → 실제 1.51%). → **채택**.
+- 요인(+올림): 전날 거래대금 배수 +0.50, 5일 변동폭 +0.16, 20일 등락 +0.14, 갭 잦음 +0.14 / (−내림): 60일 고점 근처 −0.63, 평소 거래대금 −0.39, 20일 고점 돌파 −0.23, 낮은 가격 −0.16. 새 기준 brk20 은 부호가 가설(H8)과 반대, gap20 은 가설과 같음.
+- 한계: 시간 분할 1회, 시험 구간이 최근 일부. 일봉은 지금 상장 종목만(상폐 제외 → 낙관).
+
+**2. `precursor` (1분봉, 종목 300개, 급등 = 30분 안 +20%; 기간에 11/16 이전 탐색 기간 포함 → 검증 아님, 탐색 결과)**
+- 연구 A(사건 125건): 반응 전에 ✔ 인 것은 3·5분 거래대금 배수(15분 전·1분 전)와 5·15분 가격 변화(15분 전)뿐이고 AUC 0.60~0.64 로 약함. 1분 전부터 이어지는 ✔ 은 3·5분 거래대금 배수(1분 전부터). '거래만 먼저'는 AUC 0.45~0.49(가설 H11과 반대 방향).
+- 연구 B(시험 18일·사건 65건): 기존 방식 알림 하루 15.2건에서 급등 이어짐 2.9%·반응 전 포착 1.5%. 징후 모델 ×1 은 2.1%·4.6%, ×4 는 1.3%·10.8%(알림 62건/일). **판정: 기존 방식보다 반응 전에 더 잡는다는 근거 없음** — 사건 65건이라 차이도 우연 범위.
+- 민감도(`--run`·`--horizon`·`--K`)는 안 돌림.
+
+**3. `backtest-ignite --since=2026-11-16`(동결 이후 기간만) → `grade`**
+- 신호: stir 4,748 · surge 722 · fast 323 · strict 95 (1분봉을 가짜 틱 4개로 쪼갠 근사 — 규칙끼리·surge 와의 상대 비교로만). 채점 대상 5,826건, 대조군 3,000건.
+- +10% 먼저/−5% 먼저: 대조군 4%/11% · stir 2%/8%(대조군보다 나쁨) · fast 14%/37% · strict 17%/49% · surge(늦은 감지) 26%/65%. 2시간 평균 수익(비용 후): 대조군 −2.2% · stir −2.4% · fast −2.9% · strict −3.7% · surge −8.0%.
+- 해석: fast·strict 는 급등이 이어질 확률은 높지만 **−5% 먼저도 같이 높아 손익은 나쁨**(알림의 가치는 정밀도이지 매수 수익이 아님 — L절과 일치). '반응 전'인 stir 는 효과 없음. 세션별로 PRE(프리마켓)만 대조군보다 낫고 세 기간 유지(14%/34%), 정규장·데이마켓은 아님. 한 구간(약 9일)이라 표본·기간 한계가 큼.
+
+**4. 레딧 자료 찾기(사용자 요청)**: 검색 도구가 reddit.com·old.reddit.com 을 막고(400), 직접 접속도 403. 브라우저로 위장한 접속·미러 사이트 시도는 권한 분류기가 막아 중단함. 레딧 글은 사용자가 붙여 넣어 주면 정리 가능.
+
+## R. 레딧 관련 검색 재시도 (2026-11-25, 웹 검색 4건) — 레딧 글 자체는 여전히 못 봄
+- 검색 도구가 reddit.com 을 막아 **레딧 스레드는 하나도 안 나옴**. 대신 일반 글이 나왔고 대부분 벤더·교육 사이트(검증 아님). 새 가설만 기록:
+- **H21 며칠간 거래량이 늘며 쌓이다 터진다**(5~10일 누적, 모던웰스데일리): `train` 에서 '전날 거래대금 배수 +0.50' 이 가장 큰 올림 요인으로 나온 것과 방향이 같음(우리 데이터 근거 있음).
+- **H22 프리마켓은 한 번의 큰 거래보다 꾸준한 거래량이 믿을 만하다**(벤더): 5분 중 거래 있던 분 비율로 확인 가능. `precursor` 연구 B 에서 이 값은 −0.32(내림)였음 — 반대 방향이라 가설과 충돌.
+- **H23 레딧·스톡트윗 잡담이 급등 며칠 전부터 쌓인다**(블룸버그 사례 1건): 일화. 소셜 선행 여부를 시험한 연구는 없고(LESSONS O-3 은 오히려 반전) 우리는 소셜 데이터가 없어 검증 못 함.
+- 그 밖의 반복되는 말: 재개 직후 첫 스파이크 쫓지 말 것, 거래량이 float 한 바퀴 넘는지 보라, 스프레드 확대 — 이미 N·P절에 있는 내용.
+
+## S. `precursor` 민감도 (2026-11-25, 같은 DB·종목 300개; 정의를 바꿔 5번 더 실행)
+| 실행 | 사건(A) | 시험 사건(B) | 징후 모델 ×1 vs 기존 (반응 전 포착) |
+|---|---|---|---|
+| 기본(+20%/30분, K=10) | 125 | 65 | 4.6% vs 1.5% (이어짐 2.1% vs 2.9%) |
+| `--run=0.15` | 206 | 108 | 9.3% vs 3.7% (이어짐 7.8% vs 6.9%) |
+| `--run=0.30` | 58 | 28(판단 불가) | 0% vs 0% |
+| `--horizon=20` | 114 | 56 | 10.7% vs 1.8% (3.2% vs 2.6%) |
+| `--K=5` | 125 | 65 | 0% vs 1.5% (0.7% vs 2.9%) |
+| `--since=2026-11-16`(동결 이후만) | 25 | 5(판단 불가) | 판단 불가 |
+- **정의를 바꿔도 남은 것**: 3·5분 거래대금 배수와 3분 절대 거래대금이 '1분 전부터' ✔ (기본·`horizon=20`·`K=5`; `run=0.15` 에선 3분 전부터), 30분 저점 대비 상승이 이른 시점(15~30분 전)부터 ✔ (`run=0.15` 는 30분 전부터 전 구간). 5·15분 가격 변화는 15분 전에만 ✔ 이고 1~3분 전에는 오히려 0.47~0.48 로 뒤집힘 → 일관된 징후 아님.
+- **그러나 쓸 만하다고는 못 함**: 연구 B 의 판정은 매번 '기존 방식보다 반응 전에 더 잡는다는 근거 없음'. 반응 전 포착이 높게 나온 칸(`run=0.15`·`horizon=20`)도 이어짐(정밀도)은 기존과 같은 수준이고 사건이 56~108건이라 우연 범위. `K=5` 에선 오히려 못함. `run=0.30` 과 동결 이후만은 사건이 너무 적어 판단 불가(동결 이후 기간은 2일뿐 → 새 데이터가 쌓여야 검증 가능).
+- **결론**: '거래대금이 평소보다 늘고(3·5분 배수·절대값) 30분 저점에서 이미 조금 올라 있음'이 정의와 상관없이 급등 시작 전에 보이는 가장 일관된 모양. 이것만으로 알림을 내면 평소에도 흔해 정밀도가 안 오른다. 실시간 `ignite` 연결은 보류, 동결 이후 데이터(11/16~)가 사건 150건·15일 이상 쌓이면 같은 명령으로 재검증.
