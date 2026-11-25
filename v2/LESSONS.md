@@ -44,3 +44,24 @@
 - **페니주 급등 이후 반전 근거**: 엄밀한 연구는 못 찾음. 약한 근거만 있음 — $5 미만 종목은 평균 거래대금 5만 달러↑로 걸러도 연 −8.6%p 뒤처지고 낙폭이 약 2배(Alpha Architect, 가상 수익), 소형주 펌프앤덤프는 이듬주 급반전(EFMA 2017). 모두 우리 '급등 직후 알림' 규칙을 직접 검증해 주지 않음 → **우리 데이터로 채점(`grade`)하는 수밖에 없다**는 결론을 재확인.
 - **거짓 신호 줄이기**: 거래량 급증 탐지는 거래가 거의 없는 종목의 사소한 증가를 과다 경보하기 쉬워 가격·거래량 임계값을 종목 특성에 맞춰야 한다는 연구(arXiv 2503.08692, 암호화폐 대상)가 있음 → 새 감지 규칙에는 **최소 거래대금 하한**을 두고 채점 때 하한별로 비교.
 - 출처: [pkg.go.dev LS 클라이언트](https://pkg.go.dev/github.com/smallfish06/krsec/internal/ls) · [AlgoLab LS API 실무](https://algolab.co.kr/blog/ls-securities-openapi-rest-order-2026) · [Alpha Architect 저가주](https://alphaarchitect.com/low-priced-stocks/) · [EFMA 2017](https://efmaefm.org/0EFMAMEETINGS/EFMA%20ANNUAL%20MEETINGS/2017-Athens/papers/EFMA2017_0387_fullpaper.pdf) · [arXiv 2503.08692](https://arxiv.org/abs/2503.08692)
+
+## E. 초소형주 급등 패턴 조사 (2026-11-25, 웹 검색 4건) — **사실이 아니라 '검증할 가설'**
+엄밀한 연구(논문)는 못 찾음. 아래 수치는 대부분 트레이딩 교육 사이트·벤더 자료이고 출처끼리 충돌하거나 방법을 알 수 없다. 전부 `grade` 로 우리 데이터에서 확인하기 전에는 규칙으로 쓰지 않는다.
+
+**자료가 공통으로 말하는 급등 모양**: 유통 주식 수 적음(20M 미만 또는 10M 이하) + 뚜렷한 재료(뉴스) + 거래량 급증 + 프리마켓 고점 돌파. 재료 없이 움직이는 종목은 되돌림·조작 가능성이 높다고 함.
+
+| # | 가설 | 자료의 주장(미검증) | 우리가 확인하는 법 |
+|---|---|---|---|
+| H1 | 유통 주식 수가 작을수록 급등 폭·반전 폭이 모두 크다 | float 20M↓/10M↓ 구간 | 마스터 `share` 로 구간을 나눠 `grade` 비교 (5단계 신호에 float 기록) |
+| H2 | 회전율(하루 거래량/유통주식) ≥ 1 이면 관심 폭발 | 회전율 100%↑ | 신호 시점 누적 회전율 기록 후 구간별 채점 |
+| H3 | 상대거래량(RVOL) 기준: 1.5~2배(약함)~30일 평균 5배↑ | 자료마다 다름 | 임계값을 여러 개 두고 같은 기간으로 채점 — 한 값만 고르지 않음 |
+| H4 | **뉴스가 있는 급등이 없는 급등보다 유지된다** | 뉴스 없는 갭은 실패율 높음 | 뉴스 일꾼(5-3) 완성 후 '뉴스 유무'로 갈라 채점 |
+| H5 | **급등 직후 증자·ATM·shelf 가 나오면 급락** | MMAT −42%, CTM·PAVS 사례(일화) | SEC 공시 일꾼으로 신호 후 24h 내 424B/S-3/8-K 유무를 기록해 채점 → 맞으면 '희석 위험' 경고 |
+| H6 | 갭상승 후 되돌림이 흔하다 | 일봉 3,000건: 갭 +20%↑ 중 당일 전날 종가까지 되돌린 비율 18.3%, +10%↑ 갭은 시가 대비 평균 −1.07% 마감, 26% 갭 메움 / 벤더 대시보드 '소형주 70.4% 페이드'(방법 불명) / '뉴스 있는 +4%↑ 갭 30분 62~68% 이어짐'(논문 못 찾음) | 우리 1분봉으로 세션·갭 구간별 직접 계산 |
+| H7 | **급등 직전 거래량·체결 건수·스프레드에 이상이 먼저 나타난다** (뉴스와 무관한 경우도 많음) | arXiv 2011.04939: 장중 급등(jump) 전 거래량·체결 수·스프레드가 비정상 | 틱에서 체결 건수·분당 거래대금 가속을 기록, 호가(GSH)로 스프레드 → 신호 전 구간 비교 |
+| H8 | 직전 가격 범위를 돌파하면 소형주에서 거래량이 이례적으로 늘어난다 | 52주 고점·저점 돌파 연구(원문 확인 필요) | 20일·60일 고점 돌파 여부를 신호 속성으로 기록 |
+| H9 | 거래량이 늘어도 가격이 안 따라 움직이는 경우가 많다 → 거래량만으로는 거짓 신호 | Review of Economic Studies 2018 | 거래량 조건 단독 vs 거래량+가격 조건 비교 |
+
+**지금 코드에 반영**: 새 규칙을 만들 땐 위 속성(float·회전율·RVOL·뉴스·희석 공시·돌파·체결 건수)을 **신호에 같이 저장**해서 나중에 어느 속성이 실제로 갈랐는지 `grade` 로 본다 (5-2 의 입력 설계). 최소 거래대금 하한은 여러 값으로 비교.
+
+출처: [Gap 연구 thedesperatetrader](https://thedesperatetrader.com/gap-study) · [SmallCapLab](https://www.smallcaplab.com/research) · [scanz 갭 필](https://scanz.com/gap-fill-strategy/) · [arXiv 2011.04939 급등 전 마이크로 거래 패턴](https://arxiv.org/pdf/2011.04939) · [RES 2018](https://public.econ.duke.edu/~boller/Published_Papers/restud_18.pdf) · [MarketBeat: 급등 뒤 급락 이유](https://www.marketbeat.com/articles/why-do-penny-stocks-often-crash-after-rallies/) · [Benzinga 저유동성](https://www.benzinga.com/money/what-are-low-float-stocks) · [tradealgo 페니주 데이트레이딩](https://www.tradealgo.com/trading-guides/day-trading/day-trading-penny-stocks-high-risk-strategies-for-low-float-otc-and-small-cap-stocks)
