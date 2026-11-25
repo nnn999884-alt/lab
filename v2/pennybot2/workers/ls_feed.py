@@ -25,7 +25,7 @@ def run(cfg, ws_url: str = WS_URL, auth=None, keys_fn=None) -> None:
         auth = LsAuth(cfg.ls_app_key, cfg.ls_app_secret, cfg.state_dir / "ls_token.json")
     keys_fn = keys_fn or (lambda: pick(fetch(auth), cfg.min_price, cfg.max_price))
     hub = HubClient(cfg.hub_port)
-    stats = {"frames": 0, "ticks": 0, "bars": 0}
+    stats = {"frames": 0, "ticks": 0, "bars": 0, "ts_fixed": 0}
     heartbeat.start(hub, "ls", lambda: dict(stats))
     bars = frames.BarBuilder()
     force = False
@@ -75,6 +75,10 @@ def run(cfg, ws_url: str = WS_URL, auth=None, keys_fn=None) -> None:
                             time.sleep(6)
                             raise ConnectionError("전송 한도 초과 → 재연결")
                         continue
+                    if frames.reconcile_ts(d, time.time()):
+                        stats["ts_fixed"] += 1
+                        if stats["ts_fixed"] in (1, 10, 100, 1000, 10000):
+                            log.warning("체결 시각이 수신 시각과 5분 넘게 어긋나 수신 시각으로 대체 (%d번째) — LS 날짜 해석 확인 필요", stats["ts_fixed"])
                     hub.publish("tick", d)
                     stats["ticks"] += 1
                     done = bars.add(d)

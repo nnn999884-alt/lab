@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -34,10 +35,13 @@ class Variant:
     cooldown_s: int = 1800
     skip_open_s: int = 60         # 세션 시작 직후 N초는 개장 쏠림(U자 거래량)이라 제외
     notify: bool = False
+    notify_sessions: tuple = ()      # 비어 있지 않으면 이 세션에서만 알림(그 밖의 세션은 기록만)
 
 
+# fast 는 프리마켓(PRE)에서만 알림: 실제 데이터(11/16 이후, LESSONS Q절)에서 세 기간 모두 대조군보다 나은 세션이 PRE 뿐이었다.
+# 알림 = '움직임 알림'이지 매수 신호가 아님(fast·strict 는 +10% 먼저도 −5% 먼저도 대조군보다 높았음).
 DEFAULT_VARIANTS = (
-    Variant("fast", "ignite:fast", notify=True),
+    Variant("fast", "ignite:fast", notify=True, notify_sessions=("PRE",)),
     Variant("early", "ignite:early", win_s=30, min_dv=25_000, min_ratio=8.0, min_trades=6, min_move=1.0,
             max_from_low=5.0, skip_open_s=0),
     Variant("strict", "ignite:strict", min_dv=100_000, min_ratio=8.0, min_trades=15, min_move=3.0, max_from_low=10.0),
@@ -154,10 +158,17 @@ class IgniteDetector:
                      "session": ss, "sec_from_open": None if since_open is None else round(since_open), "pseudo": self.pseudo,
                      "ticks": recent}
             head = "👀 거래만 먼저 늘어남" if v.kind == "stir" else "🔥 거래 터짐 시작"
-            out.append({"s": sym, "ts": ts, "kind": v.kind, "value": move, "price": p, "attrs": attrs, "notify": v.notify,
+            notify = v.notify and (not v.notify_sessions or ss in v.notify_sessions)
+            out.append({"s": sym, "ts": ts, "kind": v.kind, "value": move, "price": p, "attrs": attrs, "notify": notify,
                         "text": (f"{head} {sym} ${p:.4f}\n최근 {v.win_s}초 ${dv:,.0f} (평소 분당의 {ratio:.0f}배 · 체결 {int(n)}건) · "
-                                 f"{move:+.1f}% · 30분 저점 대비 +{from_low:.1f}% (아직 이른 구간)\n(규칙 '{v.name}' — 효과 미검증, 채점 중)")})
+                                 f"{move:+.1f}% · 30분 저점 대비 +{from_low:.1f}% (아직 이른 구간)\n(규칙 '{v.name}' — 움직임 알림이지 매수 신호 아님, 채점 중)")})
         return out
+
+
+def stamp_lag(sig: dict, lag_s: float) -> dict:
+    """신호에 '수신 시각 − 체결 시각'(초)을 기록 — 낡은 틱으로 낸 신호를 나중에 가려내기 위해."""
+    sig["attrs"]["lag_s"] = round(lag_s, 2)
+    return sig
 
 
 def run(cfg, variants=DEFAULT_VARIANTS) -> None:
@@ -189,7 +200,7 @@ def run(cfg, variants=DEFAULT_VARIANTS) -> None:
         stats["ticks"] += 1
         for sig in det.on_tick(sym, d["ts"], d["p"], d["v"]):
             stats["signals"] += 1
-            client.publish("signal", enrich(sig, cands.get(sym)))
+            client.publish("signal", enrich(stamp_lag(sig, time.time() - d["ts"]), cands.get(sym)))
 
     client = HubClient(cfg.hub_port, ["tick", "candidates"], on_msg)
     heartbeat.start(client, "ignite", lambda: dict(stats))

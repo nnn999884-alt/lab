@@ -182,3 +182,103 @@ def test_supervisor_logs_and_backs_off_and_respects_already_running(tmp_path, mo
     big.write_bytes(b"x" * (5 * 1024 * 1024 + 1))
     open_log(big.parent, "x").close()
     assert (big.parent / "x.log.1").exists() and big.stat().st_size == 0
+
+
+# ---------------- 실제 연결 위험 보완 (PLAN 보완점 4·5·6·8) ----------------
+def test_reconcile_ts_replaces_skewed_exchange_time_with_receive_time():
+    from pennybot2.workers.ls.frames import MAX_SKEW, reconcile_ts
+    now = 1_800_000_000.0
+    ok = {"ts": now - 3}
+    assert reconcile_ts(ok, now) is False and ok["ts"] == now - 3             # 정상(몇 초 지연)은 그대로
+    day_ahead = {"ts": now + 86400}                                           # 데이마켓에서 날짜가 거래일이라 하루 앞선 경우
+    assert reconcile_ts(day_ahead, now) is True and day_ahead["ts"] == now
+    old = {"ts": now - 3600}
+    assert reconcile_ts(old, now) is True and old["ts"] == now
+    edge = {"ts": now - MAX_SKEW}                                             # 경계: 정확히 한도면 그대로
+    assert reconcile_ts(edge, now) is False
+
+
+def test_signal_gets_lag_stamp():
+    from pennybot2.workers.ignite import stamp_lag
+    sig = {"s": "A", "attrs": {"variant": "fast"}}
+    assert stamp_lag(sig, 1.23456)["attrs"]["lag_s"] == 1.23 and sig["attrs"]["variant"] == "fast"
+
+
+def test_hub_warns_when_it_drops_messages_but_not_every_second(tmp_path):
+    hub = Hub(tmp_path / "m.db", port=0)
+    assert hub.drop_warning(100.0) is None                                    # 버린 게 없으면 경고 없음
+    hub.dropped = 7
+    msg = hub.drop_warning(100.0)
+    assert msg and "7건" in msg and "느린 구독자" in msg
+    assert hub.drop_warning(110.0) is None                                    # 같은 문제를 30초 안에 또 알리지 않음
+    hub.dropped = 12
+    assert hub.drop_warning(110.0) is None                                    # 새로 버렸어도 마지막 경고 뒤 30초 안이면 기다림
+    later = hub.drop_warning(131.0)
+    assert later and "5건" in later                                           # 12 − 이미 알린 7 = 새로 버린 5건
+    assert hub.drop_warning(200.0) is None                                    # 새로 버린 게 없으면 다시 안 알림
+    hub.dropped = 20
+    again = hub.drop_warning(500.0)
+    assert again and "8건" in again and "누적 20건" in again
+
+
+def test_hub_publishes_drop_warning_to_health_subscribers(tmp_path):
+    hub = Hub(tmp_path / "m.db", port=0, flush_sec=0.1).start_in_thread()
+    got = []
+    sub = HubClient(hub.port, ["health"], lambda t, d: got.append(d))
+    sub.connected.wait(3)
+    assert wait(lambda: any(hub.clients.values()))
+    hub.dropped = 3                                                           # 허브가 메시지를 버린 것으로 만든다
+    assert wait(lambda: got, 5) and "3건" in got[0]["text"]
+
+
+class FakeClock:
+    def __init__(self): self.t = 1000.0
+    def __call__(self): return self.t
+
+
+def test_notifier_limits_rate_and_summarizes_skipped():
+    from pennybot2.workers.notify import Notifier
+    clk, sent = FakeClock(), []
+    n = Notifier(sent.append, per_min=3, clock=clk, digest_every=60)
+    results = [n.submit(f"신호 {i}", label=f"S{i}") for i in range(6)]
+    assert results == [True, True, True, False, False, False]                 # 분당 3건까지만
+    assert n.submit("경고!", urgent=True) is True                              # 경고는 한도를 안 받음
+    assert n.flush_digest() is None                                           # 아직 60초 안
+    clk.t += 61
+    msg = n.flush_digest()
+    assert msg and "3건 생략" in msg and "S3" in msg and "S5" in msg
+    assert n.flush_digest() is None                                           # 요약은 한 번만
+    assert n.submit("다음 분의 신호", label="S9") is True                       # 1분이 지나면 다시 보냄
+    drained = []
+    while not n.q.empty():
+        drained.append(n.q.get_nowait())
+    assert drained[:3] == ["신호 0", "신호 1", "신호 2"] and "경고!" in drained and any("생략" in x for x in drained)
+
+
+def test_notifier_slow_sender_does_not_block_submit_and_queue_overflow_is_counted():
+    import threading as th
+    from pennybot2.workers.notify import Notifier
+    gate = th.Event()
+    n = Notifier(lambda text: gate.wait(5), per_min=1000, maxq=3)
+    th.Thread(target=n.worker_loop, daemon=True).start()
+    t0 = time.time()
+    for i in range(10):
+        n.submit(f"m{i}")
+    assert time.time() - t0 < 0.5                                             # 전송이 막혀 있어도 submit 은 즉시 돌아옴
+    assert n.q_dropped >= 5                                                   # 대기열(3)이 차면 버리고 센다
+    gate.set()
+
+
+def test_notifier_survives_sender_errors():
+    from pennybot2.workers.notify import Notifier
+    import threading as th
+    calls = []
+
+    def flaky(text):
+        calls.append(text)
+        if text == "boom":
+            raise RuntimeError("전송 실패")
+    n = Notifier(flaky, per_min=100)
+    th.Thread(target=n.worker_loop, daemon=True).start()
+    n.submit("boom"); n.submit("ok")
+    assert wait(lambda: calls == ["boom", "ok"], 5)                           # 한 번 실패해도 다음 알림은 나감

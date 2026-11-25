@@ -33,6 +33,9 @@ class Hub:
         self.last: dict[str, list] = {}               # symbol -> [ts, price]
         self.clients: dict[asyncio.StreamWriter, set] = {}
         self.dropped = 0
+        self.max_backlog = MAX_BACKLOG
+        self._warned_at = 0.0
+        self._warned_n = 0
         self._retained: dict[str, bytes] = {}
         self.hb: dict[str, tuple[float, dict]] = {}       # 일꾼 이름 -> (받은 시각, 마지막 hb)
         self.last_tick_wall = 0.0
@@ -84,10 +87,17 @@ class Hub:
             self._retained[topic] = raw
         for w, topics in list(self.clients.items()):
             if topic in topics:
-                if w.transport.get_write_buffer_size() > MAX_BACKLOG:
+                if w.transport.get_write_buffer_size() > self.max_backlog:
                     self.dropped += 1
                     continue
                 w.write(raw)
+
+    def drop_warning(self, now: float, every: float = 30.0) -> str | None:
+        """버린 메시지가 새로 생겼으면(그리고 마지막 경고 뒤 every 초가 지났으면) 경고 문구. 개장 직후 느린 구독자가 틱을 잃으면 기준선이 틀어진다."""
+        if self.dropped > self._warned_n and now - self._warned_at >= every:
+            n, self._warned_n, self._warned_at = self.dropped - self._warned_n, self.dropped, now
+            return f"⚠️ 허브가 느린 구독자 때문에 메시지 {n}건을 버림 (누적 {self.dropped}건) — 해당 일꾼의 기준선·신호가 틀어졌을 수 있음"
+        return None
 
     def status(self) -> dict:
         now = time.time()
@@ -116,6 +126,11 @@ class Hub:
         loop = asyncio.get_running_loop()
         while True:
             await asyncio.sleep(self.flush_sec)
+            msg = self.drop_warning(time.time())
+            if msg:
+                log.warning(msg)
+                d = {"text": msg, "ts": time.time()}
+                self._on_pub("health", d, (json.dumps({"op": "pub", "topic": "health", "d": d}) + "\n").encode())
             await self.flush_now(loop)
 
     async def flush_now(self, loop=None) -> None:

@@ -16,6 +16,19 @@ def _f(x, d=0.0) -> float:
         return d
 
 
+MAX_SKEW = 300.0        # 체결 시각과 수신 시각이 이만큼(초) 넘게 어긋나면 의심
+
+
+def reconcile_ts(tick: dict, now: float, max_skew: float = MAX_SKEW) -> bool:
+    """체결 시각(ovsdate+trdtm 을 미동부로 가정)이 수신 시각과 크게 어긋나면 수신 시각으로 바꾼다 → 바꿨으면 True.
+    LS 의 날짜 필드가 데이마켓(20~24시 ET)에서 '거래일'이면 하루 앞선 시각이 되는데, 그걸 실제로 확인하지 못했다(PLAN 보완점 4).
+    어긋난 시각 그대로 쓰면 세션 판정·기준선이 전부 틀어지므로, 확인되기 전까지의 안전장치."""
+    if abs(now - tick["ts"]) > max_skew:
+        tick["ts"] = now
+        return True
+    return False
+
+
 def sub_msg(token: str, tr_cd: str, key: str, on: bool = True) -> str:
     """구독(3)/해제(4) 메시지. key 는 마스터의 keysymbol (거래소 코드 2자 + 종목, 18자 오른쪽 공백)."""
     return json.dumps({"header": {"token": token, "tr_type": "3" if on else "4"},

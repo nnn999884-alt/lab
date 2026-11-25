@@ -47,7 +47,8 @@ def test_catches_burst_early_with_attrs():
     fast = next(s for _, s in sigs if s["kind"] == "ignite:fast")
     a = fast["attrs"]
     assert a["from_low_pct"] < 8 and a["ratio"] >= 5 and a["trades"] >= 8 and a["session"] == "REGULAR"
-    assert fast["notify"] is True and "아직 이른 구간" in fast["text"]
+    assert fast["notify"] is False and "아직 이른 구간" in fast["text"]      # 정규장 신호는 기록만 (fast 는 PRE 에서만 알림)
+    assert "매수 신호 아님" in fast["text"]
     first_fast = min(tt for tt, s in sigs if s["kind"] == "ignite:fast")
     assert first_fast - t < 60                       # 버스트 시작 60초 안에 잡음 (+10% 를 기다리지 않음)
     # 더 빠른 규칙(early)은 같거나 더 일찍
@@ -273,3 +274,22 @@ def test_hub_saves_signal_attrs(tmp_path):
         time.sleep(0.05)
     a = json.loads(s.db.execute("SELECT attrs FROM signals").fetchone()[0])
     assert a["variant"] == "fast" and a["ratio"] == 9.1 and a["ticks"] == [[-1.0, 1.0, 100]]
+
+
+def test_fast_notifies_only_in_premarket_other_sessions_are_recorded_only():
+    pre = datetime(2026, 11, 25, 8, 0, tzinfo=ET).timestamp()                  # 프리마켓 한가운데
+    reg = datetime(2026, 11, 25, 11, 0, tzinfo=ET).timestamp()                 # 정규장
+    for start, expect in ((pre, True), (reg, False)):
+        det = IgniteDetector()
+        t = quiet(det, start=start)
+        fast = [s for _, s in burst(det, "ABC", t) if s["kind"] == "ignite:fast"]
+        assert len(fast) == 1 and fast[0]["notify"] is expect
+        assert fast[0]["attrs"]["session"] == ("PRE" if expect else "REGULAR")
+    # notify=False 인 규칙은 PRE 여도 알리지 않음, 세션 제한이 없으면 모든 세션에서 알림
+    from pennybot2.workers.ignite import Variant
+    det = IgniteDetector((Variant("x", "ignite:x", notify=False, notify_sessions=("PRE",)),))
+    t = quiet(det, start=pre)
+    assert all(s["notify"] is False for _, s in burst(det, "ABC", t))
+    det = IgniteDetector((Variant("y", "ignite:y", notify=True),))
+    t = quiet(det, start=reg)
+    assert all(s["notify"] is True for _, s in burst(det, "ABC", t))
