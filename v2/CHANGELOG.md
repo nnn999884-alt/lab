@@ -112,3 +112,13 @@
 ## 2026-11-25 (작업 원칙 정정)
 
 - 정정: "파일 400줄 안쪽" 기준을 폐기. 스파게티 금지의 뜻은 줄 수가 아니라 **쓸모없는 걸 계속 덧붙이지 않는 것**(사용자 지시). `CLAUDE.md`·`LESSONS.md` M2·`PLAN.md` 문구 수정, `PLAN.md` 정리 작업을 "중복·안 쓰이는 것 확인 후 삭제"로 변경.
+
+## 2026-11-25 (쓸모없는 것 삭제 — 사용자 지시 '안 쓰이면 다 지워')
+
+`vulture`(안 쓰이는 정의 탐지)와 참조 확인으로 찾아 삭제. 지운 것:
+- 명령 `featurelab`(학습 모델 `train` 과 같은 일), `replay`(`backtest-ignite`+`grade` 가 대신), 실시간 `surge` 프로세스(알림이 꺼진 비교용 — 백테스트가 쓰는 `SurgeDetector`·`enrich` 만 `workers/surge.py` 에 남김). 감독자 기본 일꾼·감시 대상·잠금 역할에서도 `surge` 제거.
+- 저장소: `events` 표(`signals` 와 중복; 기존 pennybot DB 의 `events` 를 읽는 채점기 부분은 유지), `price_now` 표·`Store.set_price`·`add_event`, 허브의 `snap` 명령·`Hub.stop`.
+- 설정: `mode`·`paper_cash`·`scan_seconds`·`live`(v2 에는 주문 코드가 없음 — 매매 일꾼을 만들 때 실거래 안전장치를 함께 둔다고 `PLAN.md` 에 적음).
+- 기타: `sessions.next_change`, `daily.NEED_DAYS`, `ignite` 의 `n60`, `nightscore.UNVERIFIED`, `precursor.collect_study_a`(`build` 와 같은 일을 하는 중복; 테스트는 `build()["A"]` 로).
+- 테스트 5개(삭제한 기능 검사)를 지우고 나머지를 새 구조에 맞춤: 108 → 103개.
+- 남긴 것(쓰이고 있음): `nightscore`(학습 모델이 채택되지 않을 때의 대비책 + 모델과 비교하는 기준선), `ignite` 규칙 4개(비교·채점용으로 동시에 기록), `precursor` 모델 B(연구 결과의 일부), 허브 `start_in_thread`·`shutdown`(허브 테스트가 씀).

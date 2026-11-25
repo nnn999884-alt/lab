@@ -51,10 +51,6 @@ def synth_db(path, n_sym=140, days=3, precursor=True, ramp=15, seed=3, vol_boost
     return s
 
 
-def segs_of(store, **kw):
-    return list(P.iter_segments(store.db, **kw))
-
-
 def test_features_have_no_lookahead():
     rnd = np.random.default_rng(0)
     n = 200
@@ -119,7 +115,7 @@ def test_alert_metrics_boundary_launch_minute_is_not_before():
 def test_study_a_also_detects_price_shape_precursors(tmp_path):
     """거래량 징후가 없고 '급등 직전 12분 눌림'만 있는 데이터: 연구 A 는 거래대금 계열이 아니라 가격 모양 특징에서 징후를 찾아야 한다."""
     s = synth_db(tmp_path / "dip.db", precursor=False, dip=True, seed=21)
-    res = P.evaluate_study_a(P.collect_study_a(segs_of(s)))
+    res = P.evaluate_study_a(P.build(s.db)["A"])
     ok = {k for k, r in res.items() if r["ok"]}
     assert any(f in ("dr5", "dr15") and L <= 10 for f, L in ok), sorted(ok)                  # 눌림 = 최근 5·15분 가격 변화
     assert not any(f in ("rv1", "rv3", "rv5", "lq", "act5") for f, _ in ok)                  # 순수 거래량 특징은 징후가 아님
@@ -146,7 +142,7 @@ def planted():
     import tempfile, pathlib
     d = pathlib.Path(tempfile.mkdtemp())
     s = synth_db(d / "p.db", precursor=True)
-    return P.collect_study_a(segs_of(s))
+    return P.build(s.db)["A"]
 
 
 @pytest.fixture(scope="module")
@@ -154,7 +150,7 @@ def null():
     import tempfile, pathlib
     d = pathlib.Path(tempfile.mkdtemp())
     s = synth_db(d / "n.db", precursor=False, seed=4)
-    return P.collect_study_a(segs_of(s))
+    return P.build(s.db)["A"]
 
 
 def test_study_a_recovers_planted_lead_time(planted):

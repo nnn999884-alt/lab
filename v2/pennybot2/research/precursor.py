@@ -211,28 +211,6 @@ def matched_controls(seg: dict, X: np.ndarray, st: np.ndarray, cond: np.ndarray,
     return out
 
 
-def collect_study_a(segs, run=0.20, horizon=30, min_dv=50_000, price=(0.2, 10.0), seed=0):
-    """segs: iter_segments 결과. → {'E': {L: [(date, 특징행)]}, 'C': [(date, 특징행)], 'n_events': int}"""
-    rnd = np.random.default_rng(seed)
-    E = {L: [] for L in LEADS}
-    C, n_ev = [], 0
-    for sym, seg, date in segs:
-        X = features(seg)
-        st, cond = onsets(seg, run, horizon, min_dv, price)
-        n = len(seg["c"])
-        nl = near_low_mask(seg["c"])
-        for t0 in st:
-            if not nl[t0]:                      # 사건에도 대조군과 같은 조건(최근 저점 근처)
-                continue
-            n_ev += 1
-            for L in LEADS:
-                if t0 - L >= WARM and np.isfinite(X[t0 - L]).all():
-                    E[L].append((date, X[t0 - L]))
-        for i in matched_controls(seg, X, st, cond, horizon, price, rnd):
-            C.append((date, X[i]))
-    return {"E": E, "C": C, "n_events": n_ev}
-
-
 def thirds_cuts(dates: list[str]):
     d = sorted(set(dates))
     return (d[len(d) // 3], d[2 * len(d) // 3]) if len(d) >= 3 else (d[-1] if d else "", d[-1] if d else "")

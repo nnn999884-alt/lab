@@ -12,7 +12,7 @@ from .core.lock import ALREADY_RUNNING
 
 MAX_LOG = 5 * 1024 * 1024        # 로그가 5MB 를 넘으면 시작할 때 .1 로 넘기고 새로 씀 (옛것 1개만 보관)
 
-DEFAULT = ("hub", "ls", "daily", "ignite", "surge", "notify", "monitor")
+DEFAULT = ("hub", "ls", "daily", "ignite", "notify", "monitor")
 
 
 def open_log(log_dir: Path, role: str):

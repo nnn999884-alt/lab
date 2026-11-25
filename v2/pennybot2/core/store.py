@@ -15,9 +15,6 @@ CREATE TABLE IF NOT EXISTS signals (
     PRIMARY KEY (ts, symbol, kind));
 CREATE TABLE IF NOT EXISTS candidates (
     asof TEXT, symbol TEXT, score INTEGER, why TEXT, minus TEXT, pc REAL, prob REAL, PRIMARY KEY (asof, symbol));
-CREATE TABLE IF NOT EXISTS price_now (symbol TEXT PRIMARY KEY, ts TEXT, last REAL);
-CREATE TABLE IF NOT EXISTS events (
-    ts TEXT, symbol TEXT, kind TEXT, text TEXT, value REAL, PRIMARY KEY (ts, symbol, kind));
 """
 
 
@@ -42,14 +39,6 @@ class Store:
 
     def put_daily(self, rows: list[tuple]) -> None:
         self.db.executemany("INSERT OR REPLACE INTO daily_bars VALUES (?,?,?,?,?,?,?)", rows)
-        self.db.commit()
-
-    def set_price(self, symbol: str, ts: str, last: float) -> None:
-        self.db.execute("INSERT OR REPLACE INTO price_now VALUES (?,?,?)", (symbol, ts, last))
-        self.db.commit()
-
-    def add_event(self, ts: str, symbol: str, kind: str, text: str, value: float | None = None) -> None:
-        self.db.execute("INSERT OR REPLACE INTO events VALUES (?,?,?,?,?)", (ts, symbol, kind, text, value))
         self.db.commit()
 
     def add_signal(self, ts: str, symbol: str, kind: str, price: float | None, gain: float | None,

@@ -88,9 +88,3 @@ def classify(ts: datetime) -> tuple[date | None, str]:
                 return day.date, name
     return None, CLOSED
 
-
-def next_change(ts: datetime) -> datetime | None:
-    base = ts.astimezone(ET).date()
-    edges = [t for i in range(-1, 6) for s, e in trading_day(base + timedelta(days=i)).sessions.values()
-             for t in (s, e) if t > ts]
-    return min(edges, default=None)

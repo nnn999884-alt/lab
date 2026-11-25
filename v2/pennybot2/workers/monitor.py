@@ -12,7 +12,7 @@ from ..core.sessions import CLOSED, ET, classify
 from ..hub.client import HubClient
 from . import heartbeat
 
-EXPECTED_WORKERS = ("ls", "daily", "ignite", "surge", "notify")
+EXPECTED_WORKERS = ("ls", "daily", "ignite", "notify")
 WORKER_TIMEOUT = 30.0
 STALL_AFTER = 90.0          # 틱이 이만큼 없으면 끊김
 STALL_GRACE = 180.0         # 시세가 있어야 하는 시간이 이만큼 이어진 뒤부터 판단 (개장 직후·재시작 유예)

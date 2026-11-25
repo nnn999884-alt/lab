@@ -1,4 +1,4 @@
-"""설정: config.yaml + .env. 기본은 모의매매. 실거래는 mode: live 와 PENNYBOT_LIVE_CONFIRM=YES 둘 다 있어야 한다."""
+"""설정: config.yaml + .env (+ 환경변수로 상태 폴더·허브 포트 덮어쓰기). v2 에는 주문 코드가 없다 — 매매 일꾼을 만들 때 실거래 안전장치(mode: live + PENNYBOT_LIVE_CONFIRM=YES 둘 다)를 함께 둔다."""
 from __future__ import annotations
 
 import os
@@ -12,22 +12,15 @@ ROOT = Path(__file__).resolve().parents[2]
 
 @dataclass
 class Config:
-    mode: str = "paper"
     state_dir: Path = ROOT / "state"
-    paper_cash: float = 2000.0
     min_price: float = 0.5
     max_price: float = 5.0
-    scan_seconds: int = 15
     hub_port: int = 8765
     webhook: str = ""
     telegram_token: str = ""
     telegram_chat: str = ""
     ls_app_key: str = field(default="", repr=False)
     ls_app_secret: str = field(default="", repr=False)
-
-    @property
-    def live(self) -> bool:
-        return self.mode == "live" and os.environ.get("PENNYBOT_LIVE_CONFIRM") == "YES"
 
     @property
     def db_path(self) -> Path:
@@ -52,8 +45,6 @@ def load(yaml_path: Path | None = None, env_path: Path | None = None) -> Config:
     cfg = Config(**{k: v for k, v in raw.items() if k in names and k != "state_dir"})
     if "state_dir" in raw:
         cfg.state_dir = Path(raw["state_dir"])
-    if cfg.mode not in ("paper", "live"):
-        raise ValueError(f"mode 는 paper 또는 live: {cfg.mode!r}")
     env = os.environ.get
     if env("PENNYBOT_STATE_DIR"):
         cfg.state_dir = Path(env("PENNYBOT_STATE_DIR"))

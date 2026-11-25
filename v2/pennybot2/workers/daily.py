@@ -20,7 +20,6 @@ from ..scoring import nightscore
 log = logging.getLogger(__name__)
 URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
 HEADERS = {"User-Agent": "Mozilla/5.0 pennybot2"}
-NEED_DAYS = 70          # 점수에 60일 필요 (여유 포함)
 
 
 def parse_chart(j: dict, since: str) -> list[tuple]:

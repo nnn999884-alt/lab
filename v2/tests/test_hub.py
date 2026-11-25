@@ -47,9 +47,8 @@ def test_flush_to_sqlite_in_batch(tmp_path):
     s = Store(tmp_path / "m.db")
     assert wait(lambda: len(s.bars("ABC")) == 1)
     assert s.bars("ABC")[0]["session"] == "REGULAR"
-    assert wait(lambda: s.db.execute("SELECT count(*) FROM events").fetchone()[0] == 1)
-    assert wait(lambda: s.db.execute("SELECT last FROM price_now WHERE symbol='ABC'").fetchone() is not None)
-    assert s.db.execute("SELECT last FROM price_now WHERE symbol='ABC'").fetchone()[0] == 1.5
+    assert wait(lambda: s.db.execute("SELECT count(*) FROM signals").fetchone()[0] == 1)
+    assert h.last["ABC"][1] == 1.5                   # 최신 가격은 허브 메모리에 (status 의 종목 수가 여기서 나옴)
 
 
 def test_bad_message_and_dead_client_do_not_stop_hub(tmp_path):

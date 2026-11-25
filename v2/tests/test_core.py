@@ -2,7 +2,6 @@ from datetime import date, datetime, timezone
 
 import pytest
 
-from pennybot2.core import config
 from pennybot2.core.sessions import AFTER, CLOSED, DAY, ET, PRE, REGULAR, classify, early_close, nyse_holidays
 from pennybot2.core.store import Store
 
@@ -37,11 +36,3 @@ def test_store_idempotent():
     s.put_bars([row]); s.put_bars([row])
     assert len(s.bars("ABC")) == 1
 
-
-def test_live_needs_both(tmp_path, monkeypatch):
-    monkeypatch.delenv("PENNYBOT_LIVE_CONFIRM", raising=False)
-    y = tmp_path / "c.yaml"; y.write_text("mode: live\n", encoding="utf-8")
-    cfg = config.load(y, tmp_path / ".env")
-    assert cfg.mode == "live" and not cfg.live
-    monkeypatch.setenv("PENNYBOT_LIVE_CONFIRM", "YES")
-    assert cfg.live

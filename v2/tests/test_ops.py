@@ -49,8 +49,8 @@ def test_second_process_exits_with_code_3(tmp_path):
     holder = subprocess.Popen([sys.executable, "-c", "import time;time.sleep(30)"])
     try:
         (tmp_path / "locks").mkdir()
-        (tmp_path / "locks" / "surge.lock").write_text(str(holder.pid), encoding="utf-8")
-        r = subprocess.run([sys.executable, "-m", "pennybot2", "surge"], env=env, cwd=V2, capture_output=True, text=True, timeout=20)
+        (tmp_path / "locks" / "ignite.lock").write_text(str(holder.pid), encoding="utf-8")
+        r = subprocess.run([sys.executable, "-m", "pennybot2", "ignite"], env=env, cwd=V2, capture_output=True, text=True, timeout=20)
         assert r.returncode == lock.ALREADY_RUNNING and "이미 실행 중" in r.stdout
     finally:
         holder.kill()
@@ -75,16 +75,16 @@ def test_feed_expected_windows():
 
 def test_worker_down_alerts_once_reminds_and_recovers():
     t0 = et(2026, 11, 25, 18, 0)                 # 시세 기대 없는 시간 (일꾼 판단만 보기 위해)
-    h = Health(t0, workers=("surge",))
-    h.on_hb("surge", t0)
+    h = Health(t0, workers=("ignite",))
+    h.on_hb("ignite", t0)
     assert h.check(t0 + 20) == []                # 아직 30초 안
     m = h.check(t0 + 40)
-    assert len(m) == 1 and "surge" in m[0] and "응답 없음" in m[0]
+    assert len(m) == 1 and "ignite" in m[0] and "응답 없음" in m[0]
     assert h.check(t0 + 100) == []               # 스팸 방지: 같은 문제는 다시 안 알림
     assert "(계속)" in h.check(t0 + 40 + REMIND + 1)[0]
-    h.on_hb("surge", t0 + 5000)
-    assert h.check(t0 + 5001) == ["✅ 일꾼 'surge' 복구"]
-    h.on_hb("surge", t0 + 5090)                  # 복구 뒤에도 보고가 계속 오면 조용
+    h.on_hb("ignite", t0 + 5000)
+    assert h.check(t0 + 5001) == ["✅ 일꾼 'ignite' 복구"]
+    h.on_hb("ignite", t0 + 5090)                  # 복구 뒤에도 보고가 계속 오면 조용
     assert h.check(t0 + 5100) == []
     assert "응답 없음" in h.check(t0 + 5200)[0]     # 보고가 다시 끊기면 새로 알림 (복구 뒤엔 처음부터)
 
@@ -131,14 +131,14 @@ def test_heartbeat_reaches_hub_and_status_op(tmp_path):
     hub = Hub(tmp_path / "m.db", port=0, flush_sec=0.2).start_in_thread()
     c = HubClient(hub.port)
     c.connected.wait(3)
-    heartbeat.start(c, "surge", lambda: {"candidates": 7}, interval=0.1)
+    heartbeat.start(c, "ignite", lambda: {"candidates": 7}, interval=0.1)
     c.publish("tick", {"s": "A", "ts": time.time(), "p": 1.0, "v": 1})
-    assert wait(lambda: "surge" in hub.hb and hub.last_tick_wall > 0)
+    assert wait(lambda: "ignite" in hub.hb and hub.last_tick_wall > 0)
     s = socket.create_connection(("127.0.0.1", hub.port), timeout=3)
     s.sendall(b'{"op":"status"}\n')
     st = json.loads(s.makefile("rb").readline())
-    assert st["symbols"] == 1 and st["workers"]["surge"]["info"] == {"candidates": 7}
-    assert st["workers"]["surge"]["age"] < 2 and st["last_tick_age"] < 2
+    assert st["symbols"] == 1 and st["workers"]["ignite"]["info"] == {"candidates": 7}
+    assert st["workers"]["ignite"]["age"] < 2 and st["last_tick_age"] < 2
 
 
 def test_health_topic_reaches_notify_subscribers_but_not_signals_table(tmp_path):

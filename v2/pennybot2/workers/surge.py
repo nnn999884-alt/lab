@@ -1,11 +1,9 @@
-"""급등 감지 일꾼: tick/bar 를 받아 5분 안 +10% 이면 signal 을 허브로 보낸다. 이미 오른 뒤의 신호라 항상 '추격 주의'를 붙인다(LESSONS.md A-3). 판단 로직(SurgeDetector)은 네트워크와 분리."""
+"""비교용 '늦은 감지'(5분 안 +10%)와, 전날 후보 정보를 신호에 붙이는 enrich. 실시간 프로세스는 없다 — 백테스트(backtest-ignite)가 조기 감지와 비교하는 기준으로,
+ignite 가 enrich 를 쓴다. (이미 오른 뒤의 신호라 알림에는 쓰지 않는다 — LESSONS A-3)"""
 from __future__ import annotations
 
-import threading
 from collections import defaultdict, deque
 
-from ..hub.client import HubClient
-from . import heartbeat
 
 
 class SurgeDetector:
@@ -43,25 +41,3 @@ def enrich(sig: dict, cand: dict | None) -> dict:
         sig["text"] += f"\n★ 어젯밤 후보 {cand['score']}점 (확률은 재검증 중) — " + ", ".join(cand["why"][:4])
     sig["candidate_score"] = cand["score"]
     return sig
-
-
-def run(cfg) -> None:
-    det = SurgeDetector(min_price=cfg.min_price, max_price=cfg.max_price)
-    client: HubClient
-
-    cands: dict[str, dict] = {}
-
-    def on_msg(topic: str, d: dict) -> None:
-        if topic == "candidates":
-            cands.clear()
-            cands.update({i["s"]: i for i in d.get("items", ())})
-            return
-        sig = det.feed(d["s"], d["ts"], d["p"] if topic == "tick" else d["c"])
-        if sig:
-            sig = enrich(sig, cands.get(sig["s"]))
-            sig["notify"] = False          # 이미 오른 뒤의 신호(늦음) — 비교용으로만 기록하고 알림은 조기 감지(ignite)가 맡는다
-            client.publish("signal", sig)
-
-    client = HubClient(cfg.hub_port, ["tick", "bar", "candidates"], on_msg)
-    heartbeat.start(client, "surge", lambda: {"candidates": len(cands)})
-    threading.Event().wait()

@@ -46,12 +46,11 @@ DEFAULT_VARIANTS = (
 
 
 class _Sym:
-    __slots__ = ("dq", "dv60", "n60", "minute", "mdv", "mlow", "base", "lows", "last_sig", "warmed")
+    __slots__ = ("dq", "dv60", "minute", "mdv", "mlow", "base", "lows", "last_sig", "warmed")
 
     def __init__(self) -> None:
         self.dq: deque = deque()
         self.dv60 = 0.0
-        self.n60 = 0
         self.minute: int | None = None
         self.mdv = 0.0
         self.mlow = float("inf")
@@ -113,12 +112,10 @@ class IgniteDetector:
         st.mlow = min(st.mlow, p)
         st.dq.append((ts, p, v))
         st.dv60 += dv
-        st.n60 += 1
         cut = ts - self.max_win
         while st.dq[0][0] < cut:
             _, op, ov = st.dq.popleft()
             st.dv60 -= op * ov
-            st.n60 -= 1
         if st.dv60 < self.min_dv_all or not (self.lo <= p <= self.hi):
             return []
         return self._evaluate(sym, st, ts, p)

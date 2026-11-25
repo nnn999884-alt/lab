@@ -73,6 +73,7 @@ def test_verdict_needs_enough_samples():
 def build_db(path, seed=7):
     rnd = random.Random(seed)
     s = Store(path)
+    s.db.execute("CREATE TABLE IF NOT EXISTS events (ts TEXT, symbol TEXT, kind TEXT, text TEXT, value REAL, PRIMARY KEY (ts, symbol, kind))")   # 기존 pennybot DB 의 알림 표 흉내
     start = datetime(2026, 11, 2, 14, 30, tzinfo=timezone.utc)          # 정규장 시작
     n = 0
     for grade, edge in (("★★", True), ("★", False), ("등급 없음", False)):
