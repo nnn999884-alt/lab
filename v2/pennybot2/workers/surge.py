@@ -5,6 +5,7 @@ import threading
 from collections import defaultdict, deque
 
 from ..hub.client import HubClient
+from . import heartbeat
 
 
 class SurgeDetector:
@@ -58,4 +59,5 @@ def run(cfg) -> None:
             client.publish("signal", enrich(sig, cands.get(sig["s"])))
 
     client = HubClient(cfg.hub_port, ["tick", "bar", "candidates"], on_msg)
+    heartbeat.start(client, "surge", lambda: {"candidates": len(cands)})
     threading.Event().wait()

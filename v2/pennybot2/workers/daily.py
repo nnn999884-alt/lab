@@ -13,6 +13,7 @@ import requests
 from ..core.sessions import ET, REGULAR, trading_day
 from ..core.store import Store
 from ..hub.client import HubClient
+from . import heartbeat
 from ..scoring import nightscore
 
 log = logging.getLogger(__name__)
@@ -136,6 +137,7 @@ def universe(cfg, store: Store) -> list[str]:
 def run(cfg, once: bool = False) -> None:
     store = Store(cfg.db_path)
     hub = HubClient(cfg.hub_port)
+    heartbeat.start(hub, "daily")
     last_sync = 0.0
     items: list[dict] = []
     asof = None

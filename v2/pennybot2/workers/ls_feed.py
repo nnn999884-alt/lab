@@ -6,6 +6,7 @@ import logging
 import time
 
 from ..hub.client import HubClient
+from . import heartbeat
 from .ls import frames
 from .ls.auth import LsAuth, next_0700_kst
 from .ls.master import fetch, pick
@@ -24,8 +25,9 @@ def run(cfg, ws_url: str = WS_URL, auth=None, keys_fn=None) -> None:
         auth = LsAuth(cfg.ls_app_key, cfg.ls_app_secret, cfg.state_dir / "ls_token.json")
     keys_fn = keys_fn or (lambda: pick(fetch(auth), cfg.min_price, cfg.max_price))
     hub = HubClient(cfg.hub_port)
-    bars = frames.BarBuilder()
     stats = {"frames": 0, "ticks": 0, "bars": 0}
+    heartbeat.start(hub, "ls", lambda: dict(stats))
+    bars = frames.BarBuilder()
     force = False
     while True:
         try:

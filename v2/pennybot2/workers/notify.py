@@ -7,6 +7,7 @@ import threading
 import requests
 
 from ..hub.client import HubClient
+from . import heartbeat
 
 log = logging.getLogger(__name__)
 
@@ -33,5 +34,6 @@ def run(cfg) -> None:
         print(d["text"], flush=True)
         send(cfg, d["text"])
 
-    HubClient(cfg.hub_port, ["signal"], on_msg)
+    client = HubClient(cfg.hub_port, ["signal", "health"], on_msg)
+    heartbeat.start(client, "notify")
     threading.Event().wait()

@@ -55,6 +55,10 @@ def load(yaml_path: Path | None = None, env_path: Path | None = None) -> Config:
     if cfg.mode not in ("paper", "live"):
         raise ValueError(f"mode 는 paper 또는 live: {cfg.mode!r}")
     env = os.environ.get
+    if env("PENNYBOT_STATE_DIR"):
+        cfg.state_dir = Path(env("PENNYBOT_STATE_DIR"))
+    if env("PENNYBOT_HUB_PORT"):
+        cfg.hub_port = int(env("PENNYBOT_HUB_PORT"))
     cfg.webhook = env("PENNYBOT_WEBHOOK", cfg.webhook)
     cfg.telegram_token = env("PENNYBOT_TELEGRAM_TOKEN", cfg.telegram_token)
     cfg.telegram_chat = env("PENNYBOT_TELEGRAM_CHAT", cfg.telegram_chat)

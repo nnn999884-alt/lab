@@ -11,6 +11,7 @@ import asyncio
 import json
 import logging
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
@@ -33,6 +34,9 @@ class Hub:
         self.clients: dict[asyncio.StreamWriter, set] = {}
         self.dropped = 0
         self._retained: dict[str, bytes] = {}
+        self.hb: dict[str, tuple[float, dict]] = {}       # 일꾼 이름 -> (받은 시각, 마지막 hb)
+        self.last_tick_wall = 0.0
+        self.started = time.time()
         self._bars: list[dict] = []
         self._signals: list[dict] = []
         self._pool = ThreadPoolExecutor(1)
@@ -54,6 +58,8 @@ class Hub:
                         self.clients[writer] = set(msg.get("topics", ()))
                         for t in self.clients[writer] & self._retained.keys():
                             writer.write(self._retained[t])
+                    elif op == "status":
+                        writer.write((json.dumps(self.status()) + "\n").encode())
                     elif op == "snap":
                         writer.write((json.dumps({"op": "snap", "last": self.last}) + "\n").encode())
                 except (ValueError, KeyError, AttributeError):
@@ -65,6 +71,10 @@ class Hub:
             writer.close()
 
     def _on_pub(self, topic: str, d: dict, raw: bytes) -> None:
+        if topic == "hb":
+            self.hb[d["w"]] = (time.time(), d)
+        if topic in ("tick", "bar"):
+            self.last_tick_wall = time.time()
         if topic == "tick":
             self.last[d["s"]] = [d["ts"], d["p"]]
         elif topic == "bar":
@@ -80,6 +90,12 @@ class Hub:
                     self.dropped += 1
                     continue
                 w.write(raw)
+
+    def status(self) -> dict:
+        now = time.time()
+        return {"op": "status", "uptime": now - self.started, "symbols": len(self.last), "dropped": self.dropped,
+                "clients": len(self.clients), "last_tick_age": (now - self.last_tick_wall) if self.last_tick_wall else None,
+                "workers": {w: {"age": now - t, "pid": d.get("pid"), "info": d.get("info")} for w, (t, d) in self.hb.items()}}
 
     # ---- 저장 (느려도 되는 경로: 별도 스레드, 모아서) ----
     def _flush(self, bars: list[dict], signals: list[dict], last: dict) -> None:

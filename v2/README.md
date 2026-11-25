@@ -17,9 +17,13 @@
 
 폴더: `pennybot2/core`(설정·세션·저장소) · `hub`(서버·클라이언트) · `workers`(일꾼 하나 = 파일 하나) · `scoring`(후보 점수) · `grading`(알림 채점) · `supervisor.py`
 
+## 윈도우
+`setup.bat`(한 번) → `.env` 에 `LS_APP_KEY`·`LS_APP_SECRET` → `start.bat`. 상태는 `pennybot.bat status`. 같은 일꾼은 두 번 켜지지 않음(`state/locks`). (윈도우 실행은 아직 미검증)
+
 ## 실행 (v2/ 안에서)
 - `python -m pytest -q` 테스트
 - `python -m pennybot2 run` 허브 + 감지 + 알림을 각각 따로 켬 → 다른 창에서 `python -m pennybot2 replay` 로 저장된 1분봉 재생
+- `python -m pennybot2 status` 지금 상태(일꾼 응답·마지막 체결·종목 수). 로그는 `state/logs/<일꾼>.log`
 - `python -m pennybot2 grade DB경로` 저장된 알림을 같은 기준으로 채점 (기존 봇의 `market.db` 도 가능)
 - 개별 실행: `hub` · `ls`(LS 시세) · `daily`(일봉·후보) · `surge` · `notify` · `replay [종목…]`
 
