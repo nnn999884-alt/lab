@@ -10,6 +10,7 @@
   ignite              조기 감지: 거래가 붙기 시작하는 순간을 체결 단위로 (규칙 여러 개 동시 기록, 하나만 알림)
   precursor DB경로    반응(가격) 전에 나타나는 징후 찾기: 급등 시작 N분 전 특징 비교(연구 A) + 같은 알림 수에서 기존 방식과 예측 비교(연구 B)
   backtest-ignite DB경로  과거 1분봉으로 조기 감지(+ 비교용 늦은 감지)를 돌려 신호 저장 → grade --alerts-db 로 채점
+  gaps DB경로         1분봉 구멍(그날 시장엔 있는데 그 종목만 0봉인 날)을 LS 과거 분봉으로 별도 DB 에 채움 (읽기 전용 원본, 호출 한도 --max-calls, --dry-run 으로 목록만)
   notify              알림 일꾼 (신호를 디스코드·텔레그램으로)"""
 from __future__ import annotations
 
@@ -60,6 +61,9 @@ def main(argv: list[str]) -> int:
     elif role == "precursor":
         from .research import precursor
         return precursor.main(argv[1:])
+    elif role == "gaps":
+        from .research import gaps
+        return gaps.main(argv[1:])
     elif role == "backtest-ignite":
         from .workers import ignite
         return ignite.main_backtest(argv[1:])

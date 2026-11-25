@@ -3,6 +3,11 @@
 `v2/` (처음부터 다시 만드는 새 버전)의 변경만 적는 파일입니다. 기존 버전의 기록은 루트 `CHANGELOG.md` 에 따로 있습니다.
 동작이 바뀌면 같은 커밋에서 날짜와 함께 여기에 적습니다. 계획은 `PLAN.md`.
 
+## 2026-11-25 (1분봉 구멍 메우기 `gaps`)
+
+- `python -m pennybot2 gaps DB경로 [--token=] [--out=state/gaps.db] [--max-calls=20] [--dry-run]` 추가(`research/gaps.py`): 그날 시장엔 데이터가 있는데 그 종목만 0봉인 날을 LS `g3203` 로 채움. 원본 DB 읽기 전용, 받은 봉은 별도 DB, 라이브 토큰은 읽기만(새 발급 안 함), 호출 한도 도달 시 중단·다음 실행에서 이어감(`gap_jobs`). 근거: LESSONS T-3(종목-일 59% 구멍).
+- 테스트 `tests/test_gaps.py`(손 계산 입력 4개), `test_ops.py` 인코딩 지정. **실제 LS 호출은 한도(IGW00201)에 걸려 끝까지 확인 못 함** — 순위(`--dry-run`)까지만 실제 DB 로 확인.
+
 ## 2026-11-25
 
 - 새로 만들기 시작. 1단계 뼈대: 설정(`config.py`), 세션 캘린더(`sessions.py`), SQLite 저장소(`store.py`), 알림 전송(`notify.py`), 테스트(`tests2/`).

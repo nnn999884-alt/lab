@@ -24,6 +24,7 @@
 - `python -m pytest -q` 테스트
 - `python -m pennybot2 run` 허브·시세·일봉·조기 감지·알림·감시를 각각 따로 켬
 - `python -m pennybot2 status` 지금 상태(일꾼 응답·마지막 체결·종목 수). 로그는 `state/logs/<일꾼>.log`
+- `python -m pennybot2 gaps DB경로` 1분봉 구멍(조용한 날)을 LS 과거 분봉으로 별도 DB 에 채움 (호출 한도 때문에 `--max-calls` 만큼씩)
 - `python -m pennybot2 precursor DB경로` **반응(가격) 전에 나타나는 징후 찾기**: 급등 시작 N분 전 특징 비교(연구 A) + 같은 알림 수에서 기존 방식과 예측 비교(연구 B)
 - `python -m pennybot2 backtest-ignite DB경로` 과거 1분봉으로 조기 감지를 돌려 신호 저장 → `grade DB경로 --alerts-db=신호DB` 로 채점
 - `python -m pennybot2 train DB경로` 일봉으로 '오늘 급등 확률' 모델 학습·시험 (시간순 분할, 기존 규칙 점수와 비교, 통과해야 채택)

@@ -135,3 +135,7 @@ v2/PLAN.md 맨 아래 '보완할 점' 4번과 v2/LESSONS.md 를 먼저 읽어. �
  2) 확인할 것: 마스터 행에 keysymbol 이 실제로 있나, 체결 프레임의 ovsdate·trdtm 이 미동부 현재 시각과 맞나(ts_fixed 가 늘면 어긋남), 프리·데이마켓·정규장 시간대별로 틱이 오나.
  3) 결과(관찰한 사실만, 추측 금지)를 v2/LESSONS.md 에 날짜와 함께 적고 커밋·푸시해. 가짜 데이터는 쓰지 마.
 ```
+
+## 구멍 메우기 (LESSONS T절)
+- [x] `gaps` 명령(순위·한도 내 조회·이어하기). **LS 한도(IGW00201)가 풀린 뒤 실제 호출 확인 필요**: `gaps DB --token=ls_token.json --max-calls=20` → `state/gaps.db` 에 봉이 쌓이는지, 빈 날(`empty`)과 채워진 날(`ok`) 비율
+- [ ] 채워진 뒤 `precursor` 를 원본+`gaps.db` 합쳐서 다시 돌려 결과가 바뀌는지 비교 (합치는 방법은 아직 없음: 지금 `precursor` 는 DB 하나만 읽음)
