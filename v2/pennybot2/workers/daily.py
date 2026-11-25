@@ -14,6 +14,7 @@ from ..core.sessions import ET, REGULAR, trading_day
 from ..core.store import Store
 from ..hub.client import HubClient
 from . import heartbeat
+from ..scoring import model as scoring_model
 from ..scoring import nightscore
 
 log = logging.getLogger(__name__)
@@ -119,6 +120,30 @@ def build_candidates(store: Store, symbols: list[str], min_score: int = nightsco
     return asof, items
 
 
+WIDE = 200            # 모델 후보: 확률 상위 200종목 (기존 감시 앞쪽 수와 같음)
+
+
+def build_candidates_model(store: Store, symbols: list[str], model: dict, top: int = WIDE) -> tuple[str | None, list[dict]]:
+    """채택된 확률 모델로 오늘 급등 확률을 계산해 상위 top 개를 후보로. score 는 호환용(확률 %를 정수로)."""
+    scored, dates = [], []
+    for sym in symbols:
+        rows = store.daily_rows(sym)
+        r = scoring_model.score_rows(model, rows) if rows else None
+        if r:
+            scored.append({"s": sym, **r, "score": int(round(r["prob"] * 100))})
+            dates.append(rows[-1][0])
+    if not scored:
+        return None, []
+    asof = max(set(dates), key=dates.count)
+    return asof, sorted(scored, key=lambda x: -x["prob"])[:top]
+
+
+def load_adopted_model(cfg) -> dict | None:
+    """state/model.json 은 `train` 이 '채택'한 모델만 저장한다."""
+    m = scoring_model.load(cfg.state_dir / "model.json")
+    return m if m and m.get("metrics", {}).get("adopt") else None
+
+
 def universe(cfg, store: Store) -> list[str]:
     """LS 마스터(키가 있을 때) → 없으면 DB 에 일봉이 있는 종목."""
     if cfg.ls_app_key and cfg.ls_app_secret:
@@ -151,15 +176,18 @@ def run(cfg, once: bool = False) -> None:
                 if stale(store, syms, target):
                     log.info("일봉 동기화 시작: 목표 %s", target)
                     log.info("일봉 동기화 결과: %s", sync(store, syms, target))
-                    asof, items = build_candidates(store, syms)
+                    model = load_adopted_model(cfg)
+                    asof, items = build_candidates_model(store, syms, model) if model else build_candidates(store, syms)
                     if asof:
                         store.put_candidates(asof, items)
                         log.info("후보 %d개 (기준 %s)", len(items), asof)
                 elif asof is None:
-                    asof, items = build_candidates(store, syms)
+                    model = load_adopted_model(cfg)
+                    asof, items = build_candidates_model(store, syms, model) if model else build_candidates(store, syms)
             if asof:
                 hub.publish("candidates", {"asof": asof, "items": [
-                    {"s": i["s"], "score": i["score"], "why": i["why"], "minus": i["minus"]} for i in items]})
+                    {"s": i["s"], "score": i["score"], "prob": i.get("prob"), "why": i["why"], "minus": i["minus"]}
+                    for i in items]})
         except Exception:
             log.exception("일봉 일꾼 오류 — 10분 뒤 다시")
         if once:

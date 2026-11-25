@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS signals (
     ts TEXT, symbol TEXT, kind TEXT, price REAL, gain REAL, cand_score INTEGER, text TEXT,
     PRIMARY KEY (ts, symbol, kind));
 CREATE TABLE IF NOT EXISTS candidates (
-    asof TEXT, symbol TEXT, score INTEGER, why TEXT, minus TEXT, pc REAL, PRIMARY KEY (asof, symbol));
+    asof TEXT, symbol TEXT, score INTEGER, why TEXT, minus TEXT, pc REAL, prob REAL, PRIMARY KEY (asof, symbol));
 CREATE TABLE IF NOT EXISTS price_now (symbol TEXT PRIMARY KEY, ts TEXT, last REAL);
 CREATE TABLE IF NOT EXISTS events (
     ts TEXT, symbol TEXT, kind TEXT, text TEXT, value REAL, PRIMARY KEY (ts, symbol, kind));
@@ -29,6 +29,10 @@ class Store:
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.executescript(SCHEMA)
+        try:                      # 예전에 만든 DB 에는 prob 컬럼이 없음
+            self.db.execute("ALTER TABLE candidates ADD COLUMN prob REAL")
+        except sqlite3.OperationalError:
+            pass
 
     def put_bars(self, rows: list[tuple]) -> None:
         """rows: (symbol, ts, trade_date, session, open, high, low, close, volume)"""
@@ -69,9 +73,9 @@ class Store:
     def put_candidates(self, asof: str, items: list[dict]) -> None:
         import json
         self.db.execute("DELETE FROM candidates WHERE asof=?", (asof,))
-        self.db.executemany("INSERT INTO candidates VALUES (?,?,?,?,?,?)",
-                            [(asof, i["s"], i["score"], json.dumps(i["why"], ensure_ascii=False),
-                              json.dumps(i["minus"], ensure_ascii=False), i["pc"]) for i in items])
+        self.db.executemany("INSERT INTO candidates (asof, symbol, score, why, minus, pc, prob) VALUES (?,?,?,?,?,?,?)",
+                            [(asof, i["s"], i.get("score"), json.dumps(i["why"], ensure_ascii=False),
+                              json.dumps(i["minus"], ensure_ascii=False), i["pc"], i.get("prob")) for i in items])
         self.db.commit()
 
     def close(self) -> None:

@@ -37,7 +37,10 @@ def enrich(sig: dict, cand: dict | None) -> dict:
     if not cand:
         return sig
     sig = dict(sig)
-    sig["text"] += f"\n★ 어젯밤 후보 {cand['score']}점 (확률은 새 항목으로 재검증 중) — " + ", ".join(cand["why"][:4])
+    if cand.get("prob") is not None:       # 시험 구간에서 채택된 모델의 확률 (교정 확인됨)
+        sig["text"] += f"\n★ 어젯밤 모델 후보: 오늘 급등 확률 약 {cand['prob'] * 100:.1f}% — " + ", ".join(cand["why"][:3])
+    else:                                  # 옛 규칙 점수 (확률 미검증)
+        sig["text"] += f"\n★ 어젯밤 후보 {cand['score']}점 (확률은 재검증 중) — " + ", ".join(cand["why"][:4])
     sig["candidate_score"] = cand["score"]
     return sig
 
