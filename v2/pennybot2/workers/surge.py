@@ -1,0 +1,43 @@
+"""급등 감지 일꾼: tick/bar 를 받아 5분 안 +10% 이면 signal 을 허브로 보낸다. 판단 로직(SurgeDetector)은 네트워크와 분리."""
+from __future__ import annotations
+
+import threading
+from collections import defaultdict, deque
+
+from ..hub.client import HubClient
+
+
+class SurgeDetector:
+    def __init__(self, pct: float = 10.0, window_sec: int = 300, cooldown_sec: int = 900,
+                 min_price: float = 0.0, max_price: float = 1e9):
+        self.pct, self.window, self.cooldown = pct, window_sec, cooldown_sec
+        self.min_price, self.max_price = min_price, max_price
+        self._hist: dict[str, deque] = defaultdict(deque)
+        self._last: dict[str, float] = {}
+
+    def feed(self, symbol: str, ts: float, price: float) -> dict | None:
+        if price <= 0 or not (self.min_price <= price <= self.max_price):
+            return None
+        h = self._hist[symbol]
+        h.append((ts, price))
+        while h and ts - h[0][0] > self.window:
+            h.popleft()
+        gain = (price / min(p for _, p in h) - 1) * 100
+        if gain < self.pct or ts - self._last.get(symbol, -1e18) < self.cooldown:
+            return None
+        self._last[symbol] = ts
+        return {"s": symbol, "ts": ts, "kind": "surge", "value": gain,
+                "text": f"{symbol} {self.window // 60}분 안에 +{gain:.1f}% (${price:.4f})"}
+
+
+def run(cfg) -> None:
+    det = SurgeDetector(min_price=cfg.min_price, max_price=cfg.max_price)
+    client: HubClient
+
+    def on_msg(topic: str, d: dict) -> None:
+        sig = det.feed(d["s"], d["ts"], d["p"] if topic == "tick" else d["c"])
+        if sig:
+            client.publish("signal", sig)
+
+    client = HubClient(cfg.hub_port, ["tick", "bar"], on_msg)
+    threading.Event().wait()

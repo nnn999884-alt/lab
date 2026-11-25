@@ -18,6 +18,7 @@ class Config:
     min_price: float = 0.5
     max_price: float = 5.0
     scan_seconds: int = 15
+    hub_port: int = 8765
     webhook: str = ""
     telegram_token: str = ""
     telegram_chat: str = ""

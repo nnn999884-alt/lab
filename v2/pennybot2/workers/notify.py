@@ -1,12 +1,12 @@
-"""신호를 디스코드(웹훅)·텔레그램으로 전송. 전송 실패는 기록만 하고 봇은 계속 돈다."""
+"""알림 일꾼: signal 을 디스코드(웹훅)·텔레그램으로 보낸다. 전송이 느려도 다른 일꾼에 영향 없음(프로세스가 따로)."""
 from __future__ import annotations
 
 import logging
+import threading
 
 import requests
 
-from ..core.bus import Bus
-from ..core.events import Signal
+from ..hub.client import HubClient
 
 log = logging.getLogger(__name__)
 
@@ -28,9 +28,10 @@ def send(cfg, text: str, timeout: float = 10) -> bool:
     return ok
 
 
-class NotifySink:
-    def __init__(self, cfg):
-        self.cfg = cfg
+def run(cfg) -> None:
+    def on_msg(topic: str, d: dict) -> None:
+        print(d["text"], flush=True)
+        send(cfg, d["text"])
 
-    def attach(self, bus: Bus) -> None:
-        bus.subscribe(Signal, lambda s: send(self.cfg, s.text))
+    HubClient(cfg.hub_port, ["signal"], on_msg)
+    threading.Event().wait()
