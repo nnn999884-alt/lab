@@ -48,6 +48,7 @@ def test_flush_to_sqlite_in_batch(tmp_path):
     assert wait(lambda: len(s.bars("ABC")) == 1)
     assert s.bars("ABC")[0]["session"] == "REGULAR"
     assert wait(lambda: s.db.execute("SELECT count(*) FROM events").fetchone()[0] == 1)
+    assert wait(lambda: s.db.execute("SELECT last FROM price_now WHERE symbol='ABC'").fetchone() is not None)
     assert s.db.execute("SELECT last FROM price_now WHERE symbol='ABC'").fetchone()[0] == 1.5
 
 
@@ -109,3 +110,22 @@ def test_detector_worker_through_hub(tmp_path):
         p = 1.0 * (1.04 ** max(0, i - 4))
         pub.publish("bar", {"s": "ABC", "ts": T0 + i * 60, "o": p, "h": p, "l": p, "c": p, "v": 1})
     assert wait(lambda: len(out) == 1) and out[0]["s"] == "ABC"
+
+
+def test_signal_saved_with_price_for_later_grading(tmp_path):
+    h = hub(tmp_path)
+    pub = HubClient(h.port)
+    pub.connected.wait(3)
+    pub.publish("signal", {"s": "ABC", "ts": T0, "kind": "surge", "text": "t", "value": 12.5, "price": 1.1234,
+                           "candidate_score": 6})
+    s = Store(tmp_path / "m.db")
+    assert wait(lambda: s.db.execute("SELECT count(*) FROM signals").fetchone()[0] == 1)
+    r = s.db.execute("SELECT symbol, kind, price, gain, cand_score FROM signals").fetchone()
+    assert tuple(r) == ("ABC", "surge", 1.1234, 12.5, 6)
+
+
+def test_surge_signal_has_price_and_chase_warning():
+    d = SurgeDetector()
+    sigs = [d.feed("A", T0 + i * 60, 1.0 * (1.04 ** max(0, i - 4))) for i in range(10)]
+    sig = next(s for s in sigs if s)
+    assert sig["price"] > 1.0 and "추격 주의" in sig["text"]

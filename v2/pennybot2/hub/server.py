@@ -95,6 +95,8 @@ class Hub:
             self._store.put_bars(rows)
         for s in signals:
             self._store.add_event(_iso(s["ts"]), s["s"], s["kind"], s["text"], s.get("value"))
+            self._store.add_signal(_iso(s["ts"]), s["s"], s["kind"], s.get("price"), s.get("value"),
+                                   s.get("candidate_score"), s["text"])
         self._store.db.executemany("INSERT OR REPLACE INTO price_now VALUES (?,?,?)",
                                    [(sym, _iso(v[0]), v[1]) for sym, v in last.items()])
         self._store.db.commit()

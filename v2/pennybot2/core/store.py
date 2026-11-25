@@ -10,6 +10,9 @@ CREATE TABLE IF NOT EXISTS bars_1m (
     open REAL, high REAL, low REAL, close REAL, volume REAL, PRIMARY KEY (symbol, ts));
 CREATE TABLE IF NOT EXISTS daily_bars (
     symbol TEXT, d TEXT, open REAL, high REAL, low REAL, close REAL, volume REAL, PRIMARY KEY (symbol, d));
+CREATE TABLE IF NOT EXISTS signals (
+    ts TEXT, symbol TEXT, kind TEXT, price REAL, gain REAL, cand_score INTEGER, text TEXT,
+    PRIMARY KEY (ts, symbol, kind));
 CREATE TABLE IF NOT EXISTS candidates (
     asof TEXT, symbol TEXT, score INTEGER, why TEXT, minus TEXT, pc REAL, PRIMARY KEY (asof, symbol));
 CREATE TABLE IF NOT EXISTS price_now (symbol TEXT PRIMARY KEY, ts TEXT, last REAL);
@@ -42,6 +45,13 @@ class Store:
 
     def add_event(self, ts: str, symbol: str, kind: str, text: str, value: float | None = None) -> None:
         self.db.execute("INSERT OR REPLACE INTO events VALUES (?,?,?,?,?)", (ts, symbol, kind, text, value))
+        self.db.commit()
+
+    def add_signal(self, ts: str, symbol: str, kind: str, price: float | None, gain: float | None,
+                   cand_score: int | None, text: str) -> None:
+        """알림 성적을 나중에 채점할 수 있게 언제·얼마에·왜를 같이 저장한다."""
+        self.db.execute("INSERT OR REPLACE INTO signals VALUES (?,?,?,?,?,?,?)",
+                        (ts, symbol, kind, price, gain, cand_score, text))
         self.db.commit()
 
     def bars(self, symbol: str, limit: int = 390) -> list[sqlite3.Row]:

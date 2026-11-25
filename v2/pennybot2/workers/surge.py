@@ -1,4 +1,4 @@
-"""급등 감지 일꾼: tick/bar 를 받아 5분 안 +10% 이면 signal 을 허브로 보낸다. 판단 로직(SurgeDetector)은 네트워크와 분리."""
+"""급등 감지 일꾼: tick/bar 를 받아 5분 안 +10% 이면 signal 을 허브로 보낸다. 이미 오른 뒤의 신호라 항상 '추격 주의'를 붙인다(LESSONS.md A-3). 판단 로직(SurgeDetector)은 네트워크와 분리."""
 from __future__ import annotations
 
 import threading
@@ -26,8 +26,9 @@ class SurgeDetector:
         if gain < self.pct or ts - self._last.get(symbol, -1e18) < self.cooldown:
             return None
         self._last[symbol] = ts
-        return {"s": symbol, "ts": ts, "kind": "surge", "value": gain,
-                "text": f"{symbol} {self.window // 60}분 안에 +{gain:.1f}% (${price:.4f})"}
+        return {"s": symbol, "ts": ts, "kind": "surge", "value": gain, "price": price,
+                "text": f"{symbol} {self.window // 60}분 안에 +{gain:.1f}% (${price:.4f})\n"
+                        f"⚠️ 이미 오른 뒤 — 추격 주의 (이런 알림에 따라 사면 과거 −5% 먼저 61%)"}
 
 
 def enrich(sig: dict, cand: dict | None) -> dict:
