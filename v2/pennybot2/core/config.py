@@ -7,13 +7,13 @@ from pathlib import Path
 
 import yaml
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 
 
 @dataclass
 class Config:
     mode: str = "paper"
-    state_dir: Path = ROOT / "state2"
+    state_dir: Path = ROOT / "state"
     paper_cash: float = 2000.0
     min_price: float = 0.5
     max_price: float = 5.0

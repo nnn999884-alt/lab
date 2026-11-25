@@ -2,9 +2,9 @@ from datetime import date, datetime, timezone
 
 import pytest
 
-from pennybot2 import config
-from pennybot2.sessions import AFTER, CLOSED, DAY, ET, PRE, REGULAR, classify, early_close, nyse_holidays
-from pennybot2.store import Store
+from pennybot2.core import config
+from pennybot2.core.sessions import AFTER, CLOSED, DAY, ET, PRE, REGULAR, classify, early_close, nyse_holidays
+from pennybot2.core.store import Store
 
 
 def et(y, mo, d, h, mi):

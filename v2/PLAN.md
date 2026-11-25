@@ -1,8 +1,8 @@
 # pennybot2 — 처음부터 다시 만들기 계획
 
-기존 `pennybot/`(약 3만 줄)은 **그대로 두고**, `pennybot2/` 에 새로 만든다. 마음에 들면 갈아타고, 아니면 기존 것을 계속 쓴다.
-변경 기록은 `CHANGELOG2.md` (기존 `CHANGELOG.md` 와 별개).
-테스트는 `tests2/` (`python -m pytest tests2 -q`), 상태 파일은 `state2/`.
+기존 `pennybot/`(약 3만 줄)은 **그대로 두고**, `v2/` 폴더 안에 새로 만든다. 마음에 들면 갈아타고, 아니면 기존 것을 계속 쓴다.
+변경 기록은 `v2/CHANGELOG.md` (루트의 `CHANGELOG.md` 는 기존 버전 것).
+`v2/` 안에서 `python -m pytest -q` 로 테스트, 상태 파일은 `v2/state/`.
 
 ## 원칙
 - 시세는 LS증권 OpenAPI 하나만 (토스 코드 없음). 매매는 모의가 기본, 실거래는 `mode: live` + `PENNYBOT_LIVE_CONFIRM=YES` 둘 다.
