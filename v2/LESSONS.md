@@ -109,3 +109,9 @@ Reddit 은 검색 도구가 접근할 수 없어 못 봄(`reddit.com` 차단). X
 | H17 | 매수 체결 비중(체결강도)이 높으면 이후 상승이 이어진다 | **LS 프레임에 매수/매도 구분이 있는지 먼저 확인** 후 기록 |
 
 출처: [MAX 효과 NBER](https://nber.org/papers/w14804) · [CXO Advisory 소형주 이벤트](https://www.cxoadvisory.com/?p=30149) · [Nasdaq 역분할 정지 규칙 변경](https://www.sec.gov/files/rules/sro/nasdaq/2026/34-105860.pdf) · [Hunton 역분할 규제 정리](https://hunton.com/insights/legal/recent-nyse-and-nasdaq-regulatory-updates-regarding-reverse-stock-splits) · [ORTEX 공매도 지표](https://public.ortex.com/short-interest) · [StockMarketWatch 공매도 지연](https://stockmarketwatch.com/edu/trading-strategies/swing-trading/short-interest-metrics) · [프리마켓 상하한가 기사](https://news.mtn.co.kr/news-detail/2025092616460319659) · [일중 거래량 계절성 arXiv](https://arxiv.org/pdf/1009.4785)
+
+## H. 후보 점수 항목 변경 (2026-11-25, 사용자 결정)
+- **뺀 것**: ▲ `20일 안 +50% 급등` — 극단 상승 뒤 약세(MAX 효과, G절) 우려. 남은 `60일 안 +50% 급등`도 같은 우려가 있으니 `featurelab` 결과를 보고 판단(지금은 유지).
+- **더한 것 (미검증)**: ▲ `거래 늘고 변동 줄어듦`(5일 거래대금 평균 ≥ 평소 2배 + 5일 변동폭이 20일 평균의 70% 미만 — '거래량이 먼저, 가격은 아직'(H7·H11)의 일봉 근사), ▼ `희석 의심 봉(최근 5일)`(거래 3배↑ + 음봉 + 좁은 범위 — Dilution Tracker 모양(H10)의 일봉 근사).
+- **지운 것**: 옛 `점수별 그날 2배 확률`(5~6점 2.3%·7점↑ 6%) — 항목이 달라져 틀림. 알림에는 점수·이유만 쓰고 '확률은 재검증 중'이라 표시. **`featurelab` 의 '점수별 급등률' 표가 나오면 그 값으로 다시 넣는다.**
+- 새 항목이 정말 맞는지는 `python -m pennybot2 featurelab DB경로` 로 확인한다 (항목마다 급등률·배수·기간 3등분·신뢰구간, '일관됨'은 세 기간 모두 기준보다 높고 신뢰구간 하한이 기준보다 높을 때만).

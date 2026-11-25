@@ -27,7 +27,8 @@ def synth(seed, n=80, start=1.0):
     return rows
 
 
-def test_nightscore_matches_old_implementation():
+def test_nightscore_matches_old_except_the_deliberate_changes():
+    """바꾼 것(2026-11-25)만 다르고 나머지 항목은 기존 구현과 정확히 같아야 한다."""
     root = str(Path(__file__).resolve().parents[2])
     sys.path.insert(0, root)
     try:
@@ -39,9 +40,46 @@ def test_nightscore_matches_old_implementation():
     checked = 0
     for seed in range(60):
         rows = synth(seed, start=random.Random(seed).uniform(0.1, 6))
-        assert nightscore.score(rows) == old.score(rows)
-        checked += nightscore.score(rows) is not None
-    assert checked > 10                                    # 비교가 의미 있게 점수가 나온 경우가 충분히 있음
+        new, o = nightscore.features(rows), old.features(rows)
+        if o is None:
+            assert new is None
+            continue
+        removed, added_up, added_down = set(nightscore.REMOVED), {"거래 늘고 변동 줄어듦"}, {"희석 의심 봉(최근 5일)"}
+        assert {k: v for k, v in new["up"].items() if k not in added_up} == {k: v for k, v in o["up"].items() if k not in removed}
+        assert {k: v for k, v in new["down"].items() if k not in added_down} == o["down"]
+        assert "20일 안 +50% 급등" not in new["up"] and "20일 안 +50% 급등" in o["up"]
+        checked += 1
+    assert checked > 30
+
+
+def test_new_factors_trigger_on_constructed_cases():
+    base = synth(3, n=80, start=1.0)
+    # 최근 5일: 거래대금 크게 늘고 하루 변동폭은 작게 → '거래 늘고 변동 줄어듦'
+    rows = list(base)
+    for i in range(-5, 0):
+        d, o, h, l, c, v = rows[i]
+        rows[i] = (d, c, c * 1.004, c * 0.996, c, v * 40)
+    f = nightscore.features(rows)
+    assert f["up"]["거래 늘고 변동 줄어듦"] is True
+    # 같은 날들의 변동폭이 크면(압축 아님) 꺼진다
+    wide = list(base)
+    for i in range(-5, 0):
+        d, o, h, l, c, v = wide[i]
+        wide[i] = (d, c, c * 1.3, c * 0.7, c, v * 40)
+    assert nightscore.features(wide)["up"]["거래 늘고 변동 줄어듦"] is False
+    # 희석 의심 봉: 거래 3배↑ + 음봉 + 좁은 범위
+    d, o, h, l, c, v = base[-2]
+    dil = list(base)
+    dil[-2] = (d, c * 1.03, c * 1.032, c * 0.998, c, v * 60 + 5e6)
+    assert nightscore.features(dil)["down"]["희석 의심 봉(최근 5일)"] is True
+    assert nightscore.features(base)["down"]["희석 의심 봉(최근 5일)"] in (True, False)
+
+
+def test_stale_probability_table_removed_and_alert_text_has_no_percent():
+    assert not hasattr(nightscore, "P2X") and not hasattr(nightscore, "p2x")
+    sig = {"s": "ABC", "ts": 0, "kind": "surge", "value": 12.0, "text": "ABC +12%"}
+    out = enrich(sig, {"s": "ABC", "score": 6, "why": ["a"], "minus": []})
+    assert "2배 확률" not in out["text"] and "재검증" in out["text"]
 
 
 def test_score_none_when_short_or_out_of_range():

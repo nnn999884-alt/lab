@@ -1,14 +1,15 @@
-"""오늘 급등 후보 — 전날까지 일봉 모양 점수 (기존 pennybot/nightscore.py 규칙을 그대로 옮김, 2026-11-15 검증).
+"""오늘 급등 후보 — 전날까지 일봉 모양 점수. 기존 pennybot/nightscore.py 규칙(2026-11-15 검증)에서 2026-11-25 에 바꿈:
+  · 뺀 것: ▲ '20일 안 +50% 급등' (극단 상승 뒤 약세 우려)
+  · 더한 것(미검증): ▲ '거래 늘고 변동 줄어듦', ▼ '희석 의심 봉(최근 5일)' — 조사 자료(LESSONS E·F절)에 근거
 점수 = ▲(급등 전날 흔했던 모양) 개수 − ▼(드물었던 모양) 개수. 5점 이상이면 후보.
-그날 고가 2배 확률: 3~4점 0.5~1.0% · 5~6점 2.3~2.5% · 7점↑ 5.9~6.5% (전체 0.15%)."""
+옛 규칙의 그날 고가 2배 확률(5~6점 2.3~2.5% · 7점↑ 6%)은 항목이 달라져 더는 맞지 않으므로 쓰지 않는다 — featurelab 로 다시 잰다."""
 from __future__ import annotations
 
 MIN_SCORE = 5
-P2X = {5: 2.3, 6: 2.3, 7: 6.0}      # 점수별 '그날 고가 2배' 확률 % (알림 문구용)
-
-
-def p2x(score: int) -> float:
-    return P2X[7] if score >= 7 else P2X.get(score, 0.0)
+# 2026-11-25: 기존의 '점수별 그날 2배 확률'(P2X) 표는 옛 항목 조합으로 잰 값이라 항목을 바꾸면 틀린다 → 삭제.
+# 새 조합의 확률은 `python -m pennybot2 featurelab DB경로` 로 다시 잰 뒤에만 알림에 쓴다.
+REMOVED = {"20일 안 +50% 급등": "MAX 효과(극단 상승 뒤 약세) 우려로 가점에서 뺌 — LESSONS.md G절"}
+UNVERIFIED = {"거래 늘고 변동 줄어듦", "희석 의심 봉(최근 5일)"}      # 근거는 조사 자료뿐, featurelab 로 검증 전
 
 
 def features(rows: list[tuple]) -> dict | None:
@@ -32,7 +33,7 @@ def features(rows: list[tuple]) -> dict | None:
         "액면병합 흔적": any(c[i] / c[i - 1] >= 3 for i in range(1, n) if c[i - 1]),
         "5일 거래 늘어남": sum(dv[-5:]) / 5 >= 2 * adv,
         "$0.5 미만": pc < 0.5,
-        "20일 안 +50% 급등": any(big[-20:]),
+        "거래 늘고 변동 줄어듦": sum(dv[-5:]) / 5 >= 2 * adv and sum((h[i] - l[i]) / c[i] for i in range(n - 5, n) if c[i]) / 5 < 0.7 * width20,
         "전날 +10%↑": pc / c[-2] - 1 >= 0.1,
         "거래 터졌는데 안 오른 날": any(dv[-k] >= 5 * adv and abs(c[-k] / c[-k - 1] - 1) < 0.1 for k in range(1, 11)),
         "60일 안 +50% 급등": any(big),
@@ -42,6 +43,7 @@ def features(rows: list[tuple]) -> dict | None:
         "20일 박스": rng(n - 20, n) < 0.4,
         "60일 고점 근처": pc >= 0.9 * max(h),
         "변동 작음": width20 <= 0.05,
+        "희석 의심 봉(최근 5일)": any(dv[-k] >= 3 * adv and c[-k] < o[-k] and (h[-k] - l[-k]) / c[-k] < 0.5 * width20 for k in range(1, 6) if c[-k]),
     }
     return {"up": up, "down": down, "pc": pc}
 

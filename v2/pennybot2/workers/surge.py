@@ -36,9 +36,8 @@ def enrich(sig: dict, cand: dict | None) -> dict:
     """전날 밤 후보였던 종목이면 신호에 점수와 이유를 붙인다."""
     if not cand:
         return sig
-    from ..scoring.nightscore import p2x
     sig = dict(sig)
-    sig["text"] += f"\n★ 어젯밤 후보 {cand['score']}점 (그날 2배 확률 약 {p2x(cand['score']):.1f}%) — " + ", ".join(cand["why"][:4])
+    sig["text"] += f"\n★ 어젯밤 후보 {cand['score']}점 (확률은 새 항목으로 재검증 중) — " + ", ".join(cand["why"][:4])
     sig["candidate_score"] = cand["score"]
     return sig
 

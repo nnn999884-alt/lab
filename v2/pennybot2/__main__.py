@@ -5,6 +5,7 @@
   hub                 데이터가 모이는 허브
   ls                  LS증권 실시간 시세 일꾼 (.env 에 LS_APP_KEY, LS_APP_SECRET 필요)
   grade DB경로        저장된 알림을 1분봉으로 채점 (등급·종류·세션별, 대조군·기간 3등분 비교). 기존 pennybot 의 market.db 도 읽음
+  featurelab DB경로   일봉 점수 항목별로 급등을 실제로 늘렸는지 검증 (기간 3등분·신뢰구간)
   daily               일봉(야후) 동기화 + 전날 밤 점수로 오늘 급등 후보 선정
   surge | notify      감지 일꾼 / 알림 일꾼
   replay [종목 ...]   저장된 1분봉을 허브로 재생 (허브·감지·알림이 켜져 있어야 함)"""
@@ -66,6 +67,9 @@ def main(argv: list[str]) -> int:
     elif role == "grade":
         from .grading import run as grading
         return grading.main(argv[1:])
+    elif role == "featurelab":
+        from .scoring import featurelab
+        return featurelab.main(argv[1:])
     elif role == "daily":
         from .workers import daily
         daily.run(cfg)

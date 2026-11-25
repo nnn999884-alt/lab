@@ -24,6 +24,7 @@
 - `python -m pytest -q` 테스트
 - `python -m pennybot2 run` 허브 + 감지 + 알림을 각각 따로 켬 → 다른 창에서 `python -m pennybot2 replay` 로 저장된 1분봉 재생
 - `python -m pennybot2 status` 지금 상태(일꾼 응답·마지막 체결·종목 수). 로그는 `state/logs/<일꾼>.log`
+- `python -m pennybot2 featurelab DB경로` 일봉 점수 항목이 급등을 실제로 늘렸는지 검증
 - `python -m pennybot2 grade DB경로` 저장된 알림을 같은 기준으로 채점 (기존 봇의 `market.db` 도 가능)
 - 개별 실행: `hub` · `ls`(LS 시세) · `daily`(일봉·후보) · `surge` · `notify` · `replay [종목…]`
 
