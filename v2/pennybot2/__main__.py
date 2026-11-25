@@ -9,6 +9,7 @@
   featurelab DB경로   일봉 점수 항목별로 급등을 실제로 늘렸는지 검증 (기간 3등분·신뢰구간)
   daily               일봉(야후) 동기화 + 전날 밤 점수로 오늘 급등 후보 선정
   ignite              조기 감지: 거래가 붙기 시작하는 순간을 체결 단위로 (규칙 여러 개 동시 기록, 하나만 알림)
+  precursor DB경로    반응(가격) 전에 나타나는 징후 찾기: 급등 시작 N분 전 특징 비교(연구 A) + 같은 알림 수에서 기존 방식과 예측 비교(연구 B)
   backtest-ignite DB경로  과거 1분봉으로 조기 감지(+ 비교용 늦은 감지)를 돌려 신호 저장 → grade --alerts-db 로 채점
   surge | notify      감지 일꾼 / 알림 일꾼
   replay [종목 ...]   저장된 1분봉을 허브로 재생 (허브·감지·알림이 켜져 있어야 함)"""
@@ -58,6 +59,9 @@ def main(argv: list[str]) -> int:
     elif role == "monitor":
         from .workers import monitor
         monitor.run(cfg)
+    elif role == "precursor":
+        from .research import precursor
+        return precursor.main(argv[1:])
     elif role == "backtest-ignite":
         from .workers import ignite
         return ignite.main_backtest(argv[1:])
