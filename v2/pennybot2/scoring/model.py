@@ -1,6 +1,6 @@
 """급등 후보 확률 모델 (기존 '항목 개수 세기' 점수를 대체하는 새 로직).
-- 일봉에서 뽑은 숫자 특징(거래대금 배수·수익률·변동폭·고점 대비·급등 이력 등)을 로지스틱 회귀에 넣어 '다음 날 급등 확률'을 학습한다.
-  항목의 방향(가점/감점)을 사람이 정하지 않는다 — 데이터가 부호를 정한다 (예: 최근 급등 이력이 좋은지 나쁜지).
+- 일봉에서 뽑은 숫자 특징(거래대금 배수·수익률·변동폭·고점 대비·20일 고점 돌파·갭 빈도 등. 급등 횟수 기준은 쓰지 않음)을 로지스틱 회귀에 넣어 '다음 날 급등 확률'을 학습한다.
+  항목의 방향(가점/감점)을 사람이 정하지 않는다 — 데이터가 부호를 정한다.
 - 시간순으로 나눠 학습(앞 60%) → 규제 강도 선택(다음 20%) → 시험(마지막 20%). 시험 결과를 기존 규칙 점수(nightscore)와 같은 기준으로 비교.
 - 채택 조건: 시험에서 ① 확률 손실(log-loss)이 '그냥 평균 비율'보다 낫고 ② 하루 상위 K 종목 안에 급등주를 규칙 점수보다 많이 넣고
   ③ 확률 교정이 크게 어긋나지 않을 때만. 아니면 채택하지 않고 이유를 말한다.
@@ -19,13 +19,14 @@ PRICE_RANGE = (0.05, 10.0)
 WARMUP = 61                       # 특징에 최근 60일이 필요
 TOPK = (56, 200)                  # 기존 평가와 같은 하루 상위 K
 FEATS = ["lpx", "ladv", "vx1", "vx5", "ret1", "ret5", "ret20", "w1", "w5", "w20", "comp", "dd60", "up60",
-         "pos1", "wick1", "redvol", "big20", "big60", "zero20", "box5", "box20"]
+         "pos1", "wick1", "redvol", "zero20", "box5", "box20", "brk20", "gap20", "red3", "volcomp"]
+# 2026-11-25 사용자 결정: '20일·60일 급등 횟수'(big20·big60) 기준은 쓰지 않는다 (극단 상승 뒤 약세 우려). 대신 brk20·gap20·red3·volcomp 를 넣음.
 LABELS = {
     "lpx": "낮은 가격", "ladv": "평소 거래대금", "vx1": "전날 거래대금 배수", "vx5": "5일 거래대금 배수",
     "ret1": "전날 등락", "ret5": "5일 등락", "ret20": "20일 등락", "w1": "전날 변동폭", "w5": "5일 변동폭", "w20": "20일 변동폭",
     "comp": "변동폭 압축", "dd60": "60일 고점 근처", "up60": "60일 저점 대비 상승", "pos1": "전날 종가 위치",
-    "wick1": "전날 윗꼬리", "redvol": "거래 터진 음봉", "big20": "20일 안 급등 횟수", "big60": "60일 안 급등 횟수",
-    "zero20": "거래 없는 날 비중", "box5": "5일 박스 폭", "box20": "20일 박스 폭"}
+    "wick1": "전날 윗꼬리", "redvol": "거래 터진 음봉", "zero20": "거래 없는 날 비중", "box5": "5일 박스 폭", "box20": "20일 박스 폭",
+    "brk20": "20일 고점 돌파 정도", "gap20": "갭 잦음(20일 평균 갭)", "red3": "최근 3일 음봉 수", "volcomp": "거래 늘며 변동 줄어듦"}
 
 
 def _roll(x: np.ndarray, k: int, fn) -> np.ndarray:
@@ -51,8 +52,8 @@ def features_matrix(rows: list[tuple], surge: float = 2.0):
         adv = _roll(dv, 20, np.mean)                       # adv[j] = dv[j-19..j] 평균
         w = (h - l) / c
         rng = np.where(h > l, h - l, np.nan)
-        big = np.zeros(n)
-        big[1:] = (h[1:] / c[:-1] - 1 >= 0.5)
+        gap = np.zeros(n)
+        gap[1:] = np.abs(o[1:] / c[:-1] - 1)
         t = np.arange(WARMUP, n + 1)                       # 예측 대상 날 (n 이면 내일)
         j = t - 1                                          # 전날
         advp = adv[j - 1] + 1                              # 전날 제외 20일 평균 거래대금
@@ -67,12 +68,15 @@ def features_matrix(rows: list[tuple], surge: float = 2.0):
             "pos1": np.nan_to_num((c[j] - l[j]) / rng[j], nan=0.5),
             "wick1": np.nan_to_num((h[j] - np.maximum(o[j], c[j])) / rng[j], nan=0.0),
             "redvol": (c[j] < o[j]) * vx1,
-            "big20": _roll(big, 20, np.sum)[j], "big60": _roll(big, 60, np.sum)[j],
+            "brk20": np.log(c[j] / _roll(h, 20, np.max)[j - 1]),
+            "gap20": _roll(np.clip(gap, 0, 2), 20, np.mean)[j],
+            "red3": _roll((c < o).astype(float), 3, np.sum)[j],
             "zero20": _roll((v == 0).astype(float), 20, np.mean)[j],
             "box5": np.log(_roll(h, 5, np.max)[j] / _roll(l, 5, np.min)[j]),
             "box20": np.log(_roll(h, 20, np.max)[j] / _roll(l, 20, np.min)[j]),
         }
         cols["comp"] = np.log((cols["w5"] + 1e-4) / (cols["w20"] + 1e-4))
+        cols["volcomp"] = cols["vx5"] * np.clip(-cols["comp"], 0, None)       # 거래는 늘고 변동폭은 줄 때만 커짐
         X = np.column_stack([cols[f] for f in FEATS])
         y = np.full(len(t), np.nan)
         lab = t < n

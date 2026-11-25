@@ -1,5 +1,5 @@
 """오늘 급등 후보 — 전날까지 일봉 모양 점수. 기존 pennybot/nightscore.py 규칙(2026-11-15 검증)에서 2026-11-25 에 바꿈:
-  · 뺀 것: ▲ '20일 안 +50% 급등' (극단 상승 뒤 약세 우려)
+  · 뺀 것: ▲ '20일 안 +50% 급등'·'60일 안 +50% 급등' (극단 상승 뒤 약세 우려)
   · 더한 것(미검증): ▲ '거래 늘고 변동 줄어듦', ▼ '희석 의심 봉(최근 5일)' — 조사 자료(LESSONS E·F절)에 근거
 점수 = ▲(급등 전날 흔했던 모양) 개수 − ▼(드물었던 모양) 개수. 5점 이상이면 후보.
 옛 규칙의 그날 고가 2배 확률(5~6점 2.3~2.5% · 7점↑ 6%)은 항목이 달라져 더는 맞지 않으므로 쓰지 않는다 — featurelab 로 다시 잰다."""
@@ -8,7 +8,8 @@ from __future__ import annotations
 MIN_SCORE = 5
 # 2026-11-25: 기존의 '점수별 그날 2배 확률'(P2X) 표는 옛 항목 조합으로 잰 값이라 항목을 바꾸면 틀린다 → 삭제.
 # 새 조합의 확률은 `python -m pennybot2 featurelab DB경로` 로 다시 잰 뒤에만 알림에 쓴다.
-REMOVED = {"20일 안 +50% 급등": "MAX 효과(극단 상승 뒤 약세) 우려로 가점에서 뺌 — LESSONS.md G절"}
+REMOVED = {"20일 안 +50% 급등": "MAX 효과(극단 상승 뒤 약세) 우려로 가점에서 뺌 — LESSONS.md G절",
+           "60일 안 +50% 급등": "같은 종류의 기준이라 함께 뺌 (사용자 결정 2026-11-25)"}
 UNVERIFIED = {"거래 늘고 변동 줄어듦", "희석 의심 봉(최근 5일)"}      # 근거는 조사 자료뿐, featurelab 로 검증 전
 
 
@@ -23,7 +24,6 @@ def features(rows: list[tuple]) -> dict | None:
     dv = [v[i] * c[i] for i in range(n)]
     adv = sum(dv[-21:-1]) / 20 + 1
     rng = lambda a, b: max(h[a:b]) / min(l[a:b]) - 1 if min(l[a:b]) > 0 else 0
-    big = [h[i] / c[i - 1] - 1 >= 0.5 for i in range(1, n) if c[i - 1]]
     width20 = sum((h[i] - l[i]) / c[i] for i in range(n - 20, n) if c[i]) / 20
     up = {
         "전날 거래 평소 3배↑": dv[-1] >= 3 * adv,
@@ -36,7 +36,6 @@ def features(rows: list[tuple]) -> dict | None:
         "거래 늘고 변동 줄어듦": sum(dv[-5:]) / 5 >= 2 * adv and sum((h[i] - l[i]) / c[i] for i in range(n - 5, n) if c[i]) / 5 < 0.7 * width20,
         "전날 +10%↑": pc / c[-2] - 1 >= 0.1,
         "거래 터졌는데 안 오른 날": any(dv[-k] >= 5 * adv and abs(c[-k] / c[-k - 1] - 1) < 0.1 for k in range(1, 11)),
-        "60일 안 +50% 급등": any(big),
     }
     down = {
         "5일 박스": rng(n - 5, n) < 0.2,

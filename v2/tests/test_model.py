@@ -145,3 +145,52 @@ def test_fit_converges_on_rare_skewed_events():
         w = M.fit_logistic(Z, y, l2)
         assert np.isfinite(w).all() and w[1] > 0
         assert M.logloss(y, M.predict(w, Z)) < M.logloss(y, np.full(n, y.mean()))
+
+
+def test_surge_count_criteria_are_gone_and_new_ones_exist():
+    """사용자 결정: 20일·60일 급등 횟수 기준은 모델에 없어야 하고, 대신 새 기준 4개가 있어야 한다."""
+    assert not any(f in M.FEATS for f in ("big20", "big60"))
+    assert not any("급등 횟수" in v for v in M.LABELS.values())
+    assert {"brk20", "gap20", "red3", "volcomp"} <= set(M.FEATS) and set(M.FEATS) == set(M.LABELS)
+    from pennybot2.scoring import nightscore
+    f = nightscore.features([tuple(r) for r in walk(4, 90)])
+    assert "20일 안 +50% 급등" not in f["up"] and "60일 안 +50% 급등" not in f["up"]
+    # 급등 이력을 크게 바꿔도(최근 +80% 급등일 추가) 두 모델의 특징 이름 구성은 같고, 급등 횟수 특징이 따로 생기지 않는다
+    rows = [list(r) for r in walk(4, 90)]
+    rows[-10][2] = rows[-11][4] * 1.8
+    assert len(M.features_matrix([tuple(r) for r in rows])[1][0]) == len(M.FEATS)
+
+
+def test_new_features_values():
+    rows = [list(r) for r in walk(6, 120)]
+    # 전날 종가를 직전 20일 최고가보다 확 높게 → 돌파 정도(brk20) 양수·큼
+    prior_hi = max(r[2] for r in rows[-21:-1])
+    rows[-1][4] = prior_hi * 1.2
+    rows[-1][2] = max(rows[-1][2], rows[-1][4])
+    d, X, y, ok = M.features_matrix([tuple(r) for r in rows])
+    k = lambda name: M.FEATS.index(name)
+    assert X[-1][k("brk20")] == pytest.approx(np.log(1.2), rel=0.05)
+    # 최근 3일 모두 음봉으로 → red3 = 3
+    for i in (-3, -2, -1):
+        rows[i][1], rows[i][4] = rows[i][4] * 1.02, rows[i][4]
+        rows[i][2] = max(rows[i][2], rows[i][1])
+    d, X, y, ok = M.features_matrix([tuple(r) for r in rows])
+    assert X[-1][k("red3")] == 3
+    # 갭이 잦으면 gap20 이 커짐: 매일 시가를 전날 종가보다 10% 위로
+    g = [list(r) for r in walk(6, 120)]
+    for i in range(1, len(g)):
+        g[i][1] = g[i - 1][4] * 1.10
+        g[i][2] = max(g[i][2], g[i][1])
+    quiet = M.features_matrix([tuple(r) for r in walk(6, 120)])[1][-1][k("gap20")]
+    gappy = M.features_matrix([tuple(r) for r in g])[1][-1][k("gap20")]
+    assert gappy > 0.09 and quiet < 0.05
+    # volcomp: 거래는 늘고 변동폭은 줄 때만 양수
+    a = [list(r) for r in walk(6, 120)]
+    for i in range(-5, 0):
+        a[i][5] *= 30
+        a[i][2], a[i][3] = a[i][4] * 1.002, a[i][4] * 0.998
+    v_on = M.features_matrix([tuple(r) for r in a])[1][-1][k("volcomp")]
+    b = [list(r) for r in a]
+    for i in range(-5, 0):
+        b[i][2], b[i][3] = b[i][4] * 1.4, b[i][4] * 0.7              # 변동폭이 크면 0
+    assert v_on > 1.0 and M.features_matrix([tuple(r) for r in b])[1][-1][k("volcomp")] == 0
