@@ -38,3 +38,9 @@
 - 일꾼 하나가 죽거나 느려져도 다른 일꾼은 계속 돈다 — 일꾼끼리 직접 호출 금지, 허브 메시지만.
 - **규칙을 만들기 전에 채점기부터**: 모든 알림·규칙은 `python -m pennybot2 grade` 로 같은 기준(다음 봉 진입·같은 길이 창·비용·대조군·기간 3등분)으로 채점한다. 표본이 부족하거나 기간별로 흔들리면 '효과 있음'이라고 쓰지 않는다.
 - 외부 서비스 형식(LS·야후)은 **순수 함수로 해석하고 테스트**로 고정한다 (프레임 해석·마스터 걸러내기처럼).
+
+## D. 외부 자료 조사 (2026-11-25, 웹 검색 3건 — 얕은 조사임)
+- **LS 프리·데이마켓 제공 여부: 검색으로는 확인 못 함.** GSC(체결)·GSH(호가)·g3101·g3190 코드와 `wss://openapi.ls-sec.co.kr:9443/websocket` 주소는 제3자 오픈소스 코드와 일치(우리 코드와 같음). 토큰 만료 안내가 문서마다 다르다는 지적도 있어 매일 07:00 KST 갱신 처리는 유지. → **확인 방법: 실제 PC 에서 시간대별 틱 수를 세는 것**(`pennybot2 status` 의 마지막 체결 시각, 감시 일꾼의 시세 끊김 알림 기록). 공식 확인은 LS 포털/고객센터.
+- **페니주 급등 이후 반전 근거**: 엄밀한 연구는 못 찾음. 약한 근거만 있음 — $5 미만 종목은 평균 거래대금 5만 달러↑로 걸러도 연 −8.6%p 뒤처지고 낙폭이 약 2배(Alpha Architect, 가상 수익), 소형주 펌프앤덤프는 이듬주 급반전(EFMA 2017). 모두 우리 '급등 직후 알림' 규칙을 직접 검증해 주지 않음 → **우리 데이터로 채점(`grade`)하는 수밖에 없다**는 결론을 재확인.
+- **거짓 신호 줄이기**: 거래량 급증 탐지는 거래가 거의 없는 종목의 사소한 증가를 과다 경보하기 쉬워 가격·거래량 임계값을 종목 특성에 맞춰야 한다는 연구(arXiv 2503.08692, 암호화폐 대상)가 있음 → 새 감지 규칙에는 **최소 거래대금 하한**을 두고 채점 때 하한별로 비교.
+- 출처: [pkg.go.dev LS 클라이언트](https://pkg.go.dev/github.com/smallfish06/krsec/internal/ls) · [AlgoLab LS API 실무](https://algolab.co.kr/blog/ls-securities-openapi-rest-order-2026) · [Alpha Architect 저가주](https://alphaarchitect.com/low-priced-stocks/) · [EFMA 2017](https://efmaefm.org/0EFMAMEETINGS/EFMA%20ANNUAL%20MEETINGS/2017-Athens/papers/EFMA2017_0387_fullpaper.pdf) · [arXiv 2503.08692](https://arxiv.org/abs/2503.08692)
