@@ -5,7 +5,7 @@ import subprocess
 import sys
 import time
 
-DEFAULT = ("hub", "surge", "notify", "ls")
+DEFAULT = ("hub", "surge", "notify", "ls", "daily")
 
 
 def supervise(roles=DEFAULT, poll: float = 1.0) -> None:

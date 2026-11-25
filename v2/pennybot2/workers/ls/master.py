@@ -14,7 +14,12 @@ SKIP_WORDS = (" ETF", " ETN", " WARRANT", " WARRANTS", " RIGHT", " RIGHTS", " UN
 
 
 def pick(rows: list[dict], min_price: float, max_price: float) -> list[str]:
-    """마스터 행 → 구독 키(keysymbol) 목록. 기준가(clos)가 범위 밖이면 제외 (기준가 없으면 포함)."""
+    """마스터 행 → 구독 키(keysymbol) 목록."""
+    return [str(r["keysymbol"]).strip() for r in pick_rows(rows, min_price, max_price)]
+
+
+def pick_rows(rows: list[dict], min_price: float, max_price: float) -> list[dict]:
+    """마스터 행 중 쓸 만한 것. 기준가(clos)가 범위 밖이면 제외 (기준가 없으면 포함)."""
     out = []
     for r in rows:
         key = str(r.get("keysymbol") or "").strip()
@@ -29,7 +34,7 @@ def pick(rows: list[dict], min_price: float, max_price: float) -> list[str]:
             clos = 0
         if clos and not (min_price * 0.5 <= clos <= max_price * 2):      # 어제 기준가가 범위에서 많이 먼 종목은 오늘도 대개 범위 밖
             continue
-        out.append(key)
+        out.append(r)
     return out
 
 

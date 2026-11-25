@@ -10,6 +10,8 @@ CREATE TABLE IF NOT EXISTS bars_1m (
     open REAL, high REAL, low REAL, close REAL, volume REAL, PRIMARY KEY (symbol, ts));
 CREATE TABLE IF NOT EXISTS daily_bars (
     symbol TEXT, d TEXT, open REAL, high REAL, low REAL, close REAL, volume REAL, PRIMARY KEY (symbol, d));
+CREATE TABLE IF NOT EXISTS candidates (
+    asof TEXT, symbol TEXT, score INTEGER, why TEXT, minus TEXT, pc REAL, PRIMARY KEY (asof, symbol));
 CREATE TABLE IF NOT EXISTS price_now (symbol TEXT PRIMARY KEY, ts TEXT, last REAL);
 CREATE TABLE IF NOT EXISTS events (
     ts TEXT, symbol TEXT, kind TEXT, text TEXT, value REAL, PRIMARY KEY (ts, symbol, kind));
@@ -45,6 +47,22 @@ class Store:
     def bars(self, symbol: str, limit: int = 390) -> list[sqlite3.Row]:
         return self.db.execute("SELECT * FROM bars_1m WHERE symbol=? ORDER BY ts DESC LIMIT ?",
                                (symbol, limit)).fetchall()[::-1]
+
+    def last_daily(self) -> dict[str, str]:
+        """종목별 마지막 일봉 날짜."""
+        return dict(self.db.execute("SELECT symbol, MAX(d) FROM daily_bars GROUP BY symbol").fetchall())
+
+    def daily_rows(self, symbol: str) -> list[tuple]:
+        return [tuple(r) for r in self.db.execute(
+            "SELECT d, open, high, low, close, volume FROM daily_bars WHERE symbol=? ORDER BY d", (symbol,))]
+
+    def put_candidates(self, asof: str, items: list[dict]) -> None:
+        import json
+        self.db.execute("DELETE FROM candidates WHERE asof=?", (asof,))
+        self.db.executemany("INSERT INTO candidates VALUES (?,?,?,?,?,?)",
+                            [(asof, i["s"], i["score"], json.dumps(i["why"], ensure_ascii=False),
+                              json.dumps(i["minus"], ensure_ascii=False), i["pc"]) for i in items])
+        self.db.commit()
 
     def close(self) -> None:
         self.db.close()

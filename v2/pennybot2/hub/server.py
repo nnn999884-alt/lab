@@ -3,6 +3,7 @@
 
 메시지는 JSON 한 줄: {"op":"pub","topic":"tick","d":{...}} · {"op":"sub","topics":[...]} · {"op":"snap"}
 토픽: tick {s,ts,p,v} · bar {s,ts,o,h,l,c,v} · signal {s,ts,kind,text,value}   (ts = epoch 초)
+      candidates {asof, items:[{s,score,why,minus}]} (마지막 것을 기억해 새 구독자에게 줌)
 """
 from __future__ import annotations
 
@@ -17,6 +18,7 @@ from ..core.sessions import classify
 from ..core.store import Store
 
 log = logging.getLogger(__name__)
+RETAIN = {"candidates"}   # 마지막 메시지를 기억했다가 새로 구독하는 쪽에 바로 준다
 MAX_BACKLOG = 1 << 20      # 구독자 쓰기 대기 1MB 넘으면 그 구독자 메시지는 버림
 
 
@@ -30,6 +32,7 @@ class Hub:
         self.last: dict[str, list] = {}               # symbol -> [ts, price]
         self.clients: dict[asyncio.StreamWriter, set] = {}
         self.dropped = 0
+        self._retained: dict[str, bytes] = {}
         self._bars: list[dict] = []
         self._signals: list[dict] = []
         self._pool = ThreadPoolExecutor(1)
@@ -49,6 +52,8 @@ class Hub:
                         self._on_pub(msg["topic"], msg["d"], line)
                     elif op == "sub":
                         self.clients[writer] = set(msg.get("topics", ()))
+                        for t in self.clients[writer] & self._retained.keys():
+                            writer.write(self._retained[t])
                     elif op == "snap":
                         writer.write((json.dumps({"op": "snap", "last": self.last}) + "\n").encode())
                 except (ValueError, KeyError, AttributeError):
@@ -67,6 +72,8 @@ class Hub:
             self._bars.append(d)
         elif topic == "signal":
             self._signals.append(d)
+        if topic in RETAIN:
+            self._retained[topic] = raw
         for w, topics in list(self.clients.items()):
             if topic in topics:
                 if w.transport.get_write_buffer_size() > MAX_BACKLOG:
@@ -143,7 +150,7 @@ class Hub:
             fut.result(5)
 
     def shutdown(self) -> None:
-        """허브를 끈다 (남은 데이터는 저장하고 접속도 모두 끊는다)."""
+        """허브를 끈다 (남은 데이터는 저장하고 등록된 접속을 끊는다). 테스트·통합용 — 실제 운영에서 프로세스가 끝나면 OS 가 소켓을 모두 닫는다."""
         if self._loop:
             def _close():
                 for w in list(self.clients):

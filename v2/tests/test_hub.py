@@ -71,6 +71,7 @@ def test_client_reconnects_after_hub_restart(tmp_path):
     got = []
     sub = HubClient(port, ["tick"], lambda t, d: got.append(d))
     assert sub.connected.wait(3)
+    assert wait(lambda: any(h.clients.values()))      # 허브가 구독을 등록한 뒤에 끈다 (등록 전이면 소켓이 안 닫힘)
     h.shutdown()
     assert wait(lambda: not sub.connected.is_set(), 10)
     h2 = Hub(tmp_path / "m.db", port=port, flush_sec=0.2).start_in_thread()    # 같은 주소로 재시작
