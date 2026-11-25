@@ -63,10 +63,12 @@ def test_token_expiry_is_next_0700_kst():
 
 
 
-def test_ls_feed_end_to_end_with_fake_server(tmp_path):
+def test_ls_feed_end_to_end_with_fake_server(tmp_path, monkeypatch):
     """가짜 LS 웹소켓 서버: 구독 메시지를 받으면 체결 프레임 4개를 보낸다 → 허브 구독자가 tick 4개, bar 1개를 받는다."""
     import asyncio
     import time
+    # 가짜 프레임의 체결 시각은 고정된 과거 값이라 시각 보정(수신 시각 대체)을 끈다 — 보정은 test_ops 에서 따로 검증
+    monkeypatch.setattr(frames, "reconcile_ts", lambda tick, now: False)
 
     import websockets
 
@@ -105,7 +107,7 @@ def test_ls_feed_end_to_end_with_fake_server(tmp_path):
     hub = Hub(tmp_path / "m.db", port=0, flush_sec=0.2).start_in_thread()
     got = []
     sub = HubClient(hub.port, ["tick", "bar"], lambda t, d: got.append((t, d)))
-    sub.connected.wait(3)
+    assert sub.connected.wait(10)          # 부하가 큰 전체 실행에서 구독 연결이 늦으면 앞선 체결을 놓쳐 간헐 실패했음
 
     class FakeAuth:
         def token(self, force=False):
@@ -118,7 +120,7 @@ def test_ls_feed_end_to_end_with_fake_server(tmp_path):
     threading.Thread(target=ls_feed.run, daemon=True, kwargs=dict(
         cfg=cfg, ws_url=f"ws://127.0.0.1:{box['port']}", auth=FakeAuth(), keys_fn=lambda: ["82ABC"])).start()
 
-    end = time.time() + 6
+    end = time.time() + 15
     while time.time() < end and sum(1 for t, _ in got if t == "tick") < 4:
         time.sleep(0.05)
     kinds = [t for t, _ in got]
