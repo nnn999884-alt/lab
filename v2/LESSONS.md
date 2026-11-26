@@ -39,76 +39,46 @@
 - **규칙을 만들기 전에 채점기부터**: 모든 알림·규칙은 `python -m pennybot2 grade` 로 같은 기준(다음 봉 진입·같은 길이 창·비용·대조군·기간 3등분)으로 채점한다. 표본이 부족하거나 기간별로 흔들리면 '효과 있음'이라고 쓰지 않는다.
 - 외부 서비스 형식(LS·야후)은 **순수 함수로 해석하고 테스트**로 고정한다 (프레임 해석·마스터 걸러내기처럼).
 
-## D. 외부 자료 조사 (2026-11-25, 웹 검색 3건 — 얕은 조사임)
-- **LS 프리·데이마켓 제공 여부: 검색으로는 확인 못 함.** GSC(체결)·GSH(호가)·g3101·g3190 코드와 `wss://openapi.ls-sec.co.kr:9443/websocket` 주소는 제3자 오픈소스 코드와 일치(우리 코드와 같음). 토큰 만료 안내가 문서마다 다르다는 지적도 있어 매일 07:00 KST 갱신 처리는 유지. → **확인 방법: 실제 PC 에서 시간대별 틱 수를 세는 것**(`pennybot2 status` 의 마지막 체결 시각, 감시 일꾼의 시세 끊김 알림 기록). 공식 확인은 LS 포털/고객센터.
-- **페니주 급등 이후 반전 근거**: 엄밀한 연구는 못 찾음. 약한 근거만 있음 — $5 미만 종목은 평균 거래대금 5만 달러↑로 걸러도 연 −8.6%p 뒤처지고 낙폭이 약 2배(Alpha Architect, 가상 수익), 소형주 펌프앤덤프는 이듬주 급반전(EFMA 2017). 모두 우리 '급등 직후 알림' 규칙을 직접 검증해 주지 않음 → **우리 데이터로 채점(`grade`)하는 수밖에 없다**는 결론을 재확인.
-- **거짓 신호 줄이기**: 거래량 급증 탐지는 거래가 거의 없는 종목의 사소한 증가를 과다 경보하기 쉬워 가격·거래량 임계값을 종목 특성에 맞춰야 한다는 연구(arXiv 2503.08692, 암호화폐 대상)가 있음 → 새 감지 규칙에는 **최소 거래대금 하한**을 두고 채점 때 하한별로 비교.
-- 출처: [pkg.go.dev LS 클라이언트](https://pkg.go.dev/github.com/smallfish06/krsec/internal/ls) · [AlgoLab LS API 실무](https://algolab.co.kr/blog/ls-securities-openapi-rest-order-2026) · [Alpha Architect 저가주](https://alphaarchitect.com/low-priced-stocks/) · [EFMA 2017](https://efmaefm.org/0EFMAMEETINGS/EFMA%20ANNUAL%20MEETINGS/2017-Athens/papers/EFMA2017_0387_fullpaper.pdf) · [arXiv 2503.08692](https://arxiv.org/abs/2503.08692)
+## E. 조사에서 나온 가설과 현재 상태 (웹·학술·커뮤니티·타봇·증권사 조사를 합친 표)
+2026-11-25~26 에 웹 검색 약 30건으로 모은 것을 한 곳에 합쳤다(옛 D·F·G·N·O·P·R 절을 이 절로 통합). **소형주 급등을 미리 알려 준다고 직접 검증한 자료는 하나도 못 찾았다** — 대부분 벤더·교육 사이트·일화다. 아래는 전부 '가설'이고, '상태'는 **우리 실제 데이터 결과(Q·S절)** 로만 정한다.
 
-## E. 초소형주 급등 패턴 조사 (2026-11-25, 웹 검색 4건) — **사실이 아니라 '검증할 가설'**
-엄밀한 연구(논문)는 못 찾음. 아래 수치는 대부분 트레이딩 교육 사이트·벤더 자료이고 출처끼리 충돌하거나 방법을 알 수 없다. 전부 `grade` 로 우리 데이터에서 확인하기 전에는 규칙으로 쓰지 않는다.
-
-**자료가 공통으로 말하는 급등 모양**: 유통 주식 수 적음(20M 미만 또는 10M 이하) + 뚜렷한 재료(뉴스) + 거래량 급증 + 프리마켓 고점 돌파. 재료 없이 움직이는 종목은 되돌림·조작 가능성이 높다고 함.
-
-| # | 가설 | 자료의 주장(미검증) | 우리가 확인하는 법 |
+| # | 가설 | 근거 수준 | 상태 (우리 실제 데이터) |
 |---|---|---|---|
-| H1 | 유통 주식 수가 작을수록 급등 폭·반전 폭이 모두 크다 | float 20M↓/10M↓ 구간 | 마스터 `share` 로 구간을 나눠 `grade` 비교 (5단계 신호에 float 기록) |
-| H2 | 회전율(하루 거래량/유통주식) ≥ 1 이면 관심 폭발 | 회전율 100%↑ | 신호 시점 누적 회전율 기록 후 구간별 채점 |
-| H3 | 상대거래량(RVOL) 기준: 1.5~2배(약함)~30일 평균 5배↑ | 자료마다 다름 | 임계값을 여러 개 두고 같은 기간으로 채점 — 한 값만 고르지 않음 |
-| H4 | **뉴스가 있는 급등이 없는 급등보다 유지된다** | 뉴스 없는 갭은 실패율 높음 | 뉴스 일꾼(5-3) 완성 후 '뉴스 유무'로 갈라 채점 |
-| H5 | **급등 직후 증자·ATM·shelf 가 나오면 급락** | MMAT −42%, CTM·PAVS 사례(일화) | SEC 공시 일꾼으로 신호 후 24h 내 424B/S-3/8-K 유무를 기록해 채점 → 맞으면 '희석 위험' 경고 |
-| H6 | 갭상승 후 되돌림이 흔하다 | 일봉 3,000건: 갭 +20%↑ 중 당일 전날 종가까지 되돌린 비율 18.3%, +10%↑ 갭은 시가 대비 평균 −1.07% 마감, 26% 갭 메움 / 벤더 대시보드 '소형주 70.4% 페이드'(방법 불명) / '뉴스 있는 +4%↑ 갭 30분 62~68% 이어짐'(논문 못 찾음) | 우리 1분봉으로 세션·갭 구간별 직접 계산 |
-| H7 | **급등 직전 거래량·체결 건수·스프레드에 이상이 먼저 나타난다** (뉴스와 무관한 경우도 많음) | arXiv 2011.04939: 장중 급등(jump) 전 거래량·체결 수·스프레드가 비정상 | 틱에서 체결 건수·분당 거래대금 가속을 기록, 호가(GSH)로 스프레드 → 신호 전 구간 비교 |
-| H8 | 직전 가격 범위를 돌파하면 소형주에서 거래량이 이례적으로 늘어난다 | 52주 고점·저점 돌파 연구(원문 확인 필요) | 20일·60일 고점 돌파 여부를 신호 속성으로 기록 |
-| H9 | 거래량이 늘어도 가격이 안 따라 움직이는 경우가 많다 → 거래량만으로는 거짓 신호 | Review of Economic Studies 2018 | 거래량 조건 단독 vs 거래량+가격 조건 비교 |
+| H1 | 유통(발행)주식이 작을수록 급등·반전 폭이 모두 크다 | 벤더·교육 | 미검증 — 신호에 발행주식·시총을 아직 기록하지 않음(LS 마스터 `share`·`marketcap` 가 있음). 단 `share` 는 발행주식이지 float 이 아님 |
+| H2 | 회전율(하루 거래량/유통주식) ≥1 이면 관심 폭발 | 벤더 | 미검증 |
+| H3 | 상대거래량(RVOL)이 급등을 가른다 (기준: 1.5~5배, 자료마다 다름) | 벤더 | **부분 확인** — `precursor` 에서 3·5분 거래대금 배수가 정의를 바꿔도 '1분 전부터' 일관(S절). 단 평소에도 흔해 알림 정밀도는 안 오름 |
+| H4 | 뉴스가 있는 급등이 없는 급등보다 유지된다 | 벤더, 대형주 연구(회사 뉴스는 거시 뉴스보다 급변동 확률 2배) | 미검증 — 뉴스 일꾼 없음 |
+| H5 | 급등 직후 증자·ATM·shelf 가 나오면 급락 | 일화(MMAT −42% 등), Dilution Tracker·AskEdgar 의 '조달 능력 먼저' | 미검증 — 공시 일꾼 없음 |
+| H6 | 갭상승 뒤 되돌림이 흔하다 | 수치 충돌: 일봉 3,000건(갭 +20%↑ 중 당일 전날 종가까지 되돌림 18.3%, +10%↑ 갭 평균 −1.07%) / 벤더 '소형주 70.4% 페이드'(방법 불명) / '뉴스 있는 +4%↑ 갭 30분 62~68% 이어짐'(논문 못 찾음) | 미검증 — 우리 1분봉으로 아직 계산 안 함 |
+| H7 | 급등 직전 거래량·체결 건수·스프레드에 이상이 먼저 나온다 | arXiv 2011.04939(장중 급등 전 비정상, 뉴스와 무관한 경우도 많음) | **부분** — 거래량 배수는 반응과 *동시*(1분 전부터). 체결 건수·스프레드는 분봉 해상도라 못 봄 |
+| H8 | 직전 범위(20일 고점) 돌파 시 소형주 거래량이 이례적으로 늘어난다 | 52주 고점·저점 연구(원문 미확인) | **반대 방향** — 학습 모델에서 '20일 고점 돌파 정도'가 −0.23(내림)(Q절) |
+| H9 | 거래량만으로는 거짓 신호가 많다(가격이 안 따라옴) | Review of Economic Studies 2018 | **약하게 지지** — `stir`(거래량만)는 대조군보다 나쁘고(+10%먼저 2% vs 4%), `fast`(거래량+가격 반응)는 높음(14% vs 4%)(Q절) |
+| H10 | 희석 중 테이프(거래량↑·가격↓·봉 범위 좁음)가 나오면 이후 하락이 크다 | Dilution Tracker | 미검증 — 일봉 근사(`희석 의심 봉`)는 점수에서 ▼ 항목일 뿐 따로 채점 안 함 |
+| H11 | **거래량이 먼저 늘고 가격은 나중에 따라온다** | 여러 계정·벤더 | **반증** — `stir` AUC 0.45~0.49(가설과 반대), 백테스트에서 대조군보다 나쁨(Q절) |
+| H12 | 당일 거래량이 발행주식을 넘으면 폭발 가능성이 크다 | 벤더(보너스 조건) | 미검증 |
+| H13 | 같은 시각 평균 대비 RVOL 이 오탐을 줄인다 | 거래량은 하루 중 U자(학술), Niv Goren | 미검증 — `ignite` 기준선은 최근 30분 |
+| H14 | 극단 급등 이력은 당일엔 유리하지만 한 달 뒤엔 불리(시간 척도가 다름) | MAX 효과(NBER w14804, 소형·개인 비중 큰 종목) | 미검증 — 20·60일 급등 횟수 기준은 사용자 결정으로 제거함(H절) |
+| H15 | 역분할 직후 '급등'은 다르게 움직인다 | Nasdaq 역분할 의무 정지(전날 19:50 ET 정지 → 당일 09:00 재개) | 미검증 — 공시 일꾼 필요 |
+| H16 | 최소 거래대금·체결 건수 하한을 올리면 거짓 신호가 줄고 기회도 같이 준다 | 프리마켓은 얇아 한두 주로도 크게 움직임(규제 기사) | 미검증 |
+| H17 | 매수 체결 비중(체결강도)이 높으면 상승이 이어진다 | 한국어 자료 못 찾음 | 미검증 — LS 체결 프레임에 매수/매도 구분 필드가 있는지부터 확인 필요 |
+| H18 | 호가(주문) 불균형이 가격 반응보다 먼저 움직인다 | Cont·Kukanov·Stoikov(대형주, 동시적·초단기 설명 위주) | 미검증 — 호가 데이터 없음. NH 호가는 유료시세가 필요해 사용자가 거절 |
+| H19 | 체결 간격이 짧아지고 체결 크기 분포가 바뀌는 것이 반응보다 먼저 나온다 | 트레이더 글(작은 체결·느린 흐름 → 큰 가격 간격·빠른 흐름) | 미검증 — 신호 직전 체결 틱 200건을 이미 저장하므로 실제 신호가 쌓이면 계산 가능 |
+| H20 | 최근 티커·사명 변경, 역분할, 역합병(껍데기)은 급락 위험 표지 | SEC·Investor.gov(수치 기준 없음) | 미검증 — 공시 일꾼 필요 |
+| H21 | 며칠간 거래량이 늘며 쌓이다 터진다 | 모던웰스데일리 | **지지** — 학습 모델의 가장 큰 올림 요인이 '전날 거래대금 배수 +0.50'(Q절) |
+| H22 | 프리마켓은 한 번의 큰 거래보다 꾸준한 거래량이 믿을 만하다 | 벤더 | **충돌** — `precursor` 모델 B 에서 '5분 중 거래 있던 분 비율'이 −0.32 |
+| H23 | 레딧·스톡트윗 언급이 급등 며칠 전부터 쌓인다 | 일화 1건(블룸버그) | 검증 불가 — 소셜 데이터 없음. 오히려 소셜 관심은 다음 날 수익률을 낮춘다는 연구가 다수 |
 
-**지금 코드에 반영**: 새 규칙을 만들 땐 위 속성(float·회전율·RVOL·뉴스·희석 공시·돌파·체결 건수)을 **신호에 같이 저장**해서 나중에 어느 속성이 실제로 갈랐는지 `grade` 로 본다 (5-2 의 입력 설계). 최소 거래대금 하한은 여러 값으로 비교.
+**알아 둘 사실 (조사 요약)**
+- **극단 상승 뒤 약세**: 한 달 중 하루 최대 수익률이 컸던 종목은 이후 뒤처지는 경향(소형·개인 비중 큰 종목에 집중, 반대 결과도 있어 논쟁 중). 저가주($5 미만)는 평균 거래대금으로 거른 뒤에도 연 −8.6%p, 소형주 펌프앤덤프는 이듬주 급반전(가상 수익·논문 일부). 소셜 관심(메시지 양)은 다음 날 수익률을 낮추고 감정(긍정)은 높임, 메시지 급증 뒤 수익률은 곧 정상화.
+- **거래정지**: 작고 싼 종목에서 훨씬 자주 발생, 정지 뒤 가격은 정지 전 가격대로 되돌아오는 경향(SEC 스태프 논문). **재개 직후 첫 스파이크는 쫓지 말 것**(여러 글 공통). 역분할 직후는 가격이 N배로 뛰어 보여 오탐하기 쉬움. LS 에서 정지·재개 이벤트를 받는지는 미확인.
+- **공매도 데이터**는 월 2회 공표·지연이라 실시간에 못 쓰고, 대여 수수료·이용률이 급등을 예측한다는 검증은 못 찾음 → 일봉 보조 속성으로만.
+- **스캐너 운용 실무**: 최소 거래대금 하한 + 같은 시각 RVOL, 거짓 신호를 이유와 함께 기록, 규칙을 더하기 전에 알림만 30거래일, **임계값은 장세가 바뀌면 낡는다**(정기 재채점 필요), 같은 급증의 중복 알림 방지, 슬리피지는 시가·손절 주문에서 가장 크고 올라오는 백테스트 다수가 표본 3건·승률 100% 수준.
+- **타봇(앵봇) 분석**(저장소 `research/REPORT_타봇_신호_분석_1116.md`, 실제 데이터, 보고서 값): 261건 승률 42% 건당 −1.5%, 최근 일주일만 +2.8%(95% −3.3~+9.0)인데 같은 규칙을 우리 알림에 적용해도 +1.4~+1.9% → 규칙보다 장세 영향. 신호 모양은 '이미 오른 뒤'(급등 65% 가 새 고점 분봉), 시총 $30M 미만 −2.9% vs 이상 +0.9% 이지만 우리 알림엔 그 효과가 없었음, 체결은 신호의 30~35%(−5% 지정가), −30% 손절이 −31~−43% 로 미끄러짐. 가져올 것은 작음(새 고점 이후 경과 분·시총 속성 기록·시각 보정 RVOL·일일 결과 요약).
+- **가져오지 않을 것**: 타봇 신호 모양(늦은 신호), 상용 스캐너 기본값(float ≤10~20M·RVOL ≥5배 등은 벤더 설정이지 검증된 전략이 아님), 지표 신호등 쌓기(TradingView '조기 모멘텀').
+- **미국 시세 제공 범위**: LS 의 프리·데이마켓 제공 여부는 여전히 미확인(실제 틱으로 확인 필요, PLAN 의 LS 연결 확인). 증권사별 구독 상한은 U·V절.
+- 접근 못 한 곳: Reddit(검색 도구가 도메인을 막음, 직접 접속도 403 — 글을 붙여 주면 정리 가능), EliteTrader 글.
 
-출처: [Gap 연구 thedesperatetrader](https://thedesperatetrader.com/gap-study) · [SmallCapLab](https://www.smallcaplab.com/research) · [scanz 갭 필](https://scanz.com/gap-fill-strategy/) · [arXiv 2011.04939 급등 전 마이크로 거래 패턴](https://arxiv.org/pdf/2011.04939) · [RES 2018](https://public.econ.duke.edu/~boller/Published_Papers/restud_18.pdf) · [MarketBeat: 급등 뒤 급락 이유](https://www.marketbeat.com/articles/why-do-penny-stocks-often-crash-after-rallies/) · [Benzinga 저유동성](https://www.benzinga.com/money/what-are-low-float-stocks) · [tradealgo 페니주 데이트레이딩](https://www.tradealgo.com/trading-guides/day-trading/day-trading-penny-stocks-high-risk-strategies-for-low-float-otc-and-small-cap-stocks)
-
-## F. X(트위터) 실전 트레이더 자료 (2026-11-25) — 일화 수준, 역시 '가설'
-Reddit 은 검색 도구가 접근할 수 없어 못 봄(`reddit.com` 차단). X 게시물은 실전 방법론일 뿐 성과 검증은 없다. 출처: [Dilution Tracker](https://x.com/DilutionTracker/status/1678591298465406980) · [AskEdgar](https://x.com/AskEdgarIO/status/2057800927587811514) · [Anun.Trades 6가지 기준](https://x.com/AnunTrades/status/2043910284423909649) · [Niv Goren: 시간대별 평균 거래량 비교](https://x.com/hackertrader/status/1861704235534192848) · [Market Rebellion 아침 점검표](https://x.com/RebellioMarket/status/1966112581048832177) · [Renata Vega 저유동 러너 예시](https://x.com/Ren_Veg_62/status/2043666308227555715/photo/2)
-
-**새로 알게 된 것**
-- **희석이 진행 중인 '테이프 모양'** (Dilution Tracker): ① 상대거래량 높음 ② 가격은 **떨어짐** ③ 봉 범위가 거래량에 비해 **좁음** → 유통 주식이 빠르게 늘고 있을 때의 전형. 1분봉만으로 계산 가능 → **'지금 팔리고 있다' 경고(청산·회피용)** 후보.
-- **희석 가능성은 '조달 능력'부터** (AskEdgar): 유효한 shelf·S-1·1-A 가 없으면 즉시 희석 위험이 낮고, 과거 증자가 잦았던 회사는 또 한다. 일일 공시 목록(offering·shelf·ATM·PIPE)을 공개로 올리는 계정이 있어 공시 일꾼의 대조 자료가 됨.
-- **유통주식(float) 수치는 틀리기 쉽다**: 여러 데이터 업체가 float 을 잘못 주거나 비워 둔다는 증언. 우리 LS 마스터 `share` 는 **발행주식 수**(내부자 보유 포함, 예: 내부자 68%)이지 float 이 아님 → H1·H2 는 '발행주식 기준'이라고 밝히고, 공시로 float 을 보정하기 전엔 구간 경계를 느슨하게 둔다.
-- **재료 없는 소액 리테일 스퀴즈**(예: 일본 초소형주)는 위험이 높다고 따로 분류됨 → 뉴스 없는 급등은 별도 묶음으로 채점(H4).
-- **다음 날 되돌림(day-2) 통계는 공개된 게 없음** → 우리 기록(급등일 다음 날 시가 −8%·저가 −20%·종가 −9%)이 사실상 유일한 수치. SmallCapRoom 방식(과거 갭마다 평균 갭·평균 급등·평균 하락 폭을 직접 쌓기)을 `grade` 에 같은 식으로 포함할 것.
-
-**추가 가설**
-| # | 가설 | 자료의 주장(미검증) | 확인하는 법 |
-|---|---|---|---|
-| H10 | 희석 중 테이프(거래량↑·가격↓·봉 범위 좁음)가 나오면 이후 하락이 크다 | Dilution Tracker | 1분봉 3조건 점수를 신호 이후 구간에 계산해 하락 폭과 비교 |
-| H11 | 거래량이 먼저 늘고 가격이 뒤따른다(RVOL 2배↑가 선행) | 여러 계정 | 신호 전 N분 RVOL 가속 vs 대조군. **H9(거래량만으로는 거짓 신호)와 같이** 비교 |
-| H12 | 당일 거래량이 float(발행주식)을 넘으면 폭발 가능성이 크다 | Anun.Trades '보너스 조건' | H2 와 같은 회전율 구간으로 채점 |
-| H13 | 시간대별 평균 거래량 대비로 보면 오탐이 줄어든다 | Niv Goren | 같은 시각(분) 평균 거래량 기준 RVOL vs 하루 평균 기준 RVOL 비교 |
-
-**기억할 것**: 자료의 진입 규칙 중 'VWAP 위 10~15% 돌파에서 진입', '이미 +10% 오른 뒤 진입'은 우리 기록상 **추격**(LESSONS A-3: +10% 뒤 진입은 −5% 먼저 61%)과 같은 모양이다. 그대로 믿지 말고 채점으로 확인.
-
-## G. 추가 조사 (2026-11-25, 한국어·학술·규제·공매도 6건) — 대부분 간접 근거
-직접 검증된 '초소형주 급등 예측' 연구는 여기서도 못 찾음. 간접 근거와 주의사항만 정리.
-
-**쓸 만한 간접 근거**
-- **극단적 상승 뒤 다음 달은 약하다 (MAX 효과)**: 한 달 중 하루 최대 수익률이 가장 컸던 종목은 이후 뒤처지는 경향. 소형·비유동·개인투자자 거래 비중이 큰 종목에 집중. 원인(복권 선호 vs 과잉반응)은 논쟁 중이고, 개인 투자자(로빈후드) 참여가 높을수록 오히려 이후 수익이 높다는 반대 결과도 있음(미검토 자료). → [Bali·Cakici·Whitelaw, NBER w14804](https://nber.org/papers/w14804). 우리 `nightscore` 는 '20일 안 +50% 급등'을 ▲(또 터질 가능성↑)로 쓰는데 이 효과는 한 달 단위라 모순은 아니지만, **시간 척도(당일 vs 한 달)를 나눠 채점**할 것(H14).
-- **트위터 홍보로 튄 OTC 초소형주**: 사건 당일 평균 초과수익 +6.5%, 이후 5일 누적 약 −2.5% 반전, 가짜 보도자료와 같이 쓰는 경우 많음 → [CXO Advisory 요약](https://www.cxoadvisory.com/?p=30149). 소형주 뉴스 반응은 3주 안에 사라졌다는 유럽 연구도 있음. 반응 크기는 우리가 잡으려는 +수십% 급등보다 훨씬 작아 직접 비교는 곤란.
-- **거래량은 하루 중 U자 모양**(개장·마감 직전 많고 점심 무렵 적음) → RVOL 은 **같은 시각 평균 대비**로 계산해야 오탐이 준다 (H13 근거 보강). 장 시작 직후는 거래량이 항상 커서 하루 평균 대비로는 늘 '터짐'으로 보인다.
-- **공매도 데이터는 실시간에 못 씀**: 공매도 잔고(short interest)는 월 2회 공표·지연, 대여 수수료(borrow fee)·이용률(utilization)이 급등 예측을 입증한 백테스트·논문은 못 찾음, 스퀴즈 순위 사이트의 수치는 페이지마다 달라 신뢰 불가 → 일봉 이전 날의 **보조 속성**으로만 기록(FINRA 일별 공매도 거래량은 다음 날 공표).
-
-**주의사항 (운영·규제)**
-- **역분할(reverse split)은 Nasdaq 이 의무 정지**: 효력 발생 전날 약 19:50 ET 에 거래 정지 → 효력일 09:00 ET 재개(특별 시초가 경매). 이후 Nasdaq 은 8개 기업 이벤트(티커·CUSIP 변경 등)로 의무 정지를 확대, 재개 08:00 ET. 발행사는 10일 전 통지·2영업일 전 공시 의무. → **역분할 직후 종목은 '급등'으로 오탐하기 쉽다**(가격이 N배로 뛰어 보임) — 일봉의 '액면병합 흔적' 판정은 수정주가 일봉을 쓰고, 실시간 신호는 전날 종가 대비가 아니라 **그날 체결 흐름**으로 판단. 역분할 공시(8-K·DEF 14C)를 공시 일꾼이 잡아 '역분할 직후' 꼬리표를 붙이는 안(H15).
-- **프리마켓은 얇아서 한두 주로도 가격이 크게 움직임**(한국 프리마켓에 대한 금융당국 우려 기사, 미국도 같은 구조). → 신호에는 **최소 거래대금·체결 건수 하한** 필수(H16), 호가 스프레드가 넓으면 신호에 표시.
-- 한국어 검색에서 '체결강도' 해석 자료는 못 찾음 → 체결강도(매수 체결 비중)는 LS 체결 프레임에 매수/매도 구분 필드가 있는지 먼저 확인해야 함(**미확인**; 현재 `GSC` 해석은 가격·수량만 씀).
-
-**추가 가설**
-| # | 가설 | 확인하는 법 |
-|---|---|---|
-| H14 | 극단 급등 이력(20일 +50%)은 당일 재급등에는 유리하지만 한 달 뒤엔 불리 — 시간 척도가 다르다 | 같은 신호를 당일·2h·6h·5일 창으로 채점해 부호가 바뀌는지 확인 |
-| H15 | 역분할 직후 종목의 '급등'은 일반 급등과 다르게 움직인다 | 공시 일꾼으로 역분할 꼬리표 → 꼬리표별 채점 |
-| H16 | 최소 거래대금·체결 건수 하한을 올리면 거짓 신호가 줄고 기회도 같이 준다 | 하한 값 여러 개로 신호 수 vs 성과 곡선 |
-| H17 | 매수 체결 비중(체결강도)이 높으면 이후 상승이 이어진다 | **LS 프레임에 매수/매도 구분이 있는지 먼저 확인** 후 기록 |
-
-출처: [MAX 효과 NBER](https://nber.org/papers/w14804) · [CXO Advisory 소형주 이벤트](https://www.cxoadvisory.com/?p=30149) · [Nasdaq 역분할 정지 규칙 변경](https://www.sec.gov/files/rules/sro/nasdaq/2026/34-105860.pdf) · [Hunton 역분할 규제 정리](https://hunton.com/insights/legal/recent-nyse-and-nasdaq-regulatory-updates-regarding-reverse-stock-splits) · [ORTEX 공매도 지표](https://public.ortex.com/short-interest) · [StockMarketWatch 공매도 지연](https://stockmarketwatch.com/edu/trading-strategies/swing-trading/short-interest-metrics) · [프리마켓 상하한가 기사](https://news.mtn.co.kr/news-detail/2025092616460319659) · [일중 거래량 계절성 arXiv](https://arxiv.org/pdf/1009.4785)
+출처(합친 절들의 링크 전부): [pkg.go.dev LS 클라이언트](https://pkg.go.dev/github.com/smallfish06/krsec/internal/ls) · [AlgoLab LS API 실무](https://algolab.co.kr/blog/ls-securities-openapi-rest-order-2026) · [Alpha Architect 저가주](https://alphaarchitect.com/low-priced-stocks/) · [EFMA 2017](https://efmaefm.org/0EFMAMEETINGS/EFMA%20ANNUAL%20MEETINGS/2017-Athens/papers/EFMA2017_0387_fullpaper.pdf) · [arXiv 2503.08692](https://arxiv.org/abs/2503.08692) · [Gap 연구 thedesperatetrader](https://thedesperatetrader.com/gap-study) · [SmallCapLab](https://www.smallcaplab.com/research) · [scanz 갭 필](https://scanz.com/gap-fill-strategy/) · [arXiv 2011.04939 급등 전 마이크로 거래 패턴](https://arxiv.org/pdf/2011.04939) · [RES 2018](https://public.econ.duke.edu/~boller/Published_Papers/restud_18.pdf) · [MarketBeat: 급등 뒤 급락 이유](https://www.marketbeat.com/articles/why-do-penny-stocks-often-crash-after-rallies/) · [Benzinga 저유동성](https://www.benzinga.com/money/what-are-low-float-stocks) · [tradealgo 페니주 데이트레이딩](https://www.tradealgo.com/trading-guides/day-trading/day-trading-penny-stocks-high-risk-strategies-for-low-float-otc-and-small-cap-stocks) · [Dilution Tracker](https://x.com/DilutionTracker/status/1678591298465406980) · [AskEdgar](https://x.com/AskEdgarIO/status/2057800927587811514) · [Anun.Trades 6가지 기준](https://x.com/AnunTrades/status/2043910284423909649) · [Niv Goren: 시간대별 평균 거래량 비교](https://x.com/hackertrader/status/1861704235534192848) · [Market Rebellion 아침 점검표](https://x.com/RebellioMarket/status/1966112581048832177) · [Renata Vega 저유동 러너 예시](https://x.com/Ren_Veg_62/status/2043666308227555715/photo/2) · [Bali·Cakici·Whitelaw, NBER w14804](https://nber.org/papers/w14804) · [CXO Advisory 요약](https://www.cxoadvisory.com/?p=30149) · [Nasdaq 역분할 정지 규칙 변경](https://www.sec.gov/files/rules/sro/nasdaq/2026/34-105860.pdf) · [Hunton 역분할 규제 정리](https://hunton.com/insights/legal/recent-nyse-and-nasdaq-regulatory-updates-regarding-reverse-stock-splits) · [ORTEX 공매도 지표](https://public.ortex.com/short-interest) · [StockMarketWatch 공매도 지연](https://stockmarketwatch.com/edu/trading-strategies/swing-trading/short-interest-metrics) · [프리마켓 상하한가 기사](https://news.mtn.co.kr/news-detail/2025092616460319659) · [일중 거래량 계절성 arXiv](https://arxiv.org/pdf/1009.4785) · [edkim/realtime-scanner](https://gh.r-mj.com/edkim/realtime-scanner) · [alpacahq/Momentum-Trading-Example](https://awesome.ecosyste.ms/projects/github.com%2Falpacahq%2FMomentum-Trading-Example) · [Jayanth7416/ross-cameron-stock-scanner](https://github.com/Jayanth7416/ross-cameron-stock-scanner) · [Trade Ideas 모멘텀 스캐너](https://www.trade-ideas.com/momentum-stock-scanner/) · [Trade Ideas 소형주 스캐너](https://www.trade-ideas.com/small-cap-stock-scanner/) · [Ross Cameron 5 Pillars 스크립트](https://it.tradingview.com/script/mbqMf3pF-Ross-Cameron-5-Pillars-Filter) · [gap/float 예제](https://jefrnc.github.io/start-your-quant/docs/indicators/gap_float.html) · [알고랩 오픈소스 봇 비교](https://algolab.co.kr/blog/opensource-algotrading-bots-comparison-2026) · [알고랩 해외주식 가이드](https://algolab.co.kr/blog/us-stock-algotrading-overseas-guide-2026) · [Cont·Kukanov·Stoikov OFI(arXiv 2209.10334)](https://arxiv.org/html/2209.10334v2) · [호가·주문 흐름 예측력(JFEC)](https://academic.oup.com/jfec/article/6/2/171/874320) · [주문 흐름 필터링과 단기 수익률](https://arxiv.org/html/2507.22712v2) · [극단 장중 변동의 주문 흐름](https://arxiv.org/pdf/1003.0168) · [SEC LULD 스태프 논문](https://sec.gov/dera/staff-papers/white-papers/dera_wp_luld_pilot_plan_and_extraordinary_transitory_volatility) · [SEC LULD Amendment 10](https://sec.gov/dera/staff-papers/white-papers/dera_wp_effect_of_amendment_10_of_luld_pilot_plan) · [Trade Ideas 거래정지 설명](https://www.trade-ideas.com/learning-center/market-events/trading-halts-explained/) · [StockTwits 관심과 감정(AEA 2024)](https://aeaweb.org/conference/2024/program/paper/EB9zskn5) · [메시지 급증 사건과 감정(Digital Finance)](https://link.springer.com/content/pdf/10.1007/s42521-023-00102-z.pdf) · [Bookmap 소형주 모멘텀](https://bookmap.com/blog/small-cap-momentum-strategies-from-news-catalysts-to-breakouts-with-order-flow) · [TradingView 조기 모멘텀 스크립트](https://kr.tradingview.com/script/pwo7X0Tf-Early-Momentum-Dashboard-Small-Caps) · [Stocks To Trade 급등 전 패턴](https://stockstotrade.com/pattern-that-led-traders/) · [Stocks To Trade 예감](https://stockstotrade.com/i-knew-this-stock-would-rip/) · [Low Float Runner 전략](https://daytradingtoolkit.com/strategies/low-float-runner-trading-strategy) · [Trade Ideas 스캐닝 설명](https://www.trade-ideas.com/learning-center/stock-scanning/stock-scanning-explained/) · [Scanz 비정상 거래량 스캔](https://scanz.com/scanning-for-stocks-with-abnormal-volume/) · [TradeZero 스캐너 실수 5가지](https://tradezero.com/blog/five-scanner-mistakes-that-can-quietly-cost-active-traders) · [QuantConnect 포럼 #7734](https://www.quantconnect.com/forum/discussion/7734/custom-fill-models-or-course-fine-universe/) · [QuantConnect 포럼 #7867](https://www.quantconnect.com/forum/discussion/7867) · [Investor.gov 소액주 기초](https://investor.gov/additional-resources/news-alerts/alerts-bulletins/investor-bulletin-microcap-stock-basics-part-3-3) · [Investor.gov 허위 홍보 경보](https://www.investor.gov/additional-resources/news-alerts/alerts-bulletins/investor-alert-fraudulent-stock-promotions) · [SEC 펌프앤덤프](https://www.sec.gov/answers/pumpdump.htm) · [Bloomberg 2026 분석](https://www.bloomberg.com/graphics/2026-wall-street-apparent-pump-and-dump-investor-scam/) · [Futu OpenAPI 프리마켓 순위](https://openapi.futunn.com/futu-api-doc/quote/get-us-pre-market-rank.html) · [Kabutan 프리마켓 순위](https://us.kabutan.jp/warnings/pre_market_price_increase?type=adr)
 
 ## H. 후보 점수 항목 변경 (2026-11-25, 사용자 결정)
 - **뺀 것**: ▲ `20일 안 +50% 급등`, ▲ `60일 안 +50% 급등` — 극단 상승 뒤 약세(MAX 효과, G절) 우려. 규칙 점수와 학습 모델 **양쪽에서 모두 제거**(사용자 결정).
@@ -192,79 +162,6 @@ Reddit 은 검색 도구가 접근할 수 없어 못 봄(`reddit.com` 차단). X
 3. **가짜 데이터 금지**: 난수로 만든 시장·'심은 신호'를 성과의 근거로 쓰지 않는다. 지금까지의 '모의 데이터 검증'은 **코드 논리가 의도대로 도는지 확인한 것일 뿐 시장에 대한 증거가 아니다**(테스트 6개가 난수 시뮬레이션을 씀: test_daily·featurelab·grading·ignite·model·precursor). 앞으로: 새 가짜 시장 데이터를 만들지 않고, 순수 함수는 손으로 계산한 작은 입력으로, 통합 검증은 실제 데이터(PC 의 `state/market.db` 일부를 읽기 전용으로)로 한다. 실제 데이터가 없으면 '검증 못 함'이라고 쓴다.
 4. 실제 결과는 출처와 기간을 적고, 내가 재현하지 않은 수치는 '출처 문서의 수치'라고 표시한다.
 
-## N. 다른 사람들의 자동매매·스캐너에서 가져올 점 (2026-11-25)
-출처 세 종류: ① 저장소 `research/REPORT_타봇_신호_분석_1116.md` — **실제 데이터 분석**(타봇 텔레그램 기록 1,973건 + 우리 1분봉; 아래 수치는 그 보고서의 값이고 내가 재현하지 않음), ② 웹 검색의 오픈소스·상용 스캐너·커뮤니티 — **설정값 예시일 뿐 성과 검증 자료는 하나도 못 찾음**, ③ 한국어 자료(알고랩 등)는 홍보 섞임.
-
-**결론부터**: 다른 사람들 것은 거의 전부 '이미 움직이는 종목을 거르고 알리는' 스캐너라서 우리가 찾는 '반응 전 징후'와 방향이 다르고, **성과가 검증된 규칙은 없다.** 가져올 만한 건 작은 것들이다.
-
-**가져올 후보 (모두 '가설' — 채점기로 확인 전에는 규칙 아님)**
-1. **'새 고점 이후 경과 분'·'고점 갱신 횟수'** — Trade Ideas 가 `New High` 알림에 `Minutes Since New High` 필터를 붙여 오래된 고점을 거른다. 우리 실제 연구(L절)에서도 고점 근처·고점 갱신이 AUC 0.63~0.78 로 구분력이 있었음 → 실제 데이터 근거가 있는 유일한 후보. `precursor` 특징과 `ignite` 신호 속성에 추가 (가장 우선).
-2. **시총(또는 float)을 모든 신호에 속성으로 저장** — 타봇 실거래는 시총 $30M 미만 119건 −2.9% vs 이상 115건 +0.9%. 단 **우리 알림에는 같은 효과가 안 나타났고**(일관성 없음), 구간 5개×규칙 2개를 본 다중비교·최근 49건 표본이라 우연일 수 있음. 가진 것: LS 마스터(g3190)의 `marketcap`·`share` 필드. → 판단하지 말고 **신호에 기록해서 우리 데이터로 채점**.
-3. **시각 보정 거래량 배수(RVOL)** — 스캐너들은 하루 평균이 아니라 20일 평균·같은 시각 평균과 비교(`edkim/realtime-scanner` 는 '장 중 누적 거래량 / 20일 평균 ≥ 1.5배'를 in-play 필터로). 우리 `ignite` 기준선은 그 종목 최근 30분이라 개장 직후 쏠림에 약함 → 같은 시각의 과거 며칠 평균을 기준선에 섞는 안(H13).
-4. **알림이 아니라 결과를 매일 아침 정리해서 보내기** — 타봇은 매일 아침 '어젯밤 신호 정리'를 올림. 우리는 `grade` 가 있지만 자동 요약이 없음 → 알림 성적이 쌓이면 일일 요약을 일꾼으로(신호가 없으면 만들지 않음).
-5. **체결 방식(매매할 때만)**: 타봇은 신호가 −5% 지정가·3분 대기 → 체결은 신호의 30~35%(중앙 154초 뒤, 신호가 대비 −5%) → 스프레드·추격을 피하는 구조(L절의 '스프레드 중앙 4.7~6.6%' 와 같은 맥락, H17). 손절은 −30% 설정이 실제로는 −31~−43% 로 미끄러짐 → 얇은 호가에서 손절은 보호가 아님.
-6. **시간대는 미동부 기준**(한국시간 22:30 같은 고정 시각은 서머타임에 어긋남) — v2 는 이미 `core/sessions.py` 로 처리.
-
-**가져오지 않을 것 / 조심할 것**
-- 타봇 신호 모양(새 고점 + 직전 5·15분 급등 + 5분 거래대금 급증)은 **이미 올라간 뒤**(급등 65% 가 새 고점 분봉, 직전 15분 +14%)의 신호 — 우리 '반응 전' 목표와 반대이고 조일수록 성과가 나빠졌음(보고서 §7). 규칙 재현이 오히려 비용 뒤 음수.
-- 타봇이 '우리보다 낫다'는 근거 없음: 전체 261건 승률 42% 건당 −1.5%, 최근 일주일만 +2.8%(95% −3.3~+9.0)인데 같은 규칙을 우리 알림에 적용해도 +1.4~+1.9% → **규칙보다 그 주의 장세 영향**. 비용 3% 빼면 음수. 기간 3~4주·가상/실제 혼재.
-- 상용 스캐너 기본값(float ≤10~20M, 상대거래량 ≥5배, 프리마켓 +10%↑·거래량 5만~30만 주, 가격 $1~20)은 **벤더 설정이지 검증된 전략이 아님**. float 데이터는 가장 믿기 어려운 입력(yfinance 부정확, 업체마다 다름).
-- 한국어 오픈소스 봇은 대부분 코인용(Freqtrade·Hummingbot) — 해외주식 자동매매 API 는 한투(KIS)·LS 뿐이라 어댑터를 직접 만들어야 함. 알고랩 등 업체 글은 홍보 섞임.
-- **Halt/Resume 알림**(Trade Ideas)은 소형주에서 고전적 급등 순간이지만, LS 에서 거래정지·재개를 이벤트로 받는지 **확인 못 함**(g3101 의 `suspend` 상태값만 아는 상태).
-
-출처: [edkim/realtime-scanner](https://gh.r-mj.com/edkim/realtime-scanner) · [alpacahq/Momentum-Trading-Example](https://awesome.ecosyste.ms/projects/github.com%2Falpacahq%2FMomentum-Trading-Example) · [Jayanth7416/ross-cameron-stock-scanner](https://github.com/Jayanth7416/ross-cameron-stock-scanner) · [Trade Ideas 모멘텀 스캐너](https://www.trade-ideas.com/momentum-stock-scanner/) · [Trade Ideas 소형주 스캐너](https://www.trade-ideas.com/small-cap-stock-scanner/) · [Ross Cameron 5 Pillars 스크립트](https://it.tradingview.com/script/mbqMf3pF-Ross-Cameron-5-Pillars-Filter) · [gap/float 예제](https://jefrnc.github.io/start-your-quant/docs/indicators/gap_float.html) · [알고랩 오픈소스 봇 비교](https://algolab.co.kr/blog/opensource-algotrading-bots-comparison-2026) · [알고랩 해외주식 가이드](https://algolab.co.kr/blog/us-stock-algotrading-overseas-guide-2026)
-
-## O. 다른 곳 추가 조사 — 학술·규제·소셜·한국어·GitHub (2026-11-25, 웹 검색 6건)
-**결론부터**: 이번엔 '소형주 급등을 미리 알려 주는 것'을 직접 검증한 자료를 **하나도 못 찾았다.** 아래는 간접 근거와 '없다는 것'의 기록이다.
-
-**1. 주문 흐름(호가 불균형) — 가장 근거가 센 '선행' 후보지만 소형주 검증은 없음**
-- Cont·Kukanov·Stoikov(미국 50종목): 최우선 호가의 **주문 흐름 불균형(OFI)이 단기 가격 변화를 거래량보다 잘 설명**하고, 가격 반응은 호가 깊이가 얇을수록 큼. 다른 연구: 호가 잔량 불균형이 다음 시장가 주문의 도착 속도와 방향을 예측, 정보 거래의 도착은 전체 거래량보다 과거 불균형에 더 반응.
-- **한계**: 대부분 크고 유동성 큰 종목, 동시적·초단기 가격 영향이지 '급등 경보'가 아님. 심천의 극단적 장중 급변동 연구는 급변동 뒤 **반전**이 뚜렷해 흐름 신호가 예측보다 동시 측정에 가깝다고 시사. 소형주·Hawkes(자기 흥분) 모형 연구는 못 찾음.
-- 우리 쪽: 지금은 체결(GSC)만 받음. LS 는 호가(GSH 10호가)도 줌(기존 봇이 구독했음). 호가는 종목 수가 많으면 부담이라 **'거래만 먼저'(stir) 신호가 난 종목에만 호가를 구독해 기록**하는 2단계 안이 가능(기존 봇의 트리거 호가 로거와 같은 발상, 당시 호가가 사건의 18~34% 에만 있었음 — L절). 가설 **H18: 호가 불균형이 가격 반응보다 먼저 움직인다**(미검증, PC 에서 실제 호가로만 확인 가능).
-- 같은 연구: **회사 고유 뉴스는 거시 뉴스보다 급변동(jump) 확률을 약 2배** → 뉴스 유무(H4) 근거를 조금 보강(대형주 30종목).
-
-**2. 거래정지·재개(LULD) — 소형주에 흔하고, 재개 직후는 위험**
-- SEC 스태프 논문(Moise·Flaherty): Tier 2 종목(작고 싼 종목)에서 제한 상태·정지가 **훨씬 자주** 발생, 정지 뒤 가격은 **정지 전 가격대로 되돌아오는** 경향. 토론토 연구: 개별 종목 서킷브레이커가 하락·상승을 되돌리지 않음, 변동성 증가는 하락 뒤가 더 큼. 정지가 공개 정보의 틈을 만들어 가격 발견이 서서히 진행된다는 연구도. 실무 글(Trade Ideas): 얇은 소형주는 하루에 여러 번 정지되고 재개 때마다 새로운 유동성 이벤트, 재개가는 정지 전과 다르게 열리는 일이 흔함.
-- 미시구조 연구(TAQ)로 **소형주 정지 직후 행태를 직접 본 연구는 못 찾음.**
-- 우리 쪽 함의: **재개 직후 신호는 별도 취급**(추격 위험, 가격이 되돌아올 수 있음). 단 LS 에서 정지·재개 이벤트를 받는지 **미확인**(g3101 의 `suspend` 상태만 앎).
-
-**3. 소셜 미디어(StockTwits 등) — '선행'이 아니라 오히려 반전 신호**
-- 여러 논문: **관심(메시지 양)은 다음 날 수익률을 낮추고**(반전), 감정(긍정)은 높임. 메시지 급증 같은 사건에 조건을 걸면 감정이 예측력을 갖지만 수익률은 점프 직후 곧 정상화(짧음). StockTwits 는 소형주 비중이 큼. **메시지 양이 가격 급등을 앞서는지 직접 시험한 연구는 못 봄**(동시 또는 이후 반전만 보임). → 소셜 언급량을 '반응 전 징후'로 쓸 근거 없음, 오히려 '이미 관심이 몰린 뒤'일 수 있음. (Reddit 은 검색 도구가 접근 불가.)
-
-**4. 공시·뉴스 종류별 반응**: 8-K·보도자료 종류(FDA·역합병·계약)별 소형주 초과수익을 잰 사건 연구는 **검색에서 못 찾음**(홍보성 뉴스뿐). 공백으로 기록. 직접 재려면 우리 뉴스·공시 일꾼(PLAN 5-3)과 `grade` 로 종류별 채점.
-
-**5. 한국어 자료**: 체결강도·호가 잔량을 미국 소형주에 적용한 구체적 기준은 **못 찾음**(미국에서는 Level 2·Time & Sales 라고 부름). 소형주 모멘텀을 뉴스 촉매와 주문 흐름으로 확인하라는 일반론(Bookmap), TradingView '조기 모멘텀' 스크립트는 거래량 배수·RSI·OBV 등 7개를 신호등처럼 쌓아 **4개 이상이면 조기 진입**이라 하나 검증 없음(지표 쌓기).
-
-**6. GitHub 의 급등 알림 봇**: 주식 1분봉 거래량 이상 탐지 + 텔레그램/디스코드 알림을 하는 저장소는 **못 찾음**(대부분 코인용, 주식은 가격 알림이나 TradingView 웹훅 중계). 우리 `ignite`(종목별 기준선 + 창 + 저점 대비 상한) 같은 구조의 공개 구현은 흔하지 않음 → 가져올 코드 없음.
-
-**이번 조사로 바뀐 것**: 없음(코드·계획 변경 없음). 새 가설 H18 하나와 '재개 직후는 별도 취급' 주의만 추가. 조사는 한계 수확 체감 — 근거는 결국 우리 데이터(PC)에서 나온다.
-
-출처: [Cont·Kukanov·Stoikov OFI(arXiv 2209.10334)](https://arxiv.org/html/2209.10334v2) · [호가·주문 흐름 예측력(JFEC)](https://academic.oup.com/jfec/article/6/2/171/874320) · [주문 흐름 필터링과 단기 수익률](https://arxiv.org/html/2507.22712v2) · [극단 장중 변동의 주문 흐름](https://arxiv.org/pdf/1003.0168) · [SEC LULD 스태프 논문](https://sec.gov/dera/staff-papers/white-papers/dera_wp_luld_pilot_plan_and_extraordinary_transitory_volatility) · [SEC LULD Amendment 10](https://sec.gov/dera/staff-papers/white-papers/dera_wp_effect_of_amendment_10_of_luld_pilot_plan) · [Trade Ideas 거래정지 설명](https://www.trade-ideas.com/learning-center/market-events/trading-halts-explained/) · [StockTwits 관심과 감정(AEA 2024)](https://aeaweb.org/conference/2024/program/paper/EB9zskn5) · [메시지 급증 사건과 감정(Digital Finance)](https://link.springer.com/content/pdf/10.1007/s42521-023-00102-z.pdf) · [Bookmap 소형주 모멘텀](https://bookmap.com/blog/small-cap-momentum-strategies-from-news-catalysts-to-breakouts-with-order-flow) · [TradingView 조기 모멘텀 스크립트](https://kr.tradingview.com/script/pwo7X0Tf-Early-Momentum-Dashboard-Small-Caps)
-
-## P. 해외 사이트 조사 — 영어 포럼·블로그·QuantConnect·일본어·중국어·SEC (2026-11-25, 웹 검색 6건)
-**결론**: 여기서도 **검증된 선행 징후는 없다.** 대신 ① 체결 테이프 모양에 대한 구체적 묘사(가설 H19), ② 시세조종 위험 신호(H20), ③ '스캐너를 어떻게 굴려야 하는지' 실무 교훈을 얻었다. 접근 못 한 곳: EliteTrader·Reddit 글 자체(검색에 안 잡힘), 일본어·중국어는 순위 도구 설명 페이지뿐(분석 글 없음).
-
-**1. 급등 직전의 체결 테이프 묘사 (트레이더 글, 미검증)** — 가격이 **망설이는 단계**(작은 체결 수량 + 작은 가격 변화 + 느린 체결 흐름) 다음에 **더 큰 가격 간격과 빨라진 체결 흐름**이 나온다고 설명(Stocks To Trade 외). → 우리가 이미 저장하는 신호 직전 체결 틱(`signals.attrs.ticks`, 직전 200건)으로 **체결 간격 단축·평균 체결 크기 변화**를 나중에 계산할 수 있음(새 코드 필요 없음). 가설 **H19: 체결 간격이 짧아지고 체결 크기 분포가 바뀌는 것이 가격 반응보다 먼저 나온다.**
-- 함께 나온 주의: **얇은 float 은 가벼운 거래량으로도 +30% 가 찍혀** 폭넓은 참여가 있는 진짜 러너와 차트가 똑같이 보임 → '체결 건수·참여 폭'이 구분 후보(우리 `ignite` 의 체결 건수 하한이 이 용도). float 회전이 한 바퀴 이상이면 구조가 다르다는 글(H2 와 같은 방향).
-- **스파이크는 shelf 가 유효한 회사가 증자하는 바로 그 순간**(H5 와 같은 방향). **재개(halt resume) 뒤 첫 스파이크는 쫓지 말 것**(여러 글이 공통).
-
-**2. 스캐너를 굴리는 실무 교훈 (Trade Ideas·Scanz·TradeZero, 홍보 섞임)**
-- 최소 **거래대금 하한 + 거래대금 급증 기준**을 함께 두면 소액·얇은 호가 오탐이 줄고, **RVOL 은 같은 시각의 과거 평균과 비교**(H13). 우리 `ignite` 가 이미 거래대금 하한·종목별 기준선을 둠.
-- **거짓 신호를 이유와 함께 기록**하고, **필터를 더하기 전에 알림만 30거래일** 보라(Trade Ideas) — 우리 방침(검증 전 알림만, `signals` 에 속성 저장)과 일치.
-- **임계값이 낡는다**: 과거 장세에 맞춘 스캐너는 시장이 달라지면 옛 패턴만 계속 띄움(TradeZero: 변동성 상한을 15% 로 잡아 두면 지금의 16%↑ 돌파를 놓침) → 임계값을 고정하지 말고 **정기 재채점**(`grade`·`train`·`precursor` 를 주기적으로 다시 돌리기).
-- 같은 급증에 알림이 **중복**으로 나오는 문제(TradingView 스크립트 주석) — 우리는 종목·규칙별 30분 쿨다운.
-
-**3. QuantConnect 포럼의 페니주 백테스트 교훈 (사용자 글, 미검증)**
-- **첫날 데이터가 늦어 못 잡는다**(2일째엔 거래량이 크게 줄어 있음) — 데이터 지연이 곧 놓침. 체결 가정은 유동성이 있다고 가정해서 **페니주에선 낙관적**, **슬리피지는 시가·손절 주문에서 가장 크다**("백테스트는 실거래를 대표하지 않는다"). 올라온 백테스트 다수가 **거래 3건·승률 100%** 같은 표본 부족, 진입·청산 규칙이 모호. → 우리 원칙(가짜·적은 표본을 근거로 쓰지 않기, 비용 반영, 표본 부족은 '판단 보류')과 같은 방향.
-
-**4. SEC·Investor.gov 시세조종 위험 신호 (수치 기준은 없음)**: 이유 없는 가격·거래량 급변, **홍보(이메일·문자·소셜)와 맞물린 급등**, **임원·홍보자가 지분을 크게 보유**, 얇게 거래되는 저유통 종목·**역합병 껍데기 회사(티커·사명 잦은 변경)**, SEC 거래정지(최대 10일, 현재 정보 부족 시). Bloomberg 2026 분석은 많은 소형주에서 시세조종 의심 패턴을 보고(해당 회사가 기소된 것은 아님). → 가설 **H20: 최근 티커·사명 변경, 역분할, 역합병(껍데기) 이력은 급등 뒤 급락 위험 표지다** — 공시 일꾼(PLAN 5-3)으로 8-K 에서 기록해 채점. 위험 신호가 많은 종목의 급등 알림에는 경고를 붙이는 용도.
-
-**5. 대체 데이터원 메모(미검증)**: 후쿠(Futu) OpenAPI 에 미국 프리마켓 순위(상승률·거래대금·거래량) 조회가 있고, 일본 Kabutan·TradingView 에도 프리마켓 상승률 순위가 있음 — LS 시세가 막힐 때의 보조 후보일 뿐, 접근 조건·비용·지연은 확인 못 함.
-
-**이번 조사로 바뀐 것**: 코드·계획 변경 없음. 가설 H19(체결 테이프 가속 — 이미 저장하는 틱으로 계산 가능)·H20(시세조종 위험 표지)만 추가. 조사는 한계 수확 체감 — 새로 나오는 건 '일반론의 반복'이고 우리 데이터 없이는 더 나아갈 수 없다.
-
-출처: [Stocks To Trade 급등 전 패턴](https://stockstotrade.com/pattern-that-led-traders/) · [Stocks To Trade 예감](https://stockstotrade.com/i-knew-this-stock-would-rip/) · [Low Float Runner 전략](https://daytradingtoolkit.com/strategies/low-float-runner-trading-strategy) · [Trade Ideas 스캐닝 설명](https://www.trade-ideas.com/learning-center/stock-scanning/stock-scanning-explained/) · [Scanz 비정상 거래량 스캔](https://scanz.com/scanning-for-stocks-with-abnormal-volume/) · [TradeZero 스캐너 실수 5가지](https://tradezero.com/blog/five-scanner-mistakes-that-can-quietly-cost-active-traders) · [QuantConnect 포럼 #7734](https://www.quantconnect.com/forum/discussion/7734/custom-fill-models-or-course-fine-universe/) · [QuantConnect 포럼 #7867](https://www.quantconnect.com/forum/discussion/7867) · [Investor.gov 소액주 기초](https://investor.gov/additional-resources/news-alerts/alerts-bulletins/investor-bulletin-microcap-stock-basics-part-3-3) · [Investor.gov 허위 홍보 경보](https://www.investor.gov/additional-resources/news-alerts/alerts-bulletins/investor-alert-fraudulent-stock-promotions) · [SEC 펌프앤덤프](https://www.sec.gov/answers/pumpdump.htm) · [Bloomberg 2026 분석](https://www.bloomberg.com/graphics/2026-wall-street-apparent-pump-and-dump-investor-scam/) · [Futu OpenAPI 프리마켓 순위](https://openapi.futunn.com/futu-api-doc/quote/get-us-pre-market-rank.html) · [Kabutan 프리마켓 순위](https://us.kabutan.jp/warnings/pre_market_price_increase?type=adr)
-
 ## Q. 실제 데이터로 돌린 결과 (2026-11-25) — `D:\pennybot-live\state\market.db`(약 12.7GB, 읽기 전용으로 열림)
 테스트: `pytest -q` 102 통과·1 실패(`test_ops.py::test_second_process_exits_with_code_3`, 윈도우 cp949 가 자식 출력을 읽다 깨짐. `PYTHONUTF8=1` 이면 통과 — 테스트에 `encoding="utf-8"` 지정해 고침 → 103개 전부 통과. 한 번은 `test_ls` 가 전체 실행에서만 실패했다가 재실행에 통과(타이밍 흔들림 가능성, 원인 미확인)). 결과 파일은 임시 폴더에 저장했고, `train` 이 채택한 `model.json` 은 `v2/state/model.json` 에 복사해 적용(2026-11-25, 사용자 승인).
 
@@ -284,13 +181,6 @@ Reddit 은 검색 도구가 접근할 수 없어 못 봄(`reddit.com` 차단). X
 - 해석: fast·strict 는 급등이 이어질 확률은 높지만 **−5% 먼저도 같이 높아 손익은 나쁨**(알림의 가치는 정밀도이지 매수 수익이 아님 — L절과 일치). '반응 전'인 stir 는 효과 없음. 세션별로 PRE(프리마켓)만 대조군보다 낫고 세 기간 유지(14%/34%), 정규장·데이마켓은 아님. 한 구간(약 9일)이라 표본·기간 한계가 큼.
 
 **4. 레딧 자료 찾기(사용자 요청)**: 검색 도구가 reddit.com·old.reddit.com 을 막고(400), 직접 접속도 403. 브라우저로 위장한 접속·미러 사이트 시도는 권한 분류기가 막아 중단함. 레딧 글은 사용자가 붙여 넣어 주면 정리 가능.
-
-## R. 레딧 관련 검색 재시도 (2026-11-25, 웹 검색 4건) — 레딧 글 자체는 여전히 못 봄
-- 검색 도구가 reddit.com 을 막아 **레딧 스레드는 하나도 안 나옴**. 대신 일반 글이 나왔고 대부분 벤더·교육 사이트(검증 아님). 새 가설만 기록:
-- **H21 며칠간 거래량이 늘며 쌓이다 터진다**(5~10일 누적, 모던웰스데일리): `train` 에서 '전날 거래대금 배수 +0.50' 이 가장 큰 올림 요인으로 나온 것과 방향이 같음(우리 데이터 근거 있음).
-- **H22 프리마켓은 한 번의 큰 거래보다 꾸준한 거래량이 믿을 만하다**(벤더): 5분 중 거래 있던 분 비율로 확인 가능. `precursor` 연구 B 에서 이 값은 −0.32(내림)였음 — 반대 방향이라 가설과 충돌.
-- **H23 레딧·스톡트윗 잡담이 급등 며칠 전부터 쌓인다**(블룸버그 사례 1건): 일화. 소셜 선행 여부를 시험한 연구는 없고(LESSONS O-3 은 오히려 반전) 우리는 소셜 데이터가 없어 검증 못 함.
-- 그 밖의 반복되는 말: 재개 직후 첫 스파이크 쫓지 말 것, 거래량이 float 한 바퀴 넘는지 보라, 스프레드 확대 — 이미 N·P절에 있는 내용.
 
 ## S. `precursor` 민감도 (2026-11-25, 같은 DB·종목 300개; 정의를 바꿔 5번 더 실행)
 | 실행 | 사건(A) | 시험 사건(B) | 징후 모델 ×1 vs 기존 (반응 전 포착) |
