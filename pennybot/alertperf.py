@@ -17,6 +17,8 @@ LABELS = {"precursor": "🚨 급등 전조", "burst": "📶 거래 터짐", "rea
           "early20": "🌙 정규장 전 +20%", "early_watch": "👀 초기 경보", "bottom_bounce": "🌊 바닥 재반등", "absorb": "🧲 물량 흡수",
           "spike_start": "🚀 급등 시작", "slow_climb": "🐢 천천히 오름", "ignition": "🔥 데이·프리 점화"}
 MORE50 = 1.50       # 알림 뒤 그날 고가가 알림가 +50%↑ (점화 알림 검증 기준)
+FEE_ROUND_TRIP = 0.2    # 수수료 왕복 % (사고 팔 때 각 0.1% 가정 — 실제 증권사 수수료로 바꿀 것)
+QUOTE_MAX_AGE = timedelta(seconds=180)   # 알림 직전 이 안에 저장된 호가만 비용 계산에 쓴다
 
 
 def trade_day(t: datetime) -> str:
@@ -71,6 +73,36 @@ def outcome(mq, rq, sym: str, ts: str) -> dict | None:
             "h3_low": (min(b["low"] for b in w3) / p0 - 1) * 100 if w3 else None}
 
 
+def quote_spread(mq, sym: str, ts: str) -> float | None:
+    """알림 직전(3분 안)에 저장된 실제 호가의 스프레드 % ((매도1호가 ÷ 매수1호가 − 1) × 100). 없으면 None."""
+    t = datetime.fromisoformat(ts)
+    try:
+        q = mq("SELECT bid, ask FROM quotes WHERE symbol=? AND ts<=? AND ts>=? AND bid>0 AND ask>0 "
+               "ORDER BY ts DESC LIMIT 1", (sym, t.isoformat(), (t - QUOTE_MAX_AGE).isoformat()))
+    except Exception:           # quotes 표가 없는 DB
+        return None
+    if not q or q[0]["ask"] < q[0]["bid"]:
+        return None
+    return (q[0]["ask"] / q[0]["bid"] - 1) * 100
+
+
+def sim_return(r: dict) -> float | None:
+    """알림가에 사서 +20% 에 팔거나 −10% 에 자르고, 둘 다 안 닿으면 그날 마지막 가격에 판 수익률 % (비용 전)."""
+    if r.get("price") is None:
+        return None
+    if r.get("result") == "win":
+        return round((WIN - 1) * 100, 6)
+    if r.get("result") == "loss":
+        return round((LOSS - 1) * 100, 6)
+    return (r["last"] / r["price"] - 1) * 100 if r.get("last") else None
+
+
+def net_return(r: dict) -> float | None:
+    """sim_return 에서 실제 호가 차이(사고 팔 때 합쳐 스프레드 한 번)와 수수료를 뺀 값. 알림 때 호가 기록이 없으면 None."""
+    g, s = sim_return(r), r.get("spread")
+    return None if g is None or s is None else g - s - FEE_ROUND_TRIP
+
+
 def session_of(ts: str) -> str:
     """알림 시각(UTC ISO) → 미국 세션 (동부시간 기준: 데이 20~04 · 프리 04~09:30 · 정규 09:30~16 · 애프터 16~20)."""
     t = datetime.fromisoformat(ts).astimezone(ET)
@@ -122,7 +154,9 @@ def rows(mq, rq, since: str, until: str | None = None, limit: int = 300, kinds=K
     out = []
     for r in ev:
         o = outcome(mq, rq, r["symbol"], r["ts"])
-        out.append({"ts": r["ts"], "symbol": r["symbol"], "kind": kind_of(r["kind"], r["text"]), "text": r["text"], **(o or {})})
+        sp = quote_spread(mq, r["symbol"], r["ts"]) if o else None
+        out.append({"ts": r["ts"], "symbol": r["symbol"], "kind": kind_of(r["kind"], r["text"]), "text": r["text"],
+                    **(o or {}), "spread": sp})
     return out
 
 
@@ -133,18 +167,55 @@ def stats(mq, rq, today: str | None = None) -> dict:
     for r in rows(mq, rq, "0", limit=100000, kinds=ALL_KINDS):
         if r.get("price") is None or r["date"] >= today:
             continue
+        g, nt = sim_return(r), net_return(r)
         for key in (r["kind"], r["kind"] + (":run" if (r["chg_at"] or 0) >= 20 else ":early")):
-            x = st.setdefault(key, {"n": 0, "hit30": 0, "win": 0, "loss": 0, "more50": 0})
+            x = st.setdefault(key, {"n": 0, "hit30": 0, "win": 0, "loss": 0, "more50": 0,
+                                    "ret_n": 0, "ret_sum": 0.0, "net_n": 0, "net_sum": 0.0})
             x["n"] += 1
             x["more50"] += bool(r.get("more50"))
             x["hit30"] += r["hit30"]
             x["win"] += r["result"] == "win"
             x["loss"] += r["result"] == "loss"
+            if g is not None:                    # 알림가 매수 → +20/−10 청산 평균 (비용 전)
+                x["ret_n"] += 1
+                x["ret_sum"] += g
+            if nt is not None:                   # 호가 기록이 있던 알림만 (비용 반영)
+                x["net_n"] += 1
+                x["net_sum"] += nt
     base = mq("""SELECT COUNT(*) AS n, SUM(high >= pc * 1.3) AS k FROM (
                    SELECT high, LAG(close) OVER (PARTITION BY symbol ORDER BY d) AS pc, d FROM daily_bars)
                  WHERE pc > 0 AND d >= date('now', '-60 day')""")
     st["base"] = {"n": base[0]["n"] or 0, "hit30": base[0]["k"] or 0} if base else {"n": 0, "hit30": 0}
     return st
+
+
+def _fmt(v: float | None) -> str:
+    return "-" if v is None else f"{v:+.1f}%"
+
+
+def _mean(xs: list[float]) -> float | None:
+    return sum(xs) / len(xs) if xs else None
+
+
+def cost_lines(rs: list[dict], st: dict) -> list[str]:
+    """알림 종류별: 알림가에 사서 +20%/−10% 청산했다면 평균 수익률 (비용 전 → 실제 호가 차이·수수료 반영), 누적도 같이."""
+    out = ["", "💰 알림가에 사서 +20% 에 팔거나 −10% 에 잘랐다면 (둘 다 안 닿으면 그날 마지막 가격) 평균",
+           f"비용 = 알림 때 저장된 실제 호가 차이 + 수수료 {FEE_ROUND_TRIP:g}% · 호가 기록이 없던 알림은 비용 반영에서 뺌"]
+    for k, lab in LABELS.items():
+        g = [r for r in rs if r["kind"] == k]
+        if not g:
+            continue
+        gross = _mean([v for v in map(sim_return, g) if v is not None])
+        nets = [v for v in map(net_return, g) if v is not None]
+        s = st.get(k) or {}
+        cum_g = s["ret_sum"] / s["ret_n"] if s.get("ret_n") else None
+        cum_n = s["net_sum"] / s["net_n"] if s.get("net_n") else None
+        today = f"오늘 {_fmt(gross)} → {_fmt(_mean(nets)) if nets else '호가 기록 없음'}"
+        if nets:
+            today += f" ({len(nets)}/{len(g)}건)"
+        cum = f" · 누적 {_fmt(cum_g)} → {_fmt(cum_n) if cum_n is not None else '호가 기록 없음'}" if cum_g is not None else ""
+        out.append(f"{lab} {today}{cum}")
+    return out
 
 
 def summary_text(day_rows: list[dict], st: dict, date: str) -> str | None:
@@ -164,14 +235,27 @@ def summary_text(day_rows: list[dict], st: dict, date: str) -> str | None:
         hist = f" · 누적 적중률 {s['win'] / s['n'] * 100:.0f}% ({s['n']}건)" if s.get("n") else ""
         m50 = f" · +50% 더 {sum(bool(r.get('more50')) for r in g)}" if k == "ignition" else ""
         lines.append(f"{lab} {len(g)}건 — ✅ 적중 {w} · ❌ 손절 {lz} · 당일 +30% {h}{m50}{hist}")
-    best = sorted(rs, key=lambda r: -(r["high"] / r["price"]))[:3]
+    # 한 종목이 여러 종류 알림에 겹쳐 세지므로, 종목마다 처음 감지된 알림만으로도 센다
+    first: dict[str, dict] = {}
+    for r in sorted(rs, key=lambda r: r["ts"]):
+        first.setdefault(r["symbol"], r)
+    fw = sum(r["result"] == "win" for r in first.values())
+    fl = sum(r["result"] == "loss" for r in first.values())
+    lines.append(f"종목 기준 (종목마다 처음 감지된 알림만): {len(first)}종목 중 ✅ 적중 {fw} · ❌ 손절 {fl}"
+                 f" — 같은 종목이 여러 알림에 겹치므로 위 건수보다 이쪽이 실제에 가깝습니다")
+    lines += cost_lines(rs, st)
+    n_by_sym: dict[str, int] = {}
+    for r in rs:
+        n_by_sym[r["symbol"]] = n_by_sym.get(r["symbol"], 0) + 1
+    best = sorted(first.values(), key=lambda r: -(r["high"] / r["price"]))[:3]
     if best:
         lines.append("")
-        lines.append("감지 후 최고 TOP")
+        lines.append("감지 후 최고 TOP (종목마다 처음 감지 기준)")
         for r in best:
             hm = datetime.fromisoformat(r["ts"]).astimezone(ET).strftime("%H:%M")
+            dup = f" · 같은 종목 알림 {n_by_sym[r['symbol']]}건" if n_by_sym[r["symbol"]] > 1 else ""
             lines.append(f"• {r['symbol']} {hm} ET ${r['price']:.4g} → 최고 {(r['high'] / r['price'] - 1) * 100:+.0f}%"
-                         f" ({'✅' if r['result'] == 'win' else '❌' if r['result'] == 'loss' else '–'})")
+                         f" ({'✅' if r['result'] == 'win' else '❌' if r['result'] == 'loss' else '–'}){dup}")
     late = [r for r in rs if (r["chg_at"] or 0) >= 20]
     if late:
         lw = sum(r["result"] == "win" for r in late)
