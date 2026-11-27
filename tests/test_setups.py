@@ -80,21 +80,27 @@ def test_registry_and_names():
         assert name in STRATEGY_KO
 
 
-def test_squeeze_needs_borrow_ssr_and_two_days():
+def test_squeeze_needs_short_day_move_new_high_and_two_of_three():
+    """11/19 조건표: 필수 = 숏 30%↑ · 당일 +10%↑ + 고점 갱신, 점수 3개(대차 20%↑ · 거래대금 $100만↑ · 유통주 2천만↓) 중 2개."""
     sql = [
         ("MAX(trade_date) FROM short_volume", [("2026-10-27",)]),
         ("FROM short_volume WHERE trade_date=? AND total_volume>0", [("PEN",)]),
-        ("FROM short_volume WHERE symbol=? AND trade_date<=?", [(800.0, 1000.0), (850.0, 1000.0)]),
+        ("FROM short_volume WHERE symbol=? AND trade_date<=?", [(800.0, 1000.0)]),
+        ("MAX(high) FROM bars_1m", [(1.01,)]),
         ("FROM borrow", [(45.0,)]),
-        ("FROM ssr", [(1,)]),
         ("FROM bars_1m WHERE symbol=? AND trade_date=? AND ts<=?", [(3_000_000.0,)]),
     ]
-    mv = FakeMV(books={"PEN": Book("PEN", 1.00, 1.01, 10_000, 10_000, 1.005)}, sql=sql)
+    books = {"PEN": Book("PEN", 1.00, 1.01, 10_000, 10_000, 1.005)}
+    mv = FakeMV(books=books, sql=sql, closes={"PEN": 0.85})          # 전날 종가 0.85 → 당일 +18%
     plans = scan("squeeze", mv)
-    assert [p.symbol for p in plans] == ["PEN"] and plans[0].ok
+    assert [p.symbol for p in plans] == ["PEN"] and plans[0].ok       # 대차 ✓ · 거래대금 ✓ (2/3)
 
-    no_ssr = FakeMV(books=mv.books, sql=[r for r in sql if r[0] != "FROM ssr"])
-    assert scan("squeeze", no_ssr) == []
+    no_borrow = FakeMV(books=books, sql=[r for r in sql if r[0] != "FROM borrow"], closes={"PEN": 0.85})
+    assert scan("squeeze", no_borrow) == []                          # 거래대금만 맞음 (1/3)
+    flat = FakeMV(books=books, sql=sql, closes={"PEN": 0.98})        # 당일 +2.5% → 필수 조건 탈락
+    assert scan("squeeze", flat) == []
+    not_high = FakeMV(books=books, sql=[r if r[0] != "MAX(high) FROM bars_1m" else (r[0], [(1.30,)]) for r in sql], closes={"PEN": 0.85})
+    assert scan("squeeze", not_high) == []                           # 고점 갱신 아님
 
 
 def test_news_skips_already_pumped():
@@ -166,3 +172,25 @@ def test_reversal_ignores_dilution_filing():
                       recent={"PEN": [{"form": "S-1", "items": "", "accepted": NOW.isoformat(),
                                        "events": "PUBLIC_OFFERING"}]})
     assert [p.symbol for p in scan("reversal", dilution)] == ["PEN"]
+
+
+def test_rules7_pass_score_and_hard_check():
+    """11/19 전략 7개: 'N개 중 M개' 점수 판정과 공통 하드 필터 (가격·스프레드·5분 거래대금·오퍼링)."""
+    from types import SimpleNamespace
+    from pennybot.config import TradingConfig
+    from pennybot.trading.rules7 import hard_check, pass_score
+    ok, txt = pass_score({"a": True, "b": False, "c": True}, 2)
+    assert ok and txt.startswith("a·c") and "(2/3)" in txt
+    assert not pass_score({"a": True, "b": False}, 2)[0]
+
+    sql = [("FROM bars_1m WHERE symbol=? AND trade_date=? AND ts>=? AND ts<=?", [(50_000.0,)])]
+    mv = FakeMV(books={"PEN": Book("PEN", 1.00, 1.01, 10_000, 10_000, 1.005)}, sql=sql)
+    ctx = SimpleNamespace(tcfg=TradingConfig(), mv=mv, trade_date=NOW.date(), now=NOW)
+    assert hard_check(ctx, "PEN", 1.0) is None
+    assert "가격" in hard_check(ctx, "PEN", 0.2) and "가격" in hard_check(ctx, "PEN", 20.0)
+    wide = FakeMV(books={"PEN": Book("PEN", 1.00, 1.06, 10_000, 10_000, 1.03)}, sql=sql)
+    assert "스프레드" in hard_check(SimpleNamespace(tcfg=TradingConfig(), mv=wide, trade_date=NOW.date(), now=NOW), "PEN", 1.0)
+    thin = FakeMV(books=mv.books, sql=[(sql[0][0], [(10_000.0,)])])
+    assert "5분 거래대금" in hard_check(SimpleNamespace(tcfg=TradingConfig(), mv=thin, trade_date=NOW.date(), now=NOW), "PEN", 1.0)
+    off = FakeMV(books=mv.books, sql=sql, recent={"PEN": [{"form": "424B5", "events": "PUBLIC_OFFERING", "accepted": NOW.isoformat()}]})
+    assert "오퍼링" in hard_check(SimpleNamespace(tcfg=TradingConfig(), mv=off, trade_date=NOW.date(), now=NOW), "PEN", 1.0)

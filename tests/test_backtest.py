@@ -60,6 +60,10 @@ def tcfg():
     t.strategies["day_ignition"]["enabled"] = False
     t.strategies["runner_overnight"]["enabled"] = True
     t.strategies["runner_overnight"]["entry_discount_pct"] = 0.0   # 아래 테스트는 즉시 체결을 가정
+    # 11/19 전략 7개 조건표로 기본값이 바뀜 — 이 리플레이 테스트는 예전 청산 숫자(+12% 절반 · 트레일 8% · 손절 −10%)를 전제
+    t.strategies["runner_overnight"].update(take_profit_pct=12.0, stop_loss_pct=10.0, scale_out_pct=0.5, trail_pct=8.0)
+    t.strategies["runner_overnight"].pop("stop_loss_pct_override", None)
+    t.hard_filter_strategies = []
     return t
 
 

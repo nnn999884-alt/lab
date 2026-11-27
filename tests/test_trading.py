@@ -16,6 +16,178 @@ def et(h, m, d=D):
     return datetime(d.year, d.month, d.day, h, m, tzinfo=ET)
 
 
+def test_midday_entry_block_records_rejected_signal_without_crashing(env):
+    from pennybot.trading.strategies import Plan
+
+    tr, market, mv, clock, journal, ctl, ex = env
+    clock[0] = et(13, 30)
+
+    class Candidate:
+        KEEP_OVERNIGHT = False
+        SESSIONS = {"REGULAR"}
+        p = {}
+
+        def scan(self, ctx):
+            return [Plan("scalp", "PEN", True, "candidate", score=5, price=1.0)]
+
+    tr.strategies = {"scalp": Candidate()}
+    tr.scan_and_enter(clock[0], D, "REGULAR")
+    signals = journal.q("SELECT ok, reason FROM signals WHERE symbol='PEN'")
+    assert len(signals) == 1
+    assert signals[0]["ok"] == 0 and "13:00~15:00 ET" in signals[0]["reason"]
+    assert journal.open_trades() == []
+
+
+def test_alert_limit_signal_reaches_paper_order_journal(env):
+    from pennybot.trading.alertlimit import AlertLimit
+
+    tr, market, mv, clock, journal, ctl, ex = env
+    clock[0] = et(5, 0)
+    market.set("PEN", 1.04, 1.06)
+    tr.tcfg.strategies["alert_limit"]["enabled"] = True
+    tr.tcfg.strategies["alert_limit"]["sessions"] = ["DAY", "PRE", "REGULAR", "AFTER"]
+    tr.tcfg.strategies["alert_limit"]["min_price"] = 0.01
+    tr.strategies = {"alert_limit": AlertLimit(tr.tcfg.strategies["alert_limit"])}
+    opened = (clock[0] - timedelta(seconds=10)).isoformat()
+    mv.q = lambda sql, args=(): [("PEN", 1.0, opened, "알림가 1.05", 1.05)]
+    tr.scan_and_enter(clock[0], D, "PRE")
+    trades = journal.q("SELECT id, strategy, status FROM trades WHERE strategy='alert_limit'")
+    assert len(trades) == 1
+    assert journal.q("SELECT trade_id, side, status FROM orders WHERE trade_id=?", (trades[0]["id"],))
+
+
+def test_a1_has_no_position_count_cap_but_keeps_per_trade_budget(env):
+    tr, market, mv, clock, journal, ctl, ex = env
+    tr.tcfg.max_open_positions = 0
+    tr.tcfg.strategies["alert_limit"]["max_positions"] = 0
+    tr.tcfg.strategies["alert_limit"]["enabled"] = True
+    tr.tcfg.strategies["alert_limit"]["sessions"] = ["DAY", "PRE", "REGULAR", "AFTER"]
+    active = [{"strategy": "alert_limit", "symbol": f"OLD{i}"} for i in range(5)]
+    assert tr.risk.can_enter("alert_limit", "NEW", D.isoformat(), active,
+                             now=clock[0], acct=Account(1000, 1000)) is None
+    p = tr.tcfg.strategies["alert_limit"]
+    assert p["sizing_slots"] == 3
+    assert tr.risk.size("alert_limit", 1.0, 0.7, Account(1000, 1000)) > 0
+
+
+def test_runtime_position_and_cash_limits_apply_to_new_entries(env):
+    tr, market, mv, clock, journal, ctl, ex = env
+    tr.tcfg.strategies["alert_limit"]["enabled"] = True
+    tr.tcfg.strategies["alert_limit"]["sessions"] = ["DAY", "PRE", "REGULAR", "AFTER"]
+    ctl.update(limits={"max_open_positions": 2,
+                       "strategy_max_positions": {"alert_limit": 1, "model_pick": 2},
+                       "cash_per_trade_pct": 20.0, "max_position_pct": 30.0,
+                       "max_position_usd": 500.0, "risk_per_trade_pct": 10.0})
+    active = [{"strategy": "alert_limit", "symbol": "OLD"}]
+    assert tr.risk.can_enter("alert_limit", "NEW", D.isoformat(), active,
+                             now=clock[0], acct=Account(1000, 1000)) == "전략 동시 보유 한도"
+    active.append({"strategy": "model_pick", "symbol": "OTHER"})
+    assert tr.risk.can_enter("alert_limit", "NEW", D.isoformat(), active,
+                             now=clock[0], acct=Account(1000, 1000)) == "전체 동시 보유 한도"
+    assert tr.risk.size("alert_limit", 2.0, 1.4, Account(1000, 1000)) == 100
+    ctl.update(limits={"cash_per_trade_pct": 5.0})
+    assert tr.risk.size("alert_limit", 2.0, 1.4, Account(1000, 1000)) == 25
+    ctl.update(limits={"cash_per_trade_pct": None})
+    assert tr.risk.size("alert_limit", 2.0, 1.4, Account(1000, 1000)) == 16
+
+
+def test_a1_price_range_extends_to_15(env):
+    from pennybot.trading.alertlimit import AlertLimit
+    from pennybot.trading.strategies import Ctx
+
+    tr, market, mv, clock, journal, ctl, ex = env
+    clock[0] = et(5, 0)
+    tr.cal.refresh(clock[0])
+    opened = (clock[0] - timedelta(seconds=10)).isoformat()
+    mv.q = lambda sql, args=(): [("IN", 15.0, opened, "signal", 15.0),
+                                 ("OUT", 15.01, opened, "signal", 15.01)]
+    tr.tcfg.strategies["alert_limit"]["sessions"] = ["DAY", "PRE", "REGULAR", "AFTER"]
+    plans = AlertLimit(tr.tcfg.strategies["alert_limit"]).scan(
+        Ctx(clock[0], D, "PRE", tr.cal, mv, tr.tcfg))
+    assert [p.symbol for p in plans] == ["IN"]
+    assert plans[0].deadline == datetime.fromisoformat(opened) + timedelta(seconds=180, hours=5)
+
+
+@pytest.mark.parametrize("kind,bid,ask,order_type", [
+    ("early20", 0.995, 1.005, "MARKET"),
+    ("reaccel", 0.995, 1.005, "MARKET"),
+    ("burst", 0.995, 1.005, "LIMIT"),
+    ("early20", 0.95, 1.005, "LIMIT"),
+    ("early20", 1.02, 1.04, "LIMIT"),
+])
+def test_a1_routes_only_strong_alerts_with_safe_quotes_to_market(env, kind, bid, ask, order_type):
+    from pennybot.alertperf import LABELS
+    from pennybot.trading.alertlimit import AlertLimit
+
+    tr, market, mv, clock, journal, ctl, ex = env
+    clock[0] = et(5, 0)
+    market.set("PEN", bid, ask)
+    tr.tcfg.strategies["alert_limit"]["enabled"] = True
+    tr.tcfg.strategies["alert_limit"]["sessions"] = ["DAY", "PRE", "REGULAR", "AFTER"]
+    tr.strategies = {"alert_limit": AlertLimit(tr.tcfg.strategies["alert_limit"])}
+    opened = (clock[0] - timedelta(seconds=10)).isoformat()
+    mv.q = lambda sql, args=(): [("PEN", 0.97, opened, LABELS[kind], 1.0)]
+
+    tr.scan_and_enter(clock[0], D, "PRE")
+    orders = journal.q("SELECT o.type, o.price FROM orders o JOIN trades t ON t.id=o.trade_id "
+                       "WHERE t.strategy='alert_limit'")
+    assert len(orders) == 1
+    assert orders[0]["type"] == order_type
+    if order_type == "LIMIT":
+        assert orders[0]["price"] == pytest.approx(0.97)
+
+
+def test_m1_signal_reaches_paper_order_journal(env):
+    from pennybot.trading.modelpick import ModelPick
+
+    tr, market, mv, clock, journal, ctl, ex = env
+    clock[0] = et(22, 0, PREV)
+    tr.cal.refresh(clock[0])
+    market.set("PEN", 1.00, 1.01)
+    tr.tcfg.strategies["model_pick"]["enabled"] = True
+    tr.strategies = {"model_pick": ModelPick(tr.tcfg.strategies["model_pick"])}
+    tr.strategies["model_pick"].journal = journal
+    opened = (clock[0] - timedelta(seconds=10)).isoformat()
+    mv.q = lambda sql, args=(): [("PEN", 1.0, opened, "M1 model pick", 85)]
+    tr.scan_and_enter(clock[0], D, "DAY")
+    trades = journal.q("SELECT id, strategy, status, deadline FROM trades WHERE strategy='model_pick'")
+    assert len(trades) == 1, journal.q("SELECT strategy, reason FROM signals WHERE strategy='model_pick'")
+    assert journal.q("SELECT trade_id, side FROM orders WHERE trade_id=?", (trades[0]["id"],))
+    assert datetime.fromisoformat(trades[0]["deadline"]) == clock[0] + timedelta(hours=5)
+    tr.scan_and_enter(clock[0], D, "DAY")
+    assert len(journal.q("SELECT id FROM trades WHERE strategy='model_pick'")) == 1
+
+
+@pytest.mark.parametrize("strategy_name", ["alert_limit", "model_pick"])
+def test_signal_bridges_never_submit_in_live_mode(env, strategy_name):
+    tr, market, mv, clock, journal, ctl, ex = env
+    from pennybot.trading.alertlimit import AlertLimit
+    from pennybot.trading.modelpick import ModelPick
+    tr.strategies = {strategy_name: {"alert_limit": AlertLimit, "model_pick": ModelPick}[strategy_name](
+        tr.tcfg.strategies[strategy_name])}
+    tr.tcfg.strategies[strategy_name]["enabled"] = True
+    journal.mode = "live"
+    clock[0] = et(22, 0, PREV)
+    tr.cal.refresh(clock[0])
+    market.set("PEN", 1.0, 1.01)
+    mv.q = lambda sql, args=(): [("PEN", 1.0, (clock[0] - timedelta(seconds=10)).isoformat(), "signal", 90)]
+    tr.scan_and_enter(clock[0], D, "DAY")
+    assert journal.q("SELECT id FROM trades") == []
+
+
+def test_repeated_rejections_are_throttled_but_reason_changes_are_logged(tmp_path):
+    journal = Journal(tmp_path / "signals.db")
+    row = {"ts": et(5, 0).isoformat(), "trade_date": D.isoformat(), "session": "PRE",
+           "strategy": "runner_overnight", "symbol": "PEN", "ok": 0,
+           "reason": "no quote", "score": 0, "price": 1.0}
+    journal.log_signals([row])
+    journal.log_signals([{**row, "ts": et(5, 1).isoformat()}])
+    journal.log_signals([{**row, "ts": et(5, 1).isoformat(), "reason": "low volume"}])
+    journal.log_signals([{**row, "ts": et(5, 6).isoformat()}])
+    assert [r["reason"] for r in journal.q("SELECT reason FROM signals ORDER BY ts, rowid")] == [
+        "no quote", "low volume", "no quote"]
+
+
 class FakeMarket:
     def __init__(self):
         self.books = {}
@@ -95,6 +267,16 @@ def env(tmp_path):
     tcfg.stop_loss_pct_override = 0.0      # 전략별 손절폭을 검증하는 테스트라 전역 −50% 덮어쓰기는 끈다
     tcfg.strategies["dilution_catalyst"]["enabled"] = False
     tcfg.strategies["day_ignition"]["enabled"] = False
+    # 11/19 전략 7개 조건표로 기본값이 바뀌었다 — 이 파일의 테스트는 예전 숫자를 전제로 하니 예전 값으로 고정해서 돌린다
+    for _n, _legacy in {"runner_overnight": dict(take_profit_pct=12.0, stop_loss_pct=10.0, scale_out_pct=0.5, trail_pct=8.0),
+                        "scalp": dict(take_profit_pct=8.0, stop_loss_pct=6.0, max_hold_minutes=120, take_profit_pct_override=10.0,
+                                      scale_out_pct=0.5, trail_pct=2.0)}.items():
+        tcfg.strategies[_n].update(_legacy)
+        tcfg.strategies[_n].pop("stop_loss_pct_override", None)
+        tcfg.strategies[_n].pop("max_spread_pct", None)
+    tcfg.strategies["steady_trend"]["enabled"] = True
+    tcfg.strategies["regular_momentum"]["enabled"] = True
+    tcfg.hard_filter_strategies = []                        # 공통 하드 필터는 따로 테스트 (tests/test_rules7.py)
     tcfg.strategies["runner_overnight"]["enabled"] = True       # 기본 꺼짐이지만 테스트는 켜고 돌림
     tcfg.strategies["runner_overnight"]["entry_discount_pct"] = 0.0   # 아래 테스트는 즉시 체결을 가정 (할인은 따로 테스트)
     ex = PaperExchange(market, 10_000, tmp_path / "paper.json")
@@ -111,6 +293,7 @@ def test_runner_overnight_skips_high_short_ratio(env):
     """공매도 비율이 전략 설정(max_short_ratio) 이상이면 오버나이트 진입을 거른다."""
     tr, market, mv, clock, j, ctl, ex = env
     mv.shorts["PEN"] = (0.6, 0.5)      # 60% (설정 기본값 50% 이상)
+    tr.tcfg.strategies["runner_overnight"]["max_spread_pct"] = 0.0   # 점수 조건 2개 중 1개: 스프레드도 안 맞게
     market.set("PEN", 1.03, 1.035)
     tr.tick()
     assert j.q("SELECT * FROM trades") == []
@@ -120,6 +303,7 @@ def test_runner_overnight_skips_short_surge(env):
     """공매도 비율 자체는 낮아도 평소(5일 평균) 대비 급증했으면 거른다."""
     tr, market, mv, clock, j, ctl, ex = env
     mv.shorts["PEN"] = (0.3, 0.1)      # 평소 10% → 오늘 30% (3배 급증, 설정 기본값 1.5배 이상)
+    tr.tcfg.strategies["runner_overnight"]["max_spread_pct"] = 0.0   # 점수 조건 2개 중 1개: 스프레드도 안 맞게
     market.set("PEN", 1.03, 1.035)
     tr.tick()
     assert j.q("SELECT * FROM trades") == []
@@ -1230,3 +1414,35 @@ def test_scalp_sells_half_then_trails_the_rest(env):
     market.set("PEN", 1.12, 1.13)                     # 고점(1.16) 대비 −3% → 나머지 청산
     tr.tick()
     assert j.q("SELECT status FROM trades")[0]["status"] in ("CLOSED", "EXITING")
+
+
+def test_alert_limit_sessions_setting_limits_sessions(env):
+    from pennybot.trading.alertlimit import AlertLimit
+
+    tr, market, mv, clock, journal, ctl, ex = env
+    tr.tcfg.strategies["alert_limit"]["sessions"] = ["DAY"]
+    clock[0] = et(5, 0)
+    market.set("PEN", 1.04, 1.06)
+    tr.tcfg.strategies["alert_limit"]["enabled"] = True
+    tr.tcfg.strategies["alert_limit"]["min_price"] = 0.01
+    tr.strategies = {"alert_limit": AlertLimit(tr.tcfg.strategies["alert_limit"])}
+    opened = (clock[0] - timedelta(seconds=10)).isoformat()
+    mv.q = lambda sql, args=(): [("PEN", 1.0, opened, "알림가 1.05", 1.05)]
+    tr.scan_and_enter(clock[0], D, "PRE")
+    assert journal.q("SELECT id FROM trades WHERE strategy='alert_limit'") == []
+
+
+def test_alert_limit_day_order_ttl_runs_to_session_end(env):
+    from pennybot.trading.trader import Working
+
+    tr, market, mv, clock, journal, ctl, ex = env
+    placed = et(22, 0, PREV)                      # 데이마켓 한가운데 (미 동부)
+    tr.cal.refresh(placed)
+    assert tr.cal.classify(placed)[1] == "DAY"
+    tid = journal.open_trade(strategy="alert_limit", symbol="PEN", trade_date=D.isoformat(), planned_qty=1,
+                             stop=0.5, target=2.0, sell_from=placed, deadline=placed, reason="t", now=placed)
+    w = Working("o1", tid, "entry", "PEN", "BUY", placed)
+    tr.tcfg.strategies["alert_limit"]["hold_until_session_end"] = ["DAY"]
+    assert tr._entry_ttl(w) > 3 * 3600            # 3분이 아니라 세션 끝(04:00 ET)까지
+    tr.tcfg.strategies["alert_limit"]["hold_until_session_end"] = []
+    assert tr._entry_ttl(w) == 180

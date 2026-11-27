@@ -244,7 +244,8 @@ class TriggerQuoteLogger:
         self._last_req = self.clock()
         req_start = self.clock()
         try:
-            ob = self.c.request("GET", "/api/v1/orderbook", params={"symbol": trig["symbol"]}, retries=0)
+            ob = self.c.orderbook(trig["symbol"]) if hasattr(self.c, "orderbook") else self.c.request(
+                "GET", "/api/v1/orderbook", params={"symbol": trig["symbol"]}, retries=0)
         except Exception as e:
             resp = self.clock()
             code = getattr(getattr(e, "response", None), "status_code", None) or getattr(e, "status", None)

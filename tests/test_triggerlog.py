@@ -169,6 +169,22 @@ def test_fresh_quote_stores_request_response_and_asof_times_separately(tmp_path)
     assert cli.calls == [("GET", "/api/v1/orderbook", {"symbol": "AAA"}, 0)]      # 재시도 없음(retries=0)
 
 
+def test_ls_client_uses_orderbook_instead_of_unsupported_request(tmp_path):
+    lg, st, cli, clock = make(tmp_path)
+
+    def orderbook(symbol):
+        assert symbol == "AAA"
+        now = clock.now
+        return {"timestamp": datetime.fromtimestamp(now - 2, KST).isoformat(),
+                "bids": [{"price": "1.04", "volume": "500"}],
+                "asks": [{"price": "1.06", "volume": "300"}]}
+
+    cli.orderbook = orderbook
+    lg._handle(st, trig(clock.now + 1))
+    assert rows(st)[0][1:3] == ("ok", 1)
+    assert cli.calls == []
+
+
 @pytest.mark.parametrize("kw,status", [
     ({"ts_mode": "none"}, "unconfirmed_no_asof"),          # 기준 시각 없음 → 수신 시각만으로 신선하다고 하지 않음
     ({"ts_offset": -60.0}, "unconfirmed_stale_asof"),      # 기준 시각이 낡음

@@ -8,6 +8,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from ..sessions import AFTER, DAY, PRE, REGULAR
+from .rules7 import NO_BUY_EVENTS, pass_score, rvol, vwap
 from .strategies import (Ctx, FINANCING_WORDS, POSITIVE_DILUTION, POSITIVE_NEWS, Plan, Strategy,
                          events_of, next_day_open, quote_check)
 
@@ -114,6 +115,12 @@ def _candidates(ctx, limit: int = 120) -> list[str]:
 def _plan(ctx, strat: Strategy, symbol: str, price: float, reason: str, score: float) -> Plan:
     p = strat.p
     deadline = next_day_open(ctx.now)
+    if p.get("max_hold_minutes"):                              # 11/19: 전략별 보유 시간 제한
+        deadline = min(deadline, ctx.now + timedelta(minutes=p["max_hold_minutes"]))
+    if p.get("hold_until") == "session_end":
+        bnd = ctx.bound(ctx.session)
+        if bnd:
+            deadline = min(deadline, bnd[1])
     return Plan(strat.name, symbol, True, reason, score=score, price=price,
                 stop=price * (1 - p["stop_loss_pct"] / 100),
                 target=price * (1 + p["take_profit_pct"] / 100),
@@ -123,42 +130,53 @@ def _plan(ctx, strat: Strategy, symbol: str, price: float, reason: str, score: f
 
 
 class Squeeze(Strategy):
+    """공매도 스퀴즈 (11/19 조건표): 필수 = 숏 30%↑ · 당일 +10%↑ + 고점 갱신. 점수(3개 중 2개) = 대차 20%↑ · 거래대금 $100만↑ · 유통주 2천만↓."""
     name = "squeeze"
     SESSIONS = ALL_SESSIONS
 
     def scan(self, ctx: Ctx) -> list[Plan]:
         p = self.p
-        latest = ctx.mv.q("SELECT MAX(trade_date) FROM short_volume WHERE trade_date<=?",
-                          (ctx.trade_date.isoformat(),))
+        latest = ctx.mv.q("SELECT MAX(trade_date) FROM short_volume WHERE trade_date<=?", (ctx.trade_date.isoformat(),))
         if not latest or not latest[0][0]:
             return []
         rows = ctx.mv.q("SELECT symbol FROM short_volume WHERE trade_date=? AND total_volume>0 "
-                        "AND short_volume/total_volume >= ? ORDER BY short_volume/total_volume DESC LIMIT 60",
+                        "AND short_volume/total_volume >= ? ORDER BY short_volume/total_volume DESC LIMIT 120",
                         (latest[0][0], p["min_short_ratio"]))
         out = []
         for (sym,) in rows:
             if sym in ctx.held:
                 continue
-            ratio = _short_days(ctx.mv, sym, ctx.trade_date, 2)
+            ratio = _short_days(ctx.mv, sym, ctx.trade_date, 1)
             if ratio is None or ratio < p["min_short_ratio"]:
                 continue
-            fee = _borrow_fee(ctx.mv, sym)
-            if fee is None or fee < p["min_borrow_fee"] or not _ssr_or_regsho(ctx.mv, sym, ctx.trade_date):
-                continue
+            pc = ctx.mv.prev_close(sym, ctx.trade_date, allow_api=False)
             b = _book(ctx, sym)
-            if not b or not b.has_quote or b.spread_pct > p["max_spread_pct"]:
+            if not pc or not b or not b.has_quote:
                 continue
+            chg = (b.mid / pc - 1) * 100
+            if chg < p["min_day_change"]:
+                continue
+            hi = ctx.mv.q("SELECT MAX(high) FROM bars_1m WHERE symbol=? AND trade_date=? AND ts<=?",
+                          (sym, ctx.trade_date.isoformat(), ctx.mv._asof()))
+            day_high = float(hi[0][0]) if hi and hi[0][0] else 0.0
+            if not day_high or b.mid < day_high * 0.99:                       # 고점 갱신 중 (고점의 1% 안)
+                continue
+            fee = _borrow_fee(ctx.mv, sym)
             dollar = _dollar(ctx.mv, sym, ctx.trade_date)
-            if dollar < p["min_dollar"]:
+            sh = ctx.fund.shares(sym, ctx.trade_date) if ctx.fund else None
+            ok, txt = pass_score({f"대차 {fee or 0:.0f}%": fee is not None and fee >= p["min_borrow_fee"],
+                                  f"거래대금 ${dollar / 1e6:.1f}M": dollar >= p["min_dollar"],
+                                  "유통주 소형": bool(sh and sh <= p["max_float"])}, p.get("score_need", 2))
+            if not ok:
                 continue
-            score = min(100.0, 40 + ratio * 50 + min(fee, 100) * 0.2 + (10 if dollar >= 5e6 else 0))
             out.append(_plan(ctx, self, sym, self._entry_price(b),
-                             f"대차 연 {fee:.0f}%, SSR/RegSHO, 거래대금 ${dollar/1e6:.1f}M",
-                             score))
+                             f"숏 {ratio:.0%}, 당일 {chg:+.0f}% 고점 갱신 · {txt}", min(100.0, 40 + ratio * 50 + chg * 0.3)))
         return out
 
 
 class News(Strategy):
+    """뉴스 단타 (11/19 조건표): 필수 = 호재 키워드 뉴스 30분 안(오퍼링·워런트·액면병합 제외) · 신호 후 +15% 이상 오른 건 제외.
+    점수(3개 중 2개) = 3분 거래대금 $10만↑ · 스프레드 2.5%↓ · RVOL 3배↑."""
     name = "news"
     SESSIONS = ALL_SESSIONS
 
@@ -169,25 +187,30 @@ class News(Strategy):
         for f in ctx.mv.filings_since(since):
             sym = f.get("symbol")
             events = events_of(f)
-            if not sym or sym in ctx.held or sym in seen:
+            if not sym or sym in ctx.held or sym in seen or events & NO_BUY_EVENTS:
                 continue
             if not (events & POSITIVE_NEWS) or (f.get("direction") or 0) < 0:
                 continue
             seen.add(sym)
             b = _book(ctx, sym)
-            if not b or not b.has_quote or b.spread_pct > p["max_spread_pct"]:
-                continue
-            if _dollar(ctx.mv, sym, ctx.trade_date, minutes=3) < p["min_dollar_3m"]:
+            if not b or not b.has_quote:
                 continue
             r = ctx.mv.q("SELECT last FROM prices WHERE symbol=? AND ts<=? ORDER BY ts DESC LIMIT 1",
                          (sym, f.get("accepted") or ctx.mv._asof()))
             at_signal = float(r[0][0]) if r and r[0][0] else b.mid
-            if at_signal and (b.mid / at_signal - 1) * 100 > p["max_runup_after_signal_pct"]:
+            run = (b.mid / at_signal - 1) * 100 if at_signal else 0.0
+            if run > p["max_runup_after_signal_pct"]:
                 continue
-            score = 60 + (20 if events & POSITIVE_DILUTION else 0) - max(0.0, (b.mid / at_signal - 1) * 100)
+            d3 = _dollar(ctx.mv, sym, ctx.trade_date, minutes=3)
+            rv = rvol(ctx.mv, sym, ctx.trade_date)
+            ok, txt = pass_score({f"3분 거래대금 ${d3 / 1e3:.0f}K": d3 >= p["min_dollar_3m"],
+                                  f"스프레드 {b.spread_pct:.1f}%": b.spread_pct <= p["max_spread_pct"],
+                                  f"RVOL {rv or 0:.1f}배": (rv or 0) >= p["min_rvol"]}, p.get("score_need", 2))
+            if not ok:
+                continue
+            score = 60 + (20 if events & POSITIVE_DILUTION else 0) - max(0.0, run)
             out.append(_plan(ctx, self, sym, self._entry_price(b),
-                             f"호재 {', '.join(sorted(events & POSITIVE_NEWS))} {p['window_minutes']}분 내, "
-                             f"신호 후 {(b.mid / at_signal - 1) * 100:+.0f}%", score))
+                             f"호재 {', '.join(sorted(events & POSITIVE_NEWS))} {p['window_minutes']}분 내, 신호 후 {run:+.0f}% · {txt}", score))
         return out
 
 
@@ -250,8 +273,10 @@ class Accumulation(Strategy):
 
 
 class Reversal(Strategy):
+    """역추세 반등 (11/19 조건표): 프리·애프터만. 필수 = 당일 −30%↓ 급락 후 저점 대비 +12% 회복(오퍼링·희석 급락은 공통 필터가 제외).
+    점수(2개 중 1개) = 거래대금 $300만↑ · 거래량 평소(20일) 2배↑. 청산은 +12% / −25% / 세션 종료."""
     name = "reversal"
-    SESSIONS = ALL_SESSIONS
+    SESSIONS = {PRE, AFTER}
 
     def scan(self, ctx: Ctx) -> list[Plan]:
         p = self.p
@@ -275,23 +300,30 @@ class Reversal(Strategy):
             if _recent_halt(ctx.mv, sym, ctx.now):
                 continue
             dollar = _dollar(ctx.mv, sym, ctx.trade_date)
-            if dollar < p["min_dollar"]:
+            vol = ctx.mv.q("SELECT COALESCE(SUM(volume),0) FROM bars_1m WHERE symbol=? AND trade_date=? AND ts<=?",
+                           (sym, ctx.trade_date.isoformat(), ctx.mv._asof()))
+            avg = ctx.mv.q("SELECT AVG(volume) FROM (SELECT volume FROM daily_bars WHERE symbol=? AND d<? ORDER BY d DESC LIMIT 20)",
+                           (sym, ctx.trade_date.isoformat()))
+            vr = (vol[0][0] / avg[0][0]) if vol and avg and avg[0][0] and vol[0][0] else 0.0
+            ok, txt = pass_score({f"거래대금 ${dollar / 1e6:.1f}M": dollar >= p["min_dollar"],
+                                  f"거래량 {vr:.1f}배": vr >= p["min_vol_ratio"]}, p.get("score_need", 1))
+            if not ok:
                 continue
             out.append(_plan(ctx, self, sym, self._entry_price(b),
-                             f"당일 {drop:.0f}% 급락 후 저가 대비 {(b.mid / low - 1) * 100:+.0f}% 회복, "
-                             f"거래대금 ${dollar/1e6:.1f}M", min(100.0, 50 - drop)))
+                             f"당일 {drop:.0f}% 급락 후 저가 대비 {(b.mid / low - 1) * 100:+.0f}% 회복 · {txt}", min(100.0, 50 - drop)))
         return out
 
 
 class Pump(Strategy):
+    """급등 눌림 (11/19 조건표): 프리·데이·정규. 필수 = 오늘 +40%↑ · 거래대금 $100만↑ · 고점 −5~−15% 눌림.
+    점수(3개 중 2개) = 거래량 5배↑ · VWAP 위 · 세션 20분↑. 청산: 절반 +15%, 나머지 추적 6% / −20% / 2시간."""
     name = "pump"
     SESSIONS = ALL_SESSIONS
 
     def scan(self, ctx: Ctx) -> list[Plan]:
         p = self.p
-        day_open = ctx.bound(DAY)
-        if ctx.session == DAY and day_open and ctx.now < day_open[0] + timedelta(minutes=p["min_session_minutes"]):
-            return []
+        bnd = ctx.bound(ctx.session)
+        session_ok = bool(bnd) and ctx.now >= bnd[0] + timedelta(minutes=p["min_session_minutes"])
         rows = ctx.mv.q("SELECT symbol, SUM(close*volume) AS dollar, SUM(volume) AS vol FROM bars_1m "
                         "WHERE trade_date=? AND ts<=? GROUP BY symbol HAVING SUM(close*volume) >= ?",
                         (ctx.trade_date.isoformat(), ctx.mv._asof(), p["min_dollar"]))
@@ -302,29 +334,33 @@ class Pump(Strategy):
             pc = ctx.mv.prev_close(sym, ctx.trade_date, allow_api=False)
             if not pc:
                 continue
-            hist = ctx.mv.q("SELECT AVG(volume) FROM (SELECT volume FROM daily_bars WHERE symbol=? AND d<? "
-                            "ORDER BY d DESC LIMIT 20)", (sym, ctx.trade_date.isoformat()))
-            avg = hist[0][0] if hist else None
-            if not avg or vol / avg < p["min_vol_ratio"]:
-                continue
             path = ctx.mv.q("SELECT high, low FROM bars_1m WHERE symbol=? AND trade_date=? AND ts<=? ORDER BY ts",
                             (sym, ctx.trade_date.isoformat(), ctx.mv._asof()))
             if len(path) < 10:
                 continue
             day_high = max(r[0] for r in path)
-            low30 = min(r[1] for r in path[-30:])
             b = _book(ctx, sym)
-            if not b or not b.has_quote or b.spread_pct > 3:
+            if not b or not b.has_quote:
                 continue
             chg = (b.mid / pc - 1) * 100
             if chg < p["min_day_change"]:
                 continue
             pullback = (b.mid / day_high - 1) * 100
-            if pullback > -p["pullback_pct"] or b.mid < low30 * 1.01:
+            if not (-p["pullback_max_pct"] <= pullback <= -p["pullback_min_pct"]):
+                continue
+            hist = ctx.mv.q("SELECT AVG(volume) FROM (SELECT volume FROM daily_bars WHERE symbol=? AND d<? "
+                            "ORDER BY d DESC LIMIT 20)", (sym, ctx.trade_date.isoformat()))
+            avg = hist[0][0] if hist else None
+            vr = vol / avg if avg else 0.0
+            vw = vwap(ctx.mv, sym, ctx.trade_date)
+            ok, txt = pass_score({f"거래량 {vr:.1f}배": vr >= p["min_vol_ratio"], "VWAP 위": bool(vw and b.mid > vw),
+                                  f"세션 {p['min_session_minutes']}분↑": session_ok}, p.get("score_need", 2))
+            if not ok:
+                out.append(self._reject(sym, f"당일 {chg:+.0f}% · 고점 {pullback:+.0f}% 눌림, 점수 부족 {txt}", b.mid))
                 continue
             score = min(100.0, 50 + chg * 0.5 - pullback * 2)
             out.append(_plan(ctx, self, sym, self._entry_price(b),
-                             f"당일 {chg:+.0f}% 급등 · 고점 대비 {pullback:+.0f}% 눌림 · 저점 방어 · 거래량 {vol/avg:.1f}배", score))
+                             f"당일 {chg:+.0f}% 급등 · 고점 대비 {pullback:+.0f}% 눌림 · {txt}", score))
         return out
 
 

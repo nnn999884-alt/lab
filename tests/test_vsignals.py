@@ -1,5 +1,6 @@
 import json
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 from pennybot.collector import Store
 from pennybot.collector.runner import Collector
@@ -27,6 +28,82 @@ def make(tmp_path):
 
 
 T0 = datetime(2026, 10, 23, 8, 0, tzinfo=timezone.utc)
+
+
+def test_a1_new_signal_uses_three_percent_limit(tmp_path):
+    col, st, _ = make(tmp_path)
+    col.cfg.vsignal_strategies.append("A1")
+    col._settings = SimpleNamespace(get=lambda: {"strategies": {"A1": True}})
+    col.c = SimpleNamespace(quote_now=lambda sym, ttl=2.0: {"price": 1.0})
+    col.cal = SimpleNamespace(classify=lambda now: (None, "PRE"))
+    col._a1_order(T0, "PENX", "burst", st)
+    entry, reason = st.query("SELECT entry, reason FROM vsignals WHERE strat='A1'")[0]
+    assert abs(entry - 0.97) < 1e-9
+    assert "−3% 지정가 3분" in reason
+
+
+def test_a1_virtual_trade_is_not_executed_when_paper_strategy_is_enabled(tmp_path):
+    col, st, sent = make(tmp_path)
+    col.root_cfg = SimpleNamespace(mode="paper", trading=SimpleNamespace(
+        strategies={"alert_limit": {"enabled": True}}))
+    with st.db:
+        cur = st.db.execute(
+            "INSERT INTO vsignals(symbol,d0,opened,session,entry,status,high,low,last,tp,sl,strat) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            ("PENX", "2026-10-23", T0.isoformat(), "PRE", 1.0, "OPEN", 1.0, 1.0, 1.0, 30, 30, "A1"))
+    col._vnotify("buy", cur.lastrowid, "PRE", st)
+    v = col._vrow(st.query("SELECT * FROM vsignals WHERE id=?", (cur.lastrowid,))[0])
+    col._vupdate(st, v, 1.05, T0 + timedelta(hours=2), "PRE")
+    assert st.query("SELECT status FROM vsignals WHERE id=?", (cur.lastrowid,))[0][0] == "OPEN"
+    assert sent.msgs == []
+
+
+def test_a1_signal_order_is_not_virtual_filled_in_paper_mode(tmp_path):
+    col, st, _ = make(tmp_path)
+    col.root_cfg = SimpleNamespace(mode="paper", trading=SimpleNamespace(
+        strategies={"alert_limit": {"enabled": True}}))
+    with st.db:
+        st.db.execute(
+            "INSERT INTO vsignals(symbol,d0,opened,session,entry,status,high,low,last,tp,sl,strat) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            ("PENX", "2026-10-23", T0.isoformat(), "PRE", 1.0, "ORDER", 1.0, 1.0, 1.0, 30, 30, "A1"))
+    col._a1_tick(T0, "PRE", st)
+    assert st.query("SELECT status FROM vsignals WHERE strat='A1'")[0][0] == "ORDER"
+
+
+def test_paper_signal_sources_are_not_virtual_positions(tmp_path):
+    col, st, _ = make(tmp_path)
+    col.root_cfg = SimpleNamespace(mode="paper", trading=SimpleNamespace(
+        strategies={"alert_limit": {"enabled": True}, "model_pick": {"enabled": True}}))
+    col._rt_set = lambda syms: None
+    with st.db:
+        st.db.executemany(
+            "INSERT INTO vsignals(symbol,d0,opened,session,entry,status,strat) "
+            "VALUES (?, '2026-10-23', ?, 'PRE', 1, ?, ?)",
+            [("AONE", T0.isoformat(), "ORDER", "A1"),
+             ("MONE", T0.isoformat(), "OPEN", "M1"),
+             ("OTHER", T0.isoformat(), "OPEN", "S1")],
+        )
+    col._vopen_refresh(st)
+    assert "AONE" not in col._vorders
+    assert "MONE" not in col._vopen
+    assert "OTHER" in col._vopen
+
+
+def test_m1_virtual_trade_message_is_hidden_when_paper_strategy_is_enabled(tmp_path):
+    col, st, sent = make(tmp_path)
+    col.root_cfg = SimpleNamespace(mode="paper", trading=SimpleNamespace(
+        strategies={"model_pick": {"enabled": True}}))
+    with st.db:
+        cur = st.db.execute(
+            "INSERT INTO vsignals(symbol,d0,opened,session,entry,status,high,low,last,tp,sl,strat) "
+            "VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+            ("PENX", "2026-10-23", T0.isoformat(), "DAY", 1.0, "OPEN", 1.0, 1.0, 1.0, 20, 15, "M1"))
+    col._vnotify("buy", cur.lastrowid, "DAY", st)
+    v = col._vrow(st.query("SELECT * FROM vsignals WHERE id=?", (cur.lastrowid,))[0])
+    col._vupdate(st, v, 1.3, T0 + timedelta(minutes=1), "DAY")
+    assert st.query("SELECT status FROM vsignals WHERE id=?", (cur.lastrowid,))[0][0] == "OPEN"
+    assert sent.msgs == []
 
 
 def bars_of(px, vol=100000.0):
@@ -699,6 +776,9 @@ def test_model_picks_buy_fresh_only_and_close_at_regular_end(tmp_path, monkeypat
     txt = sent.msgs[-1][0]
     assert "데이마켓 후보" in txt and "AAA" in txt and "거래 없어 건너뜀 1종목" in txt and "가상 매수 1종목" in txt
     assert txt.index("AAA") < txt.index("건너뜀") < txt.index("BBB")
+    col.root_cfg = SimpleNamespace(mode="paper", trading=SimpleNamespace(
+        strategies={"model_pick": {"enabled": True}}))
+    assert "모의매매 신호 1종목" in col._model_picks_text(picks)
     v = col._vrow(st.query("SELECT * FROM vsignals")[0])
     et = lambda h, m=0: datetime(2026, 11, 9, h + 5, m, tzinfo=timezone.utc)      # ET → UTC (11월 = UTC−5)
     assert col._vexit(v, 1.19, 1.195, et(10)) is None                            # 목표 근처 밀림 정리 없음

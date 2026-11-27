@@ -46,16 +46,20 @@ STRATEGY_KO = {
     "day_handoff": "데이 거래량 핸드오프",
     "after_dip": "애프터 눌림 마감 반등",
     "wave2_b1": "2차 파동 B1",
-    "alert_limit": "알림 지정가 (전략A)",
+    "alert_limit": "A1 알림 지정가",
+    "catalyst_pullback": "호재·내부자 눌림",
+    "premarket_turnover_breakout": "A. 프리마켓 회전 돌파",
+    "open_vwap_hold": "B. 개장 후 첫 눌림 VWAP 홀드",
+    "overnight_no_dilution_hold": "C. 오버나이트 무희석 지속",
+    "offering_support_bounce": "D. 오퍼링 가격 지지 반등 (실험)",
+    "theme_chain": "E. 동종 테마 연쇄 (실험)",
 }
 # 대시보드에서 비슷한 전략끼리 묶어 보여 주는 이름 (2026-11-18). 순서 = 화면 순서.
 STRATEGY_GROUP = {
-    "눌림·반등 매수": ["pullback", "pump", "session_pop", "rebound", "reversal", "day_dip", "after_dip"],
-    "급등 추격·점화": ["surge", "day_ignition", "scalp", "regular_momentum", "combined"],
-    "지정가 대기·스윙": ["alert_limit", "wave2_b1"],
-    "매집·수급": ["steady_trend", "accumulation", "squeeze"],
-    "뉴스·공시": ["news", "dilution_catalyst"],
-    "데이 → 밤 구조 (보류)": ["runner_overnight", "day_handoff", "session_gap"],
+    "전략 7개 (11/19 조건표)": ["pump", "catalyst_pullback", "news", "scalp", "runner_overnight", "squeeze", "reversal"],
+    "신규 전략 5개 (실험)": ["premarket_turnover_breakout", "open_vwap_hold", "overnight_no_dilution_hold", "offering_support_bounce", "theme_chain"],
+    "꺼 둔 전략": ["pullback", "rebound", "surge", "session_pop", "day_ignition", "dilution_catalyst", "day_dip", "regular_momentum",
+                "steady_trend", "session_gap", "accumulation", "day_handoff", "after_dip", "wave2_b1", "alert_limit", "combined"],
 }
 GROUP_OF = {n: g for g, ns in STRATEGY_GROUP.items() for n in ns}
 GROUP_ORDER = list(STRATEGY_GROUP)
@@ -146,8 +150,8 @@ def events_of(f: dict) -> set[str]:
 
 def quote_check(sym: str, ctx: Ctx):
     b = ctx.mv.book(sym)
-    if not b.has_quote:
-        return b, "데이마켓 호가 없음"
+    if b is None or not b.has_quote:
+        return b, f"{SESSION_KO.get(ctx.session, ctx.session)} 호가 없음"
     cap = ctx.tcfg.spread_cap(ctx.session)
     if b.spread_pct > cap:
         return b, f"스프레드 {b.spread_pct:.1f}% (세션 기준 {cap:.1f}%)"
@@ -249,6 +253,9 @@ class Strategy:
 
 
 class RunnerOvernight(Strategy):
+    """러너 오버나이트 (11/19 조건표): 데이마켓. 필수 = 전일 +25%↑ · 종가가 고점 −5% 이내 · 애프터 오퍼링 없음.
+    점수(2개 중 1개) = 공매도 비율 낮음 · 스프레드 3% 이하. 청산: 절반 +8%(나머지 추적) / −20% / 정규장 개장 30분.
+    (표에 없는 기존 안전장치 — 거래 회전·데이마켓 등락 범위·증자 필터 — 는 그대로 둠)"""
     name = "runner_overnight"
 
     def scan(self, ctx: Ctx) -> list[Plan]:
@@ -263,7 +270,12 @@ class RunnerOvernight(Strategy):
             if r.get("unverified"):
                 out.append(self._reject(sym, "전날 마감 위치·거래량 확인 불가 (수집기 기록 없음)"))
                 continue
-            if r.get("close_loc") is not None and r["close_loc"] < self.p["min_close_loc"]:
+            hi, cl = r.get("high"), r.get("close")
+            if hi and cl:                                         # 11/19 조건표: 종가가 고점 −5% 이내
+                if cl < hi * (1 - self.p.get("max_close_from_high_pct", 5.0) / 100):
+                    out.append(self._reject(sym, f"전날 +{r['change_pct']:.0f}%였지만 종가가 고점보다 {(1 - cl / hi) * 100:.0f}% 아래"))
+                    continue
+            elif r.get("close_loc") is not None and r["close_loc"] < self.p["min_close_loc"]:
                 out.append(self._reject(sym, f"전날 +{r['change_pct']:.0f}%였지만 고가 대비 밀려 마감"))
                 continue
             sh = ctx.fund.shares(sym, ctx.trade_date) if ctx.fund else None
@@ -288,14 +300,15 @@ class RunnerOvernight(Strategy):
                 out.append(self._reject(sym, why, b.mid))
                 continue
             sr, sr5 = ctx.mv.short_ratio(sym, prev)
-            if sr is not None and sr >= self.p["max_short_ratio"]:
-                out.append(self._reject(sym, f"공매도 비율 {sr:.0%} (오버나이트엔 다음 날 시가가 나빴음)", b.mid))
-                continue
-            if sr is not None and sr5 and sr / sr5 >= self.p["max_short_surge"]:
-                out.append(self._reject(sym, f"공매도가 평소 대비 {sr / sr5:.1f}배 급증", b.mid))
+            low_short = sr is None or (sr < self.p["max_short_ratio"] and not (sr5 and sr / sr5 >= self.p["max_short_surge"]))
+            from .rules7 import pass_score
+            ok, txt = pass_score({"공매도 낮음": low_short, f"스프레드 {b.spread_pct:.1f}%": b.spread_pct <= self.p.get("max_spread_pct", 3.0)},
+                                 self.p.get("score_need", 1))
+            if not ok:
+                out.append(self._reject(sym, f"전날 +{r['change_pct']:.0f}%, 점수 부족 {txt} (공매도 {sr if sr is not None else '-'})", b.mid))
                 continue
             out.append(self._plan(ctx, sym, self._entry_price(b),
-                                  f"전날 +{r['change_pct']:.0f}%" + (f", 회전 {rot:.1f}회" if rot else "")
+                                  f"전날 +{r['change_pct']:.0f}%" + (f", 회전 {rot:.1f}회" if rot else "") + f" · {txt}"
                                   + f", 데이마켓 {chg:+.1f}%",
                                   score=r["change_pct"] / 10 + (rot or 0), sell_from=self._sell_from(ctx),
                                   context={"prev_change_pct": r["change_pct"], "prev_close_loc": r.get("close_loc"),
@@ -509,6 +522,10 @@ class Scalp(Strategy):
             if bad:
                 out.append(self._reject(sym, f"{ev['kind']} 신호, {bad}", 0))
                 continue
+            cap = self.p.get("max_spread_pct")
+            if cap and b.spread_pct > cap:                       # 11/19 조건표: 스프레드 2.5% 이하
+                out.append(self._reject(sym, f"{ev['kind']} 신호, 스프레드 {b.spread_pct:.1f}% (상한 {cap:g}%)", b.mid))
+                continue
             chased = chase_guard(sym, b.mid, ctx)
             if chased:
                 out.append(self._reject(sym, f"{ev['kind']} 신호, {chased}", b.mid))
@@ -597,3 +614,21 @@ ALL[Wave2B1.name] = Wave2B1
 from .alertlimit import AlertLimit   # noqa: E402
 
 ALL[AlertLimit.name] = AlertLimit
+
+from .modelpick import ModelPick  # noqa: E402
+
+ALL[ModelPick.name] = ModelPick
+STRATEGY_KO[ModelPick.name] = "M1 데이마켓"
+STRATEGY_GROUP[next(iter(STRATEGY_GROUP))].append(ModelPick.name)
+GROUP_OF[ModelPick.name] = next(iter(STRATEGY_GROUP))
+
+from .rules7 import CatalystPullback   # noqa: E402
+
+ALL[CatalystPullback.name] = CatalystPullback
+
+from .rules7 import (PremarketTurnoverBreakout, OpenVWAPHold, OvernightNoDilutionHold,
+                     OfferingSupportBounce, ThemeChain)   # noqa: E402
+
+for _cls in (PremarketTurnoverBreakout, OpenVWAPHold, OvernightNoDilutionHold,
+             OfferingSupportBounce, ThemeChain):
+    ALL[_cls.name] = _cls

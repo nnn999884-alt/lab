@@ -261,7 +261,17 @@ class Trader:
         return (self.tcfg.strategies.get(cache[w.trade_id]) or {}).get(key, default)
 
     def _entry_ttl(self, w: Working) -> float:
-        return self._entry_param(w, "entry_ttl_seconds", self.tcfg.entry_ttl_seconds)
+        ttl = self._entry_param(w, "entry_ttl_seconds", self.tcfg.entry_ttl_seconds)
+        hold = self._entry_param(w, "hold_until_session_end", ())
+        if hold:                                  # 예: 데이마켓 지정가는 그 세션이 끝날 때(프리장 시작)까지 둔다
+            try:
+                if self.cal.classify(w.placed_at)[1] in hold:
+                    end = self.cal.next_change(w.placed_at)
+                    if end:
+                        return max(ttl, (end - w.placed_at).total_seconds())
+            except Exception:
+                pass
+        return ttl
 
     def poll_orders(self, now: datetime, session: str) -> None:
         changed = self._changed_orders()
@@ -989,6 +999,8 @@ class Trader:
                   held={t["symbol"] for t in open_trades})
         plans = []
         for name, strat in self.strategies.items():
+            if getattr(strat, "PAPER_ONLY", False) and self.journal.mode != "paper":
+                continue
             if kst_blocked and not getattr(strat, "KEEP_OVERNIGHT", False):
                 continue
             enabled, why = self.risk.strategy_enabled(name)
@@ -998,12 +1010,29 @@ class Trader:
                 plans += strat.scan(ctx)
             except Exception:
                 log.exception("%s 스캔 실패", name)
+        hard = set(getattr(self.tcfg, "hard_filter_strategies", ()) or ())
+        if hard:                                         # 11/19 공통 하드 필터 (가격·스프레드·5분 거래대금·오퍼링·거래정지 해제)
+            from .rules7 import hard_check
+            for p in plans:
+                if p.ok and p.strategy in hard:
+                    try:
+                        why = hard_check(ctx, p.symbol, p.price)
+                    except Exception:
+                        why = None
+                    if why:
+                        p.ok, p.reason = False, f"{p.reason} — 공통 필터: {why}"
         def row(p, ok, reason):
             return {"ts": now.isoformat(timespec="seconds"), "trade_date": str(trade_date), "session": session,
                     "strategy": p.strategy, "symbol": p.symbol, "ok": int(ok), "reason": reason,
                     "score": p.score, "price": p.price}
 
         rows = [row(p, p.ok, p.reason) for p in plans]
+        # 13:00~15:00 ET 신규 진입 금지 (모든 전략)
+        et_now = now.astimezone(ET)
+        et_blocked = dtime(13, 0) <= et_now.time() <= dtime(15, 0)
+        if et_blocked:
+            rows = [row(p, False, f"{p.reason} — 13:00~15:00 ET 신규 진입 금지") if p.ok else row(p, p.ok, p.reason) for p in plans]
+            plans = [p for p in plans if not p.ok]
         if any(v["bot"] > v["account"] for v in self.mismatch.values()):
             rows += [row(p, False, "잔고 불일치 → 신규 매수 중단") for p in plans if p.ok]
             plans = [p for p in plans if not p.ok]
@@ -1053,7 +1082,7 @@ class Trader:
                 p.stop = p.price * (1 - sl / 100)
             if tp:
                 p.target = p.price * (1 + tp / 100)
-            block = self.risk.can_enter(p.strategy, p.symbol, str(trade_date), open_trades, unrealized, now) \
+            block = self.risk.can_enter(p.strategy, p.symbol, str(trade_date), open_trades, unrealized, now, acct) \
                 or self._warning(p.symbol)
             qty = 0 if block else self.risk.size(p.strategy, p.price, p.stop, acct)
             if not block and qty > 0:
@@ -1071,12 +1100,14 @@ class Trader:
                 self.notifier.send(msg.signal(p.strategy, p.symbol, p.price, p.reason, session, p.score,
                                               name=self._name(p.symbol)),
                                    key=f"sig-{p.strategy}-{p.symbol}", every=self.tcfg.signal_alert_minutes * 60)
+            order_price = None if p.strategy == "alert_limit" and p.context.get("entry_rule") == "market" else p.price
             tid = self.journal.open_trade(strategy=p.strategy, symbol=p.symbol, trade_date=str(trade_date),
                                           planned_qty=qty, stop=p.stop, target=p.target, session=session,
                                           sell_from=p.sell_from, deadline=p.deadline, reason=p.reason, now=now,
                                           scale_out=p.scale_out, trail_pct=p.trail_pct,
-                                          context={**p.context, "planned_qty": qty, "entry_limit": p.price})
-            self._submit(tid, p.symbol, "BUY", qty, p.price, "entry", session, now, p.reason)
+                                          context={**p.context, "planned_qty": qty, "entry_limit": order_price,
+                                                   "entry_quote": p.price})
+            self._submit(tid, p.symbol, "BUY", qty, order_price, "entry", session, now, p.reason)
             open_trades = self.journal.open_trades()
             acct.cash -= qty * p.price
         self._add_ons(now, trade_date, session)

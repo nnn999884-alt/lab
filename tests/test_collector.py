@@ -1,9 +1,47 @@
 from datetime import date, datetime, timedelta, timezone
+import threading
 
 from pennybot.collector import Collector, Store
 from pennybot.config import CollectorConfig
 from pennybot.screener import edgar as ed
 from pennybot.sessions import AFTER, CLOSED, DAY, ET, KST, PRE, REGULAR, SessionCalendar, parse_api_day
+
+
+def test_edgar_poll_runs_off_main_tick_with_separate_store(tmp_path):
+    store = Store(tmp_path / "collector.db")
+    col = Collector(FakeToss(), store, SessionCalendar(), CollectorConfig(db_path=str(tmp_path / "collector.db")))
+    entered = threading.Event()
+    release = threading.Event()
+    seen = []
+
+    def slow_poll(now, worker_store=None):
+        seen.append(worker_store is not store)
+        entered.set()
+        release.wait(2)
+
+    col.poll_edgar = slow_poll
+    try:
+        col._schedule_edgar(datetime.now(timezone.utc))
+        assert entered.wait(1)
+        assert seen == [True]
+        col._schedule_edgar(datetime.now(timezone.utc))
+        assert len(seen) == 1
+    finally:
+        release.set()
+        col._edgar_thread.join(2)
+        store.db.close()
+
+
+def test_after_price_sweep_publishes_tv_prices_without_overwriting_rest_leaders(tmp_path):
+    import time
+    store = Store(tmp_path / "market.db")
+    col = Collector(FakeToss(), store, SessionCalendar(), CollectorConfig(db_path=str(tmp_path / "market.db")))
+    col.universe = {"HOT": {}, "NEXT": {}}
+    col._tv_hot = ["HOT"]
+    col._tv = (time.time(), {"HOT": {"px": 2.0}, "NEXT": {"px": 3.0}})
+    col.after_price_sweep(datetime.now(timezone.utc), store)
+    assert store.query("SELECT symbol,last FROM price_now") == [("NEXT", 3.0)]
+    store.db.close()
 
 D = date(2026, 10, 21)   # 수요일, 서머타임 (EDT)
 
@@ -127,7 +165,7 @@ def make(tmp_path, now):
     clock = [now]
     store = Store(tmp_path / "m.db")
     cal = SessionCalendar(toss)
-    col = Collector(toss, store, cal, CollectorConfig(min_price=0.2, max_price=10), FakeEdgar(),
+    col = Collector(toss, store, cal, CollectorConfig(min_price=0.2, max_price=10, db_path=str(tmp_path / "m.db")), FakeEdgar(),
                     clock=lambda: clock[0])
     return col, toss, store, clock
 
@@ -142,6 +180,7 @@ def test_collector_tick_tags_sessions(tmp_path):
     assert q["PEN"] == 1.19 and q["LOW"] is None           # 빈 호가도 기록
     bars = store.query("SELECT session, COUNT(*) FROM bars_1m GROUP BY session ORDER BY session")
     assert bars == [("DAY", 4), ("REGULAR", 2)]            # 봉 종료 시각 기준 → 봉 중간으로 판정
+    col._edgar_thread.join(2)
     f = store.query("SELECT symbol, session, trade_date, insider_buy_usd FROM filings")
     # 장 마감 후 21:00 ET 접수 → 다음 영업일(10/22)의 데이마켓에 공개된 공시
     assert f == [("LOW", "DAY", "2026-10-22", 10000.0)]
@@ -433,3 +472,11 @@ def test_backfill_daily_pages_and_resumes(tmp_path):
     assert done_map(store) == {"AAA": "2025-01-01", "BBB": "2025-01-01"}
     rep2 = backfill_daily(fake, store, ["AAA", "BBB"], since="2025-01-01")
     assert rep2["symbols"] == 0                              # 이미 받은 종목은 건너뛴다
+def test_realtime_tick_windows_expire_without_new_trade():
+    from collections import deque
+    from pennybot.collector.runner import win60, win180
+
+    ticks = {"FLOW": deque([(100.0, 2.0, 10.0), (180.0, 3.0, 20.0)])}
+    assert win60(ticks, 200.0)["FLOW"] == (20.0, 60.0)
+    assert win180(ticks, 200.0)["FLOW"] == (30.0, 80.0)
+    assert win180(ticks, 400.0)["FLOW"] == (0.0, 0.0)

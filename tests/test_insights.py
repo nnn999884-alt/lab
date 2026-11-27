@@ -280,6 +280,126 @@ def test_ranked_orders_by_flow_not_by_price_change(tmp_path):
     assert syms.index("BUSY") < syms.index("QUIET")
 
 
+def test_top_four_balance_live_dollar_and_turnover():
+    from pennybot.precursor import flow_top_four
+    rows = [
+        {"symbol": "A", "dollar_1m": 100000, "turnover_1m": 1},
+        {"symbol": "B", "dollar_1m": 80000, "turnover_1m": 4},
+        {"symbol": "C", "dollar_1m": 60000, "turnover_1m": 3},
+        {"symbol": "D", "dollar_1m": 40000, "turnover_1m": 2},
+        {"symbol": "E", "dollar_1m": 20000, "turnover_1m": 0.5},
+    ]
+    assert flow_top_four(rows, {r["symbol"] for r in rows}, set()) == ["B", "A", "C", "D"]
+
+
+def test_top_four_does_not_promote_falling_short_term_trend():
+    from pennybot.precursor import flow_top_four
+    rows = [
+        {"symbol": "DUMP", "dollar_1m": 100000, "turnover_1m": 5,
+         "live_m": {"ret15": -8}},
+        {"symbol": "UP", "dollar_1m": 20000, "turnover_1m": 1,
+         "live_m": {"ret15": 3}},
+    ]
+    assert flow_top_four(rows, {"DUMP", "UP"}, set()) == ["UP"]
+
+
+def test_top_four_does_not_fill_empty_slots_with_weak_flow():
+    from pennybot.precursor import flow_top_four
+    rows = [
+        {"symbol": "ACTIVE", "dollar_1m": 20000, "turnover_1m": 1,
+         "live_m": {"ret15": 2}},
+        {"symbol": "QUIET", "dollar_1m": 500, "turnover_1m": 0.1,
+         "live_m": {"ret15": 1}},
+    ]
+    assert flow_top_four(rows, {"ACTIVE", "QUIET"}, set()) == ["ACTIVE"]
+
+
+def test_ranked_promotes_four_current_flow_leaders(tmp_path):
+    from pennybot.precursor import ranked
+    col, st, sent = make(tmp_path)
+    now = datetime.now(timezone.utc).isoformat()
+    specs = (("A", 100000, 10), ("B", 80000, 40), ("C", 60000, 30),
+             ("D", 40000, 20), ("E", 20000, 5))
+    st.put_precursor_daily([{"d0": "2026-10-23", "symbol": sym, "score": 1,
+                             "close": 1.0, "created": now, "signals": "[]", "metrics": "{}"}
+                            for sym, _, _ in specs])
+    st.put_stock_info([{"symbol": sym, "name": sym, "shares": 1000,
+                        "list_date": None, "updated": now} for sym, _, _ in specs])
+    st.put_live_ticks([{"symbol": sym, "ts": now, "last": 1.0,
+                        "vol_3s": vol, "amt_3s": amount,
+                        "vol_60s": vol, "amt_60s": amount} for sym, amount, vol in specs])
+    rows = ranked(str(tmp_path / "m.db"), 10, only_active=False)["rows"]
+    assert [r["symbol"] for r in rows[:4]] == ["B", "A", "C", "D"]
+    assert all(r["flow_top"] for r in rows[:4])
+
+
+def test_ranked_keeps_short_turnover_when_daily_turnover_is_extreme(tmp_path):
+    from pennybot.precursor import ranked
+    col, st, sent = make(tmp_path)
+    now = datetime.now(timezone.utc).isoformat()
+    st.put_precursor_daily([{"d0": "2026-10-23", "symbol": "PENX", "score": 1, "close": 1.0,
+                             "created": now, "signals": "[]", "metrics": json.dumps({"volume": 100})}])
+    st.put_precursor_live([{"d0": "2026-10-23", "symbol": "PENX", "ts": now,
+                            "alerted": now, "signals": "[]",
+                            "metrics": json.dumps({"vol_3m": 10, "dollar_3m": 10, "vol_today": 2000})}])
+    st.put_stock_info([{"symbol": "PENX", "name": "PENX", "shares": 100,
+                        "list_date": None, "updated": now}])
+    row = ranked(str(tmp_path / "m.db"), 10, only_active=False)["rows"][0]
+    assert row["turnover_3m"] == 10.0
+    assert row["turnover_today"] == 2000.0
+    assert row["shares_suspect"] is True
+
+
+def test_ranked_uses_recent_tick_window_for_three_minute_turnover(tmp_path):
+    from pennybot.precursor import ranked
+    _, st, _ = make(tmp_path)
+    now = datetime.now(timezone.utc).isoformat()
+    st.put_precursor_daily([{"d0": "2026-10-23", "symbol": "TICK", "score": 1,
+                             "close": 1.0, "created": now, "signals": "[]", "metrics": "{}"}])
+    st.put_stock_info([{"symbol": "TICK", "name": "TICK", "shares": 1000,
+                        "list_date": None, "updated": now}])
+    st.put_live_ticks([{"symbol": "TICK", "ts": now, "last": 1.0,
+                        "vol_60s": 20, "amt_60s": 20,
+                        "vol_180s": 75, "amt_180s": 75}])
+    row = ranked(str(tmp_path / "m.db"), 10, only_active=False)["rows"][0]
+    assert row["live_m"]["dollar_3m"] == 75
+    assert row["turnover_3m"] == 7.5
+    assert row["ts"] == now
+
+
+def test_ranked_watch_filter_turnover_and_catalyst_badges(tmp_path):
+    from pennybot.precursor import ranked
+    col, st, sent = make(tmp_path)
+    d0 = "2026-10-23"
+    now = datetime.now(timezone.utc).isoformat()
+    st.put_precursor_daily([
+        {"d0": d0, "symbol": s, "score": 1, "close": 1.0, "created": "x", "signals": "[]",
+         "metrics": json.dumps({"volume": 100})} for s in ("WATCH", "STALE")])
+    st.put_precursor_live([{"d0": d0, "symbol": "WATCH", "ts": now, "alerted": now, "signals": "[]",
+                            "metrics": json.dumps({"price": 1.1, "vol_3m": 100, "dollar_3m": 110})}])
+    st.put_stock_info([{"symbol": "WATCH", "name": "Watch", "shares": 1000, "list_date": None, "updated": now}])
+    st.put_news([{"id": "n1", "symbol": "WATCH", "source": "test", "title": "contract", "url": "u",
+                  "published": now, "trade_date": d0, "session": "REGULAR", "events": "[]", "direction": 1}])
+    st.put_filings([{"accession": "a1", "cik": 1, "symbol": "WATCH", "form": "8-K", "items": "",
+                     "accepted": now, "trade_date": d0, "session": "REGULAR", "insider_buy_usd": None,
+                     "direction": 1}])
+    rows = ranked(str(tmp_path / "m.db"), 10, only_active=False, symbols={"WATCH"})["rows"]
+    assert [r["symbol"] for r in rows] == ["WATCH"]
+    assert rows[0]["turnover_3m"] == 10.0
+    assert rows[0]["catalyst_badges"] == ["호재 뉴스", "호재 공시"]
+
+
+def test_ranked_adds_placeholder_for_new_watch_symbol(tmp_path):
+    from pennybot.precursor import ranked
+    col, st, sent = make(tmp_path)
+    st.put_precursor_daily([{"d0": "2026-10-23", "symbol": "KNOWN", "score": 1, "close": 1.0,
+                             "created": "x", "signals": "[]", "metrics": "{}"}])
+    st.put_prices([{"symbol": "NEW", "ts": "2026-10-23T15:00:00+00:00", "trade_date": "2026-10-23",
+                    "session": "REGULAR", "last": 2.0, "price_ts": None}])
+    rows = ranked(str(tmp_path / "m.db"), 10, only_active=False, symbols={"KNOWN", "NEW"})["rows"]
+    assert {r["symbol"] for r in rows} == {"KNOWN", "NEW"}
+
+
 def test_early20_text_format():
     from pennybot.precursor import early20_text
     text = early20_text("PENX", "펜엑스", 23.4, 1.85, "프리마켓", 1.234)

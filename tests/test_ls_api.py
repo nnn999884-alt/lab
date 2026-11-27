@@ -32,6 +32,22 @@ def test_gsc_builds_price_bar_and_callback_only_for_watched(tmp_path):
     assert st.sess_frames["REGULAR"] == 3
 
 
+def test_rest_refresh_replaces_stale_websocket_price_for_selected_symbol(tmp_path, monkeypatch):
+    cl, st = _client(tmp_path)
+    st._handle_ls(_gsc("AAA", 1.5))
+    monkeypatch.setattr(cl, "quote_now", lambda sym, ttl=0: {"price": 1.7} if sym == "AAA" else None)
+    rows = cl.prices(["AAA", "BBB"], rest_symbols={"AAA"})
+    assert rows[0]["lastPrice"] == 1.7
+    assert rows[1:] == []
+
+
+def test_rest_refresh_keeps_websocket_price_when_rest_unavailable(tmp_path, monkeypatch):
+    cl, st = _client(tmp_path)
+    st._handle_ls(_gsc("AAA", 1.5))
+    monkeypatch.setattr(cl, "quote_now", lambda sym, ttl=0: None)
+    assert cl.prices(["AAA"], rest_symbols={"AAA"})[0]["lastPrice"] == 1.5
+
+
 def test_rankings_shape_matches_toss(tmp_path):
     cl, st = _client(tmp_path)
     st._handle_ls(_gsc("AAA", 1.5, rate="12.0", diff="0.16", totq="5000", amount="7500"))
@@ -53,6 +69,20 @@ def test_orderbook_from_gsh_and_non_blocking(tmp_path):
     assert ob["bids"] == [{"price": 1.5, "volume": 100.0}] and ob["asks"] == [{"price": 1.52, "volume": 200.0}]
     st.connected = True                                      # book() 은 연결 중일 때만
     assert st.book("AAA").has_quote
+
+
+def test_orderbook_timestamp_preserves_cached_quote_age(tmp_path):
+    import time
+    from datetime import datetime
+
+    cl, st = _client(tmp_path)
+    st._handle_ls(json.dumps({"header": {"tr_cd": "GSH"}, "body": {"symbol": "AAA", "bidho1": "1.50",
+                                                                  "bidrem1": "100", "offerho1": "1.52", "offerrem1": "200"}}))
+    captured, bids, asks = st.depth["AAA"]
+    st.depth["AAA"] = (captured - 20, bids, asks)
+    quote = cl.orderbook("AAA")
+    age = time.time() - datetime.fromisoformat(quote["timestamp"].replace("Z", "+00:00")).timestamp()
+    assert 19 <= age <= 23
 
 
 def test_day_rollover_flushes_daily_bars(tmp_path):
@@ -140,8 +170,8 @@ def test_alert_limit_strategy_reads_a1_order(tmp_path):
     from pennybot.sessions import SessionCalendar
     from pennybot.trading.alertlimit import AlertLimit
     now = datetime(2026, 11, 18, 15, 0, tzinfo=timezone.utc)
-    rows = [("AAA", 1.00, (now - timedelta(seconds=60)).isoformat(), "알림가 1.05"),       # 유효
-            ("OLD", 1.00, (now - timedelta(seconds=400)).isoformat(), "너무 오래됨")]
+    rows = [("AAA", 1.00, (now - timedelta(seconds=60)).isoformat(), "알림가 1.05", 1.05),       # 유효
+            ("OLD", 1.00, (now - timedelta(seconds=400)).isoformat(), "너무 오래됨", 1.0)]
     mv = SimpleNamespace(q=lambda sql, a=(): [r for r in rows if r[2] >= a[0]], _asof=lambda: "9999")
     cal = SessionCalendar(None)
     ctx = SimpleNamespace(now=now, trade_date=now.date(), mv=mv, held=set(), cal=cal)
@@ -241,3 +271,37 @@ def test_nyse_holidays_and_early_close():
     d, ses = cal.classify(datetime(2026, 11, 27, 12, 0, tzinfo=ET))
     assert ses == REGULAR                                                                       # 조기폐장일 오전은 정규장
     assert cal.classify(datetime(2026, 11, 27, 14, 0, tzinfo=ET))[1] == "AFTER"                # 13시 이후 애프터
+
+
+def test_alert_limit_day_order_stays_until_day_session_ends():
+    """데이마켓 알림 지정가는 3분이 아니라 세션이 끝날 때(프리장 시작)까지 유효하다. 다른 세션은 3분 그대로."""
+    from datetime import datetime, timedelta, timezone
+    from types import SimpleNamespace
+    from pennybot.sessions import SessionCalendar
+    from pennybot.trading.alertlimit import AlertLimit
+    cal = SessionCalendar(None)
+    now = datetime(2026, 11, 18, 3, 0, tzinfo=timezone.utc)          # 미 동부 11/17 22:00 = 데이마켓 한가운데
+    assert cal.classify(now)[1] == "DAY"
+    opened = (now - timedelta(hours=1, minutes=50)).isoformat()      # 1시간 50분 전 주문 (3분이면 이미 만료)
+    rows = [("AAA", 1.00, opened, "알림가 1.05", 1.05)]
+    mv = SimpleNamespace(q=lambda sql, a=(): [r for r in rows if r[2] >= a[0]], _asof=lambda: "9999")
+    base = {"entry_ttl_seconds": 180, "hold_hours": 5, "take_profit_pct": 30.0, "stop_loss_pct": 30.0,
+            "min_price": 0.5, "max_price": 5.0}
+    ctx = SimpleNamespace(now=now, trade_date=now.date(), mv=mv, held=set(), cal=cal, session="DAY")
+    assert AlertLimit(dict(base)).scan(ctx) == []                                   # 설정 없으면 3분
+    out = AlertLimit(dict(base, hold_until_session_end=["DAY"])).scan(ctx)
+    assert [p.symbol for p in out] == ["AAA"]
+    assert out[0].deadline > cal.next_change(now)                                   # 보유 기한은 세션이 끝난 뒤부터 센다
+
+
+def test_a1_virtual_order_day_expires_only_when_session_changes():
+    from datetime import datetime, timedelta, timezone
+    from pennybot.collector.runner import Collector
+    from pennybot.vstrat import STRATEGIES
+    st = STRATEGIES["A1"]
+    now = datetime(2026, 11, 18, 3, 0, tzinfo=timezone.utc)
+    v = {"session": "DAY", "opened": (now - timedelta(hours=2)).isoformat()}
+    assert Collector._a1_order_expired(v, now, "DAY", st) is False                   # 데이마켓 안에선 계속 유지
+    assert Collector._a1_order_expired(v, now, "PRE", st) is True                    # 프리장 시작되면 취소
+    p = {"session": "PRE", "opened": (now - timedelta(minutes=4)).isoformat()}
+    assert Collector._a1_order_expired(p, now, "PRE", st) is True                    # 다른 세션은 3분

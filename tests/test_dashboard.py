@@ -1,7 +1,9 @@
 import json
+import sqlite3
 import threading
 import urllib.error
 import urllib.request
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -38,9 +40,10 @@ def test_read_endpoints(server):
     ov = get(base + "/api/overview")
     assert ov["mode"] == "paper" and ov["open_trades"] == 3
     st = {s["strategy"]: s for s in get(base + "/api/strategies")}
-    assert set(st) == {"runner_overnight", "dilution_catalyst", "day_ignition", "day_dip", "regular_momentum",
-                       "scalp", "steady_trend", "squeeze", "news", "session_gap", "accumulation", "reversal", "pullback", "rebound", "surge", "pump", "session_pop", "day_handoff", "after_dip", "wave2_b1", "alert_limit"}
-    assert st["day_ignition"]["trades"] == 12 and st["day_dip"]["config_enabled"] is False
+    assert set(st) == {"runner_overnight", "scalp", "squeeze", "news", "reversal", "pump", "catalyst_pullback",
+                       "premarket_turnover_breakout", "open_vwap_hold", "overnight_no_dilution_hold",
+                       "offering_support_bounce", "theme_chain"}
+    assert st["scalp"]["config_enabled"] is True and st["runner_overnight"]["config_enabled"] is True
     pos = get(base + "/api/positions")
     assert {p["symbol"] for p in pos} == {"PENX", "BIOZ", "NANO"}
     assert any("unrealized" in p for p in pos)
@@ -71,6 +74,143 @@ def test_read_endpoints(server):
     assert get(base + "/api/symbol?s=NOPE")["found"] is False
     with urllib.request.urlopen(base + "/") as r:
         assert b"Mongbot" in r.read()                    # 페이지 제목 (사용자가 Pennybot → Mongbot 으로 바꿈)
+
+
+def test_recent_closes_follow_exit_time_and_update_immediately(server):
+    base, state = server
+    db = state / "trading.db"
+    con = sqlite3.connect(db)
+    old_id = con.execute("SELECT id FROM trades WHERE status='CLOSED' ORDER BY id LIMIT 1").fetchone()[0]
+    with con:
+        con.execute("UPDATE trades SET exit_ts=?, pnl=? WHERE id=?",
+                    ("2030-01-01T00:00:00+00:00", 12.5, old_id))
+    path = "/api/trades?limit=1&recent_closes_test=1"
+    first = get(base + path)
+    assert first[0]["id"] == old_id
+    with con:
+        con.execute("UPDATE trades SET pnl=? WHERE id=?", (19.5, old_id))
+    con.close()
+    assert get(base + path)[0]["pnl"] == 19.5
+
+
+def test_recent_orders_follow_last_status_update(server):
+    base, state = server
+    con = sqlite3.connect(state / "trading.db")
+    old_id = con.execute("SELECT order_id FROM orders ORDER BY ts LIMIT 1").fetchone()[0]
+    with con:
+        con.execute("INSERT INTO orders (order_id, ts, symbol, side, type, qty, price, status, filled, updated) "
+                    "VALUES ('newer-submitted', '2029-01-01T00:00:00+00:00', 'NEWX', 'BUY', 'LIMIT', 1, 1, 'OPEN', 0, '2029-01-01T00:00:00+00:00')")
+        con.execute("UPDATE orders SET updated=?, status='CANCELED' WHERE order_id=?",
+                    ("2030-01-01T00:00:00+00:00", old_id))
+    con.close()
+    orders = get(base + "/api/orders?limit=1&recent_orders_test=1")
+    assert orders[0]["order_id"] == old_id
+
+
+def test_paper_a1_m1_signals_do_not_appear_as_virtual_trades(tmp_path):
+    from pennybot.dashboard.server import Data
+
+    cfg = Config()
+    cfg.mode = "paper"
+    cfg.trading.db_path, cfg.collector.db_path = build(tmp_path)
+    cfg.state_dir = str(tmp_path)
+    cfg.trading.strategies["alert_limit"]["enabled"] = True
+    cfg.trading.strategies["model_pick"]["enabled"] = True
+    con = sqlite3.connect(cfg.collector.db_path)
+    with con:
+        con.executemany(
+            "INSERT INTO vsignals(symbol,d0,opened,session,entry,score,reason,status,strat) "
+            "VALUES (?, '2026-11-25', '2026-11-25T10:00:00+00:00', 'PRE', 1, 1, '', 'OPEN', ?)",
+            [("AONE", "A1"), ("MONE", "M1"), ("OTHER", "S1")],
+        )
+    con.close()
+    rows = Data(cfg).virtual_signals(100)
+    assert {r["strat"] for r in rows} == {"S1"}
+
+
+def test_dashboard_view_reset_filters_history_without_deleting_db(tmp_path):
+    from pennybot.dashboard.server import Data
+
+    cfg = Config()
+    cfg.trading.db_path, cfg.collector.db_path = build(tmp_path)
+    cfg.state_dir = str(tmp_path)
+    since = (datetime.now(timezone.utc) + timedelta(days=2)).isoformat(timespec="seconds")
+    (tmp_path / "dashboard_view.json").write_text(json.dumps({"since": since}), encoding="utf-8")
+    data = Data(cfg)
+    con = sqlite3.connect(cfg.trading.db_path)
+    assert con.execute("SELECT COUNT(*) FROM orders").fetchone()[0] > 0
+    assert con.execute("SELECT COUNT(*) FROM trades WHERE status='CLOSED'").fetchone()[0] > 0
+    assert data.orders(10) == []
+    assert data.trades(10) == []
+    assert data.equity(7) == []
+    assert all(row["trades"] == 0 and row["pnl"] == 0 for row in data.strategies())
+    order_id = con.execute("SELECT o.order_id FROM orders o JOIN trades t ON t.id=o.trade_id "
+                           "WHERE t.strategy='runner_overnight' LIMIT 1").fetchone()[0]
+    with con:
+        con.execute("UPDATE orders SET ts=?, updated=? WHERE order_id=?", (since, since, order_id))
+        con.execute("UPDATE trades SET exit_ts=? WHERE id=(SELECT MIN(id) FROM trades WHERE status='CLOSED')", (since,))
+    con.close()
+    assert data.orders(10)[0]["order_id"] == order_id
+    assert data.trades(10)[0]["exit_ts"] == since
+
+
+def test_strategy_today_pnl_uses_korean_calendar_day_across_us_trade_dates(tmp_path):
+    from pennybot.dashboard.server import Data
+
+    cfg = Config()
+    cfg.trading.db_path, cfg.collector.db_path = build(tmp_path)
+    cfg.state_dir = str(tmp_path)
+    kst = timezone(timedelta(hours=9))
+    day = datetime.now(kst).date()
+    midnight = datetime.combine(day, datetime.min.time(), tzinfo=kst)
+    (tmp_path / "dashboard_view.json").write_text(json.dumps({"since": midnight.isoformat()}), encoding="utf-8")
+    con = sqlite3.connect(cfg.trading.db_path)
+    with con:
+        con.executemany(
+            "INSERT INTO trades(strategy,symbol,mode,trade_date,status,pnl,pnl_pct,exit_ts) "
+            "VALUES ('runner_overnight',?,'paper',?,'CLOSED',?,0,?)",
+            [("EARLY", (day - timedelta(days=1)).isoformat(), 1.0,
+              (midnight + timedelta(hours=1)).astimezone(timezone.utc).isoformat()),
+             ("LATE", day.isoformat(), 2.0,
+              (midnight + timedelta(hours=10)).astimezone(timezone.utc).isoformat())],
+        )
+    con.close()
+    row = next(x for x in Data(cfg).strategies() if x["strategy"] == "runner_overnight")
+    assert row["today_trades"] == 2
+    assert row["today_pnl"] == 3.0
+
+
+def test_symbol_detail_reads_paper_trades_from_trading_db(server):
+    base, _ = server
+    detail = get(base + "/api/symbol_extra?s=PENX&paper_detail_test=1")
+    assert detail["paper_trades"]
+    assert any(r["strat"] == "runner_overnight" for r in detail["paper_trades"])
+
+
+def test_signal_reasons_counts_latest_symbol_strategy_only(server):
+    base, state = server
+    before = get(base + "/api/signal_reasons?hours=6&test=before")
+    now = datetime.now(timezone.utc)
+    con = sqlite3.connect(state / "trading.db")
+    with con:
+        con.executemany(
+            "INSERT INTO signals (ts,trade_date,session,strategy,symbol,ok,reason,score,price) "
+            "VALUES (?,?,?,?,?,?,?,?,?)",
+            [
+                ((now - timedelta(seconds=3)).isoformat(), "2026-11-20", "REGULAR", "dedup", "DUPX", 0,
+                 "호가 없음", 0, 1),
+                ((now - timedelta(seconds=2)).isoformat(), "2026-11-20", "REGULAR", "dedup", "DUPX", 0,
+                 "스프레드 9%", 0, 1),
+                ((now - timedelta(seconds=1)).isoformat(), "2026-11-20", "REGULAR", "dedup", "DUPX", 1,
+                 "통과", 1, 1),
+                (now.isoformat(), "2026-11-20", "REGULAR", "dedup", "LASTX", 0,
+                 "호가 없음", 0, 1),
+            ],
+        )
+    con.close()
+    after = get(base + "/api/signal_reasons?hours=6&test=after")
+    assert after["total_rejected"] == before["total_rejected"] + 1
+    assert after["total_scans"] == before["total_scans"] + 2
 
 
 def test_password_required_when_set(tmp_path):
@@ -133,12 +273,46 @@ def test_control_requires_same_origin(server):
     assert e.value.code == 400
 
 
+def test_trading_limits_control_validates_and_reports_effective_values(server):
+    base, tmp = server
+    d = post(base + "/api/control", {"limits": {
+        "max_open_positions": 4,
+        "strategy_max_positions": {"alert_limit": 2, "model_pick": 3, "runner_overnight": 1},
+        "cash_per_trade_pct": 15.0,
+        "max_position_pct": 25.0,
+        "max_position_usd": 500.0,
+        "risk_per_trade_pct": 2.0,
+    }}, origin=base)
+    assert d["limits"]["max_open_positions"] == 4
+    overview = get(base + "/api/overview")
+    assert overview["limits"]["cash_per_trade_pct"] == 15.0
+    assert overview["limits"]["risk_per_trade_pct"] == 2.0
+    by = {r["strategy"]: r for r in get(base + "/api/strategies")}
+    assert by["runner_overnight"]["max_positions"] == 1
+    with pytest.raises(urllib.error.HTTPError) as e:
+        post(base + "/api/control", {"limits": {"cash_per_trade_pct": 150}}, origin=base)
+    assert e.value.code == 400
+    assert json.loads((tmp / "control.json").read_text())["limits"]["cash_per_trade_pct"] == 15.0
+
+
+def test_dashboard_rejects_live_mode_when_ls_only_supplies_market_data(server, monkeypatch):
+    base, _ = server
+    monkeypatch.setenv("LS_APP_KEY", "test-key")
+    monkeypatch.setenv("LS_APP_SECRET", "test-secret")
+    monkeypatch.delenv("PENNYBOT_DATA_SOURCE", raising=False)
+    monkeypatch.setenv("PENNYBOT_LIVE_CONFIRM", "YES")
+    assert get(base + "/api/overview")["live_supported"] is False
+    with pytest.raises(urllib.error.HTTPError) as e:
+        post(base + "/api/mode", {"mode": "live"}, origin=base)
+    assert e.value.code == 400
+
+
 def test_symbol_extra(server):
     base, _ = server
     x = get(base + "/api/symbol_extra?s=penx")
     assert x["symbol"] == "PENX"
-    assert set(x) >= {"shares", "events", "vsignals"}               # 데모 DB 에 없는 항목(일봉 점수 등)은 빠질 뿐 오류 없음
-    assert isinstance(x["events"], list) and isinstance(x["vsignals"], list)
+    assert set(x) >= {"shares", "events", "paper_trades"}               # 데모 DB 에 없는 항목(일봉 점수 등)은 빠질 뿐 오류 없음
+    assert isinstance(x["events"], list) and isinstance(x["paper_trades"], list)
     assert get(base + "/api/symbol_extra?s=NOPE")["events"] == []
 
 
@@ -207,3 +381,34 @@ def test_live_stream_pushes_changed_prices(server):
         assert r.headers["Content-Type"].startswith("text/event-stream")
         line = r.readline().decode()
     assert line.startswith("data: ") and json.loads(line[6:])["ABCD"][0] == 1.23
+
+
+def test_live_stream_pushes_volume_change_at_same_price(server):
+    from pennybot.dashboard.server import Handler
+    base, tmp = server
+    Handler.LIVE_MAX_SEC = 5
+    db = get_market_path(tmp)
+    now = datetime.now(timezone.utc).isoformat()
+    con = sqlite3.connect(db)
+    con.execute("INSERT OR REPLACE INTO live_tick(symbol,ts,last,vol_60s,amt_60s,vol_180s,amt_180s) VALUES(?,?,?,?,?,?,?)",
+                ("FLOW", now, 1.23, 100, 123, 300, 369))
+    con.commit(); con.close()
+
+    def next_flow(stream):
+        while True:
+            line = stream.readline().decode()
+            if line.startswith("data: "):
+                data = json.loads(line[6:])
+                if "FLOW" in data:
+                    return data["FLOW"]
+
+    with urllib.request.urlopen(base + "/api/live", timeout=8) as stream:
+        first = next_flow(stream)
+        con = sqlite3.connect(db)
+        con.execute("UPDATE live_tick SET vol_60s=120, amt_60s=147.6, vol_180s=320, amt_180s=393.6 WHERE symbol='FLOW'")
+        con.commit(); con.close()
+        second = next_flow(stream)
+    assert first[2:4] == [100, 123]
+    assert second[0] == 1.23 and second[2:4] == [120, 147.6]
+    assert first[5:7] == [300, 369]
+    assert second[5:7] == [320, 393.6]

@@ -436,12 +436,17 @@ class LsClient:
         except Exception as e:
             log.debug("LS: 마지막 가격 읽기 실패: %s", e)
 
-    def prices(self, symbols: list[str]) -> list[dict]:
-        """웹소켓에서 받은 마지막 체결가. 아직 체결이 안 온 종목은 DB 마지막 값 (timestamp 없음)."""
+    def prices(self, symbols: list[str], rest_symbols: set[str] | None = None) -> list[dict]:
+        """웹소켓 마지막 체결가; 선택된 종목은 REST 현재가로 갱신한다."""
         self._refresh_known()
         st = self.stream
         out = []
         for s in symbols:
+            if rest_symbols and s in rest_symbols:
+                q = self.quote_now(s, ttl=0)
+                if q and q.get("price", 0) > 0:
+                    out.append({"symbol": s, "lastPrice": q["price"], "timestamp": None})
+                    continue
             v = st.last.get(s) if st else None
             if v:
                 out.append({"symbol": s, "lastPrice": v["price"], "timestamp": _iso(v["ts"])})
@@ -642,7 +647,7 @@ class LsClient:
                     self._bk_thread.start()
             return {"bids": [], "asks": [], "timestamp": None}
         return {"bids": [{"price": p, "volume": q} for p, q in got[1]], "asks": [{"price": p, "volume": q} for p, q in got[2]],
-                "timestamp": _iso(datetime.now(timezone.utc))}
+                "timestamp": _iso(datetime.fromtimestamp(time.time() - max(0.0, st.clock() - got[0]), timezone.utc))}
 
     # ---------- 캔들 ----------
     def candles(self, symbol: str, interval: str = "1m", count: int = 200, before: str | None = None, adjusted: bool = True) -> dict:

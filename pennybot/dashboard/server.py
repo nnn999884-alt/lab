@@ -12,6 +12,7 @@ import base64
 import hmac
 import json
 import logging
+import os
 import sqlite3
 import threading
 import time
@@ -27,13 +28,19 @@ from ..trading.control import Control
 log = logging.getLogger(__name__)
 STATIC = Path(__file__).parent / "static"
 
+
+def _live_order_supported() -> bool:
+    """LS 연결은 시세 전용이므로 LS 시세 모드에서 실거래 전환을 허용하지 않는다."""
+    return not (os.getenv("LS_APP_KEY") and os.getenv("LS_APP_SECRET")
+                and os.getenv("PENNYBOT_DATA_SOURCE", "").lower() != "toss")
+
 # 2026-11-05: 급등 후보(/api/precursor)는 한 번 계산에 1초 남짓인데 화면마다 3초씩 요청해 처리 중 스레드가
 # 540개까지 쌓이고 메모리 4GB 에서 멈췄다 → 같은 주소 요청은 TTL 초 동안 결과를 같이 쓰고, 계산 중이면 기다렸다 받는다.
 SHARED_TTL = {"/api/precursor": 2.5, "/api/condscan": 10, "/api/chart30": 30, "/api/bigruns": 60, "/api/research": 30,
               "/api/runners": 30, "/api/detections": 5, "/api/symbol": 3, "/api/symbol_extra": 10, "/api/dna": 3,
               # 2026-11-18: 홈이 3초마다 부르는 것들 — 캐시가 없으면 화면마다 따로 계산 (collector 는 3~4초, 처음엔 18초 걸리기도)
               "/api/vsignals": 3, "/api/events": 3, "/api/signal_reasons": 10, "/api/briefing": 30, "/api/collector": 30,
-              "/api/signals": 3, "/api/trades": 3}
+              "/api/signals": 3}
 STALE_MAX = 600.0                 # 이 시간(초) 안의 오래된 값은 기다리지 않고 바로 주고, 새 값은 뒤에서 계산한다 (stale-while-revalidate)
 _shared_lock = threading.Lock()
 _shared_val: dict = {}            # key → (시각, 결과)
@@ -90,6 +97,11 @@ class Data:
         self.market_db = cfg.collector.db_path
         self.control = Control(cfg.state_dir)
         self.cal = SessionCalendar()      # 봇 하트비트가 없을 때만 쓰는 근사 캘린더
+        try:
+            raw = json.loads((Path(cfg.state_dir) / "dashboard_view.json").read_text(encoding="utf-8"))["since"]
+            self.view_since = datetime.fromisoformat(raw).astimezone(timezone.utc).isoformat(timespec="seconds")
+        except (OSError, ValueError, KeyError, TypeError):
+            self.view_since = None
 
     def _q(self, db: str, sql: str, args=()) -> list[dict]:
         if not Path(db).exists():
@@ -128,17 +140,42 @@ class Data:
             last_price = self.m("SELECT MAX(ts) AS ts FROM prices WHERE trade_date=(SELECT MAX(trade_date) FROM prices)")
             self._lp = (time.monotonic(), last_price)
         eq = self.t("SELECT * FROM equity ORDER BY ts DESC LIMIT 1")
+        shown_eq = dict(eq[0]) if eq else None
+        if shown_eq and self.view_since:
+            kst_day = now.astimezone(timezone(timedelta(hours=9))).replace(hour=0, minute=0, second=0, microsecond=0)
+            start = max(self.view_since, kst_day.astimezone(timezone.utc).isoformat(timespec="seconds"))
+            active = [name for name, p in self.cfg.trading.strategies.items() if p.get("enabled")]
+            if active:
+                slots = ",".join("?" for _ in active)
+                pnl = self.t(f"SELECT COALESCE(SUM(pnl), 0) AS pnl FROM trades WHERE status='CLOSED' "
+                             f"AND exit_ts>=? AND strategy IN ({slots})", (start, *active))
+                shown_eq["day_pnl"] = (pnl[0]["pnl"] if pnl else 0) or 0.0
+            else:
+                shown_eq["day_pnl"] = 0.0
         ctl = self.control.load()
+        runtime_limits = ctl.get("limits") or {}
+        effective_limits = {
+            "max_open_positions": runtime_limits.get("max_open_positions", self.cfg.trading.max_open_positions),
+            "strategy_max_positions": runtime_limits.get("strategy_max_positions", {}),
+            "cash_per_trade_pct": runtime_limits.get("cash_per_trade_pct"),
+            "max_position_pct": runtime_limits.get("max_position_pct", self.cfg.trading.max_position_pct * 100),
+            "max_position_usd": runtime_limits.get("max_position_usd", self.cfg.trading.max_position_usd),
+            "risk_per_trade_pct": runtime_limits.get("risk_per_trade_pct", self.cfg.trading.risk_per_trade_pct * 100),
+        }
         nxt = self.cal.next_change(now)
         return {
             "now": now.isoformat(timespec="seconds"),
             "session": session, "trade_date": str(trade_date) if trade_date else None,
             "next_change": nxt.isoformat() if nxt else None,
             "mode": info.get("mode") or self.cfg.mode,
+            "live_supported": _live_order_supported(),
+            "account_source": "로컬 모의계좌" if (info.get("mode") or self.cfg.mode) == "paper" else "토스 실계좌",
             "trader": {"ts": trader["ts"] if trader else None, "age_s": age, "info": info},
             "collector": {"last_price_ts": last_price[0]["ts"] if last_price else None},
             "kill": ctl["kill"], "flatten": ctl["flatten"], "blocked_symbols": ctl["blocked_symbols"],
-            "equity": eq[0] if eq else None,
+            "limits": effective_limits,
+            "equity": shown_eq,
+            "view_since": self.view_since,
             "open_trades": self.t("SELECT COUNT(*) AS n FROM trades WHERE status IN ('PENDING','OPEN','EXITING')")
             [0]["n"] if Path(self.trading_db).exists() else 0,
             "working_orders": info.get("working", 0),
@@ -150,7 +187,7 @@ class Data:
         return with_filings(brief(self.market_db, sym), self.dilution(), str(Path(self.cfg.state_dir) / "research.db"))
 
     def symbol_extra(self, sym: str) -> dict:
-        """종목 상세: 급등 후보 진단(일봉 점수·등급·장중 증상) · 발행주식/회전율 · 공시 태그 · 오늘 1분봉 · 신호 기록 · 가상 매매."""
+        """종목 상세: 급등 후보 진단·발행주식/회전율·공시·1분봉·신호·모의매매."""
         from ..precursor import DAILY_LABELS, LIVE_LABELS, PATTERN_LABELS, presurge, tier
         sym = sym.upper()
         out: dict = {"symbol": sym}
@@ -206,15 +243,33 @@ class Data:
         # 실제로 막히는 비율이 저항 48%·지지 21%로 거의 의미가 없었다 (런너 940건, 180일).
         # 그래서 검증된 러너 오버나이트 전략의 손절·익절 % 만 쓴다.
         rp = self.cfg.trading.strategies.get("runner_overnight") or {}
-        if px and rp.get("stop_loss_pct") is not None and rp.get("take_profit_pct") is not None:
+        if px and rp.get("enabled") and rp.get("stop_loss_pct") is not None and rp.get("take_profit_pct") is not None:
             out["strategy_ref"] = {"name": "runner_overnight", "price": px, "basis": "pct",
                                    "stop": px * (1 - rp["stop_loss_pct"] / 100), "stop_pct": -rp["stop_loss_pct"],
                                    "target": px * (1 + rp["take_profit_pct"] / 100), "target_pct": rp["take_profit_pct"]}
         out["events"] = self.m("SELECT ts, kind, text, value FROM events WHERE symbol=? AND kind != 'filing' ORDER BY ts DESC LIMIT 30", (sym,))
-        out["vsignals"] = self.t("""SELECT strategy AS strat, status, entry_ts AS opened, exit_ts AS closed,
-            entry_price AS entry, exit_price AS exit_price, exit_reason, high_water AS high, entry_price AS low,
-            COALESCE((SELECT last FROM prices WHERE symbol=? ORDER BY ts DESC LIMIT 1), exit_price, entry_price) AS last,
-            target AS tp, stop AS sl FROM trades WHERE symbol=? ORDER BY id DESC LIMIT 20""", (sym, sym))
+        active = [name for name, p in self.cfg.trading.strategies.items() if p.get("enabled")]
+        if self.view_since and active:
+            slots = ",".join("?" for _ in active)
+            out["paper_trades"] = self.t("""SELECT strategy AS strat, status, entry_ts AS opened, exit_ts AS closed,
+                entry_price AS entry, exit_price, exit_reason, high_water AS high, entry_price AS low,
+                target AS tp, stop AS sl FROM trades WHERE symbol=? AND """
+                f"(status IN ('PENDING','OPEN','EXITING') OR (strategy IN ({slots}) AND exit_ts>=?)) "
+                "ORDER BY id DESC LIMIT 20", (sym, *active, self.view_since))
+        elif self.view_since:
+            out["paper_trades"] = self.t("""SELECT strategy AS strat, status, entry_ts AS opened, exit_ts AS closed,
+                entry_price AS entry, exit_price, exit_reason, high_water AS high, entry_price AS low,
+                target AS tp, stop AS sl FROM trades WHERE symbol=? AND status IN ('PENDING','OPEN','EXITING')
+                ORDER BY id DESC LIMIT 20""", (sym,))
+        else:
+            out["paper_trades"] = self.t("""SELECT strategy AS strat, status, entry_ts AS opened, exit_ts AS closed,
+                entry_price AS entry, exit_price, exit_reason, high_water AS high, entry_price AS low,
+                target AS tp, stop AS sl FROM trades WHERE symbol=? ORDER BY id DESC LIMIT 20""", (sym,))
+        current = self.m("SELECT last FROM price_now WHERE symbol=? ORDER BY ts DESC LIMIT 1", (sym,))
+        if not current:
+            current = self.m("SELECT last FROM prices WHERE symbol=? ORDER BY ts DESC LIMIT 1", (sym,))
+        for trade in out["paper_trades"]:
+            trade["last"] = current[0]["last"] if current else (trade["exit_price"] or trade["entry"])
         return out
 
     def _rq(self):
@@ -323,6 +378,18 @@ class Data:
         except (OSError, ValueError):
             return {}
 
+    def watch_symbols(self) -> set[str] | None:
+        """현재 수집기가 고른 감시 종목. 구버전 상태 파일은 최근 호가 90초 묶음으로 복원한다."""
+        st = self.status()
+        if st.get("watch_symbols"):
+            return {str(s).upper() for s in st["watch_symbols"]}
+        latest = self.m("SELECT MAX(ts) AS ts FROM quotes")
+        ts = latest[0]["ts"] if latest else None
+        if not ts:
+            return None
+        rows = self.m("SELECT DISTINCT symbol FROM quotes WHERE ts=?", (ts,))
+        return {r["symbol"] for r in rows} or None
+
     def dilution(self):
         """SEC_USER_AGENT 가 있으면 공시 판정 (희석 점수·부양 동기). 처음 한 번만 만든다."""
         if not hasattr(self, "_dil"):
@@ -411,32 +478,47 @@ class Data:
 
     def equity(self, days: int) -> list[dict]:
         if not days or days <= 0:
-            return self.t("SELECT ts, equity, cash, day_pnl FROM equity ORDER BY ts")
+            return self.t("SELECT ts, equity, cash, day_pnl FROM equity WHERE ts>=? ORDER BY ts", (self.view_since,)) if self.view_since else self.t("SELECT ts, equity, cash, day_pnl FROM equity ORDER BY ts")
         since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat(timespec="seconds")
+        if self.view_since:
+            since = max(since, self.view_since)
         return self.t("SELECT ts, equity, cash, day_pnl FROM equity WHERE ts >= ? ORDER BY ts", (since,))
 
     def strategies(self) -> list[dict]:
-        ctl = self.control.load()["strategies"]
+        controls = self.control.load()
+        ctl = controls["strategies"]
+        limit_overrides = (controls.get("limits") or {}).get("strategy_max_positions") or {}
         rows = self.t("""SELECT strategy, COUNT(*) AS trades, SUM(pnl > 0) AS wins, SUM(pnl) AS pnl,
+                         AVG(pnl) AS expectancy, AVG(pnl_pct) AS avg_pct
+                         FROM trades WHERE status='CLOSED' AND exit_ts>=? GROUP BY strategy""", (self.view_since,)) if self.view_since else self.t("""SELECT strategy, COUNT(*) AS trades, SUM(pnl > 0) AS wins, SUM(pnl) AS pnl,
                          AVG(pnl) AS expectancy, AVG(pnl_pct) AS avg_pct
                          FROM trades WHERE status='CLOSED' GROUP BY strategy""")
         by = {r["strategy"]: r for r in rows}
-        today = self.t("SELECT MAX(trade_date) AS d FROM trades WHERE status='CLOSED'")
-        today = today[0]["d"] if today else None
+        kst_midnight = datetime.now(timezone(timedelta(hours=9))).replace(hour=0, minute=0, second=0, microsecond=0)
+        today_start = kst_midnight.astimezone(timezone.utc).isoformat(timespec="seconds")
+        today_end = (kst_midnight + timedelta(days=1)).astimezone(timezone.utc).isoformat(timespec="seconds")
+        if self.view_since:
+            today_start = max(today_start, self.view_since)
         today_rows = {r["strategy"]: r for r in self.t(
-            "SELECT strategy, COUNT(*) AS trades, SUM(pnl) AS pnl FROM trades WHERE status='CLOSED' AND trade_date=? "
-            "GROUP BY strategy", (today,))} if today else {}
+            "SELECT strategy, COUNT(*) AS trades, SUM(pnl) AS pnl FROM trades "
+            "WHERE status='CLOSED' AND exit_ts>=? AND exit_ts<? GROUP BY strategy",
+            (today_start, today_end))} if today_start < today_end else {}
         n = self.cfg.trading.auto_disable_trades
         out = []
         for name, params in self.cfg.trading.strategies.items():
+            if not params.get("enabled", True):   # config.yaml 에서 켠 전략만 대시보드에 노출
+                continue
             r = by.get(name, {})
-            recent = self.t("SELECT pnl FROM trades WHERE status='CLOSED' AND strategy=? ORDER BY id DESC LIMIT ?",
-                            (name, n))
-            auto_off = len(recent) >= n and sum(x["pnl"] for x in recent) / n < 0
+            recent = self.t("SELECT pnl FROM trades WHERE status='CLOSED' AND strategy=? "
+                            + ("AND exit_ts>=? " if self.view_since else "") + "ORDER BY id DESC LIMIT ?",
+                            (name, self.view_since, n) if self.view_since else (name, n))
+            auto_off = n > 0 and len(recent) >= n and sum(x["pnl"] for x in recent) / n < 0
+            from ..trading.rules7 import COMMON_RULE, RULES
             from ..trading.strategies import GROUP_OF, GROUP_ORDER
             out.append({"strategy": name, "strategy_name": self._strat_names().get(name, name),
-                        "group": GROUP_OF.get(name, "기타"), "group_order": GROUP_ORDER.index(GROUP_OF[name]) if name in GROUP_OF else 99,
+                        "group": GROUP_OF.get(name, "기타"), "rule": RULES.get(name), "common_rule": COMMON_RULE if name in RULES else None, "group_order": GROUP_ORDER.index(GROUP_OF[name]) if name in GROUP_OF else 99,
                         "config_enabled": params.get("enabled", True),
+                        "max_positions": limit_overrides.get(name, params.get("max_positions", 0)),
                         "toggle": ctl.get(name, True), "auto_disabled": auto_off,
                         "trades": r.get("trades", 0), "win_rate": (r["wins"] / r["trades"]) if r.get("trades") else None,
                         "pnl": r.get("pnl") or 0.0, "expectancy": r.get("expectancy"), "avg_pct": r.get("avg_pct"),
@@ -463,7 +545,17 @@ class Data:
         return rows
 
     def orders(self, limit: int) -> list[dict]:
-        rows = self.t("SELECT * FROM orders ORDER BY ts DESC LIMIT ?", (limit,))
+        if self.view_since:
+            active = [name for name, p in self.cfg.trading.strategies.items() if p.get("enabled")]
+            if not active:
+                return []
+            slots = ",".join("?" for _ in active)
+            rows = self.t("SELECT o.* FROM orders o JOIN trades t ON t.id=o.trade_id "
+                          f"WHERE o.ts>=? AND t.strategy IN ({slots}) "
+                          "ORDER BY COALESCE(o.updated, o.ts) DESC, o.ts DESC, o.order_id DESC LIMIT ?",
+                          (self.view_since, *active, limit))
+        else:
+            rows = self.t("SELECT * FROM orders ORDER BY COALESCE(updated, ts) DESC, ts DESC, order_id DESC LIMIT ?", (limit,))
         names, ko = self._names(), self._strat_names()
         strat = {r["id"]: r["strategy"] for r in self.t("SELECT id, strategy FROM trades")}
         for r in rows:
@@ -472,12 +564,29 @@ class Data:
         return rows
 
     def trades(self, limit: int) -> list[dict]:
-        rows = self.t("SELECT * FROM trades WHERE status='CLOSED' ORDER BY id DESC LIMIT ?", (limit,))
+        if self.view_since:
+            active = [name for name, p in self.cfg.trading.strategies.items() if p.get("enabled")]
+            if not active:
+                return []
+            slots = ",".join("?" for _ in active)
+            rows = self.t(f"SELECT * FROM trades WHERE status='CLOSED' AND exit_ts>=? AND strategy IN ({slots}) "
+                          "ORDER BY exit_ts DESC, id DESC LIMIT ?", (self.view_since, *active, limit))
+        else:
+            rows = self.t("SELECT * FROM trades WHERE status='CLOSED' ORDER BY exit_ts DESC, id DESC LIMIT ?", (limit,))
         names, ko = self._names(), self._strat_names()
         for r in rows:
             r["name"] = names.get(r["symbol"])
             r["strategy_name"] = ko.get(r["strategy"], r["strategy"])
         return rows
+
+    def virtual_signals(self, limit: int) -> list[dict]:
+        paper_sources = [source for source, strategy in (("A1", "alert_limit"), ("M1", "model_pick"))
+                         if self.cfg.mode == "paper" and self.cfg.trading.strategies.get(strategy, {}).get("enabled")]
+        excluded = (" AND (v.strat IS NULL OR v.strat NOT IN (" + ",".join("?" for _ in paper_sources) + "))") if paper_sources else ""
+        return self.m("SELECT v.*, (SELECT name FROM universe u WHERE u.symbol=v.symbol "
+                      "ORDER BY snapshot_date DESC LIMIT 1) AS name "
+                      "FROM vsignals v WHERE v.status != 'EXPIRED'" + excluded +
+                      " ORDER BY (v.status='OPEN') DESC, v.opened DESC LIMIT ?", (*paper_sources, limit))
 
     def _strat_names(self) -> dict:
         from ..trading.strategies import STRATEGY_KO
@@ -495,7 +604,14 @@ class Data:
         사유 문구는 전략마다 조금씩 다르지만(스프레드 %, 가격범위, 세션 등) 앞부분 패턴으로 묶는다."""
         import re
         since = (datetime.now(timezone.utc) - timedelta(hours=hours)).isoformat(timespec="seconds")
-        rows = self.t("SELECT reason, strategy FROM signals WHERE ok=0 AND ts>=?", (since,))
+        latest = self.t("""
+            SELECT reason, strategy, ok FROM (
+              SELECT reason, strategy, symbol, ok,
+                     ROW_NUMBER() OVER (PARTITION BY symbol, strategy ORDER BY ts DESC, rowid DESC) AS rn
+              FROM signals WHERE ts>=?
+            ) WHERE rn=1
+        """, (since,))
+        rows = [r for r in latest if not r["ok"]]
         buckets = [
             (re.compile(r"매수 시간 아님"), "매수 시간 아님 (세션 제한)"),
             (re.compile(r"스프레드"), "스프레드 너무 넓음"),
@@ -515,9 +631,8 @@ class Data:
             label = next((lab for pat, lab in buckets if pat.search(r["reason"] or "")), "기타")
             counts[label] = counts.get(label, 0) + 1
         top = sorted(counts.items(), key=lambda x: -x[1])
-        n_candidates = self.t("SELECT COUNT(DISTINCT symbol || ts) AS n FROM signals WHERE ts>=?", (since,))
         return {"hours": hours, "total_rejected": total,
-               "total_scans": n_candidates[0]["n"] if n_candidates else 0,
+               "total_scans": len(latest),
                "top": [{"reason": lab, "count": c} for lab, c in top]}
 
     # ---------- 수집 상태 ----------
@@ -730,10 +845,10 @@ class Handler(BaseHTTPRequestHandler):
             "/api/reports": lambda: _reports(d.cfg.state_dir, n("limit", 30)),
             "/api/shorts": lambda: d.shorts(),
             "/api/events": lambda: d.events(n("limit", 40)),
-            "/api/vsignals": lambda: d.m("SELECT v.*, (SELECT name FROM universe u WHERE u.symbol=v.symbol ORDER BY snapshot_date DESC LIMIT 1) AS name "
-                                        "FROM vsignals v WHERE status != 'EXPIRED' ORDER BY (status='OPEN') DESC, opened DESC LIMIT ?", (n("limit", 100),)),
+            "/api/vsignals": lambda: d.virtual_signals(n("limit", 100)),
             "/api/daily": lambda: d.daily(qs.get("s", "")[:12], n("n", 90)),
-            "/api/precursor": lambda: __import__("pennybot.precursor", fromlist=["ranked"]).ranked(d.market_db, n("limit", 80), only_active=qs.get("all") != "1"),
+            "/api/precursor": lambda: __import__("pennybot.precursor", fromlist=["ranked"]).ranked(
+                d.market_db, n("limit", 300), only_active=False, symbols=d.watch_symbols()),
             "/api/condscan": lambda: __import__("pennybot.condscan", fromlist=["scan"]).scan(
                 d.market_db, qs.get("n", "추세 돌파")[:40], d.cfg.state_dir),
             "/api/dna": lambda: __import__("pennybot.dna", fromlist=["latest"]).latest(d.market_db),
@@ -771,8 +886,7 @@ class Handler(BaseHTTPRequestHandler):
     LIVE_MAX_SEC = 600            # 한 연결 최대 10분 (브라우저가 알아서 다시 붙음 — 끊긴 연결이 스레드를 붙잡지 않게)
 
     def _live_stream(self):
-        """실시간 가격 밀어 주기 (11/09): 웹소켓 체결가(live_tick, 수집기가 1초마다)·전 종목 3초 훑기(price_now) 중
-        지난번 보낸 뒤 바뀐 것만 1초마다 {종목: [가격, 시각]} 로. 화면은 받은 즉시 현재가·등락률·순서를 고친다."""
+        """가격과 최근 60초·180초 체결 수량·대금을 1초마다 전송한다."""
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
@@ -789,23 +903,32 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     con = sqlite3.connect(ro_uri(db), uri=True)
                     try:
-                        for tbl in ("price_now", "live_tick"):
-                            try:
-                                for s_, ts_, px_ in con.execute(f"SELECT symbol, ts, last FROM {tbl} WHERE ts >= ? AND last > 0", (since,)):
-                                    if ts_ > (last.get(s_) or ("",))[0] and ts_ > (out.get(s_) or ("",))[0]:
-                                        out[s_] = (ts_, px_)
-                            except sqlite3.OperationalError:
-                                pass
+                        try:
+                            for s_, ts_, px_ in con.execute(
+                                "SELECT symbol, ts, last FROM price_now WHERE ts >= ? AND last > 0", (since,)):
+                                out[s_] = (px_, ts_, None, None, None, None, None)
+                        except sqlite3.OperationalError:
+                            pass
+                        try:
+                            flow_cut = (datetime.now(timezone.utc) - timedelta(seconds=180)).isoformat()
+                            for s_, ts_, px_, vol_, amt_, vol3_, amt3_ in con.execute(
+                                "SELECT symbol, ts, last, vol_60s, amt_60s, vol_180s, amt_180s FROM live_tick "
+                                "WHERE ts >= ? AND last > 0", (flow_cut,)):
+                                prior = out.get(s_)
+                                price, price_ts = (prior[0], prior[1]) if prior and prior[1] > ts_ else (px_, ts_)
+                                out[s_] = (price, price_ts, vol_, amt_, ts_, vol3_, amt3_)
+                        except sqlite3.OperationalError:
+                            pass
                     finally:
                         con.close()
                 except sqlite3.Error:
                     pass
                 since = (datetime.now(timezone.utc) - timedelta(seconds=10)).isoformat()
-                sent = {k: v for k, v in out.items() if (last.get(k) or (None, None))[1] != v[1]}   # 가격이 실제로 바뀐 것만
+                sent = {k: v for k, v in out.items() if last.get(k) != v}
                 last.update(out)
                 out = sent
                 if out:
-                    msg = json.dumps({k: [v[1], v[0]] for k, v in out.items()}, separators=(",", ":"))
+                    msg = json.dumps(out, separators=(",", ":"))
                     self.wfile.write(f"data: {msg}\n\n".encode("utf-8"))
                 else:
                     self.wfile.write(b": ping\n\n")
@@ -831,11 +954,12 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             return self._json({"error": "잘못된 JSON"}, 400)
         if urlparse(self.path).path == "/api/mode":
-            import os
             mode = body.get("mode")
             if mode not in ("paper", "live"):
                 return self._json({"error": "mode 는 paper 또는 live"}, 400)
             if mode == "live":
+                if not _live_order_supported():
+                    return self._json({"error": "LS 연결은 시세 전용입니다. 현재 매매 엔진은 LS 실거래 주문을 지원하지 않습니다."}, 400)
                 if os.environ.get("PENNYBOT_LIVE_CONFIRM") != "YES":
                     return self._json({"error": ".env 에 PENNYBOT_LIVE_CONFIRM=YES 가 필요합니다."}, 403)
                 n = self.data.t("SELECT COUNT(*) AS n FROM trades WHERE status IN ('PENDING','OPEN','EXITING')")[0]["n"]
@@ -858,6 +982,33 @@ class Handler(BaseHTTPRequestHandler):
             d = ctl.update(kill=bool(body["kill"]))
         elif body.get("flatten") is True:
             d = ctl.update(flatten=True)
+        elif "limits" in body:
+            import math
+            limits = body["limits"]
+            if not isinstance(limits, dict) or not limits:
+                return self._json({"error": "한도 설정 형식이 잘못됐습니다."}, 400)
+            bounds = {"max_open_positions": (0, 100), "cash_per_trade_pct": (1, 100),
+                      "max_position_pct": (1, 100), "max_position_usd": (1, 1_000_000),
+                      "risk_per_trade_pct": (0.01, 10)}
+            if any(k not in (*bounds, "strategy_max_positions") for k in limits):
+                return self._json({"error": "알 수 없는 한도 항목입니다."}, 400)
+            for key, value in limits.items():
+                if key == "strategy_max_positions":
+                    if not isinstance(value, dict) or any(
+                        name not in self.data.cfg.trading.strategies or type(cap) is not int or not 0 <= cap <= 100
+                        for name, cap in value.items()
+                    ):
+                        return self._json({"error": "전략별 보유 한도는 0~100의 정수입니다."}, 400)
+                elif value is None:
+                    if key != "cash_per_trade_pct":
+                        return self._json({"error": f"{key} 값이 필요합니다."}, 400)
+                else:
+                    lo, hi = bounds[key]
+                    if (isinstance(value, bool) or not isinstance(value, (int, float))
+                            or not math.isfinite(value) or not lo <= value <= hi
+                            or key == "max_open_positions" and type(value) is not int):
+                        return self._json({"error": f"{key} 값이 허용 범위를 벗어났습니다."}, 400)
+            d = ctl.update(limits=limits)
         elif "strategy" in body and body["strategy"] in self.data.cfg.trading.strategies:
             d = ctl.update(strategy=(body["strategy"], bool(body.get("enabled"))))
         elif "block_symbol" in body:

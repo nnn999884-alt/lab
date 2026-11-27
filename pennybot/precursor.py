@@ -16,6 +16,7 @@
 """
 from __future__ import annotations
 
+import math
 import statistics
 from datetime import datetime, timedelta, timezone
 
@@ -53,6 +54,26 @@ def is_moving(live_m: dict, turnover_3m: float | None, session: str | None = Non
     d_min, t_min, x_min = ACTIVE_BY_SESSION.get(session or live_m.get("session") or "REGULAR", ACTIVE_BY_SESSION["REGULAR"])
     return ((live_m.get("vol_3m") or 0) > 0 and (live_m.get("dollar_3m") or 0) >= d_min
             and ((turnover_3m or 0) >= t_min or (live_m.get("vol_x") or 0) >= x_min))
+
+
+def flow_top_four(rows: list[dict], live_now: set[str], halted: set[str]) -> list[str]:
+    """Recent rising flow first; balance one-minute dollar and share turnover ranks."""
+    rising = [r for r in rows if (r.get("live_m") or {}).get("ret15") is None
+              or (r.get("live_m") or {}).get("ret15") >= 0]
+    active = [r for r in rising if r["symbol"] in live_now and r["symbol"] not in halted
+              and (r.get("dollar_1m") or 0) >= TOP_MIN_DOLLAR_1M]
+    n = len(active)
+    def rank(value, values):
+        return 1 + sum(other > value for other in values)
+    amounts = [r.get("dollar_1m") or 0 for r in active]
+    turns = [r.get("turnover_1m") if not r.get("shares_suspect") else None for r in active]
+    known_turns = [v for v in turns if v is not None]
+    scored = []
+    for r, amount, turn in zip(active, amounts, turns):
+        turn_rank = rank(turn, known_turns) if turn is not None else n + 1
+        scored.append((rank(amount, amounts) + turn_rank, -amount, -(turn or 0), r["symbol"]))
+    selected = [sym for _, _, _, sym in sorted(scored)[:4]]
+    return selected
 
 
 def times(v: float | None) -> str:
@@ -660,8 +681,9 @@ def _halted_now(con) -> set[str]:
 PROB_SHOW = 10.0   # 후보 탭: 움직임이 없어도 순위 모델 확률이 이 % 이상이면 보여 줌
 
 
-def ranked(db_path: str, limit: int = 50, only_active: bool = True) -> dict:
-    """최신 기준일의 전조 목록 (일봉 점수 + 장중 증상), 장중 증상 켜진 것 → 점수 순."""
+def ranked(db_path: str, limit: int = 50, only_active: bool = True,
+           symbols: set[str] | None = None) -> dict:
+    """최신 기준일의 전조 목록 (일봉 점수 + 장중 증상). 모든 감시 종목 반환."""
     import json
     import sqlite3
     from pathlib import Path
@@ -671,9 +693,37 @@ def ranked(db_path: str, limit: int = 50, only_active: bool = True) -> dict:
     con = sqlite3.connect(ro_uri(db_path), uri=True)
     con.row_factory = sqlite3.Row
     try:
-        d0 = con.execute("SELECT MAX(d0) FROM precursor_daily").fetchone()[0]
+        try:
+            d0 = con.execute("SELECT MAX(d0) FROM precursor_daily").fetchone()[0]
+        except sqlite3.OperationalError:
+            d0 = None
         if not d0:
-            return {"d0": None, "rows": []}
+            # precursor_daily 테이블이 없으면(수집기 초기 실행) prices 테이블에서 모든 감시 종목 반환
+            cut = (datetime.now(timezone.utc) - timedelta(hours=24)).isoformat()
+            rows = [dict(r) for r in con.execute(
+                """SELECT p.symbol, NULL as score, '[]' as signals, '{}' as metrics, p.last as close, NULL as created,
+                          NULL as live, '{}' as live_m, NULL as ts, NULL as alerted,
+                          (SELECT name FROM universe u WHERE u.symbol=p.symbol ORDER BY snapshot_date DESC LIMIT 1) AS name
+                   FROM prices p WHERE ts >= ? ORDER BY p.symbol""", (cut,))]
+            for r in rows:
+                r["signals"] = []
+                r["metrics"] = {}
+                r["live"] = []
+                r["live_m"] = {}
+                r["labels"] = []
+                r["live_labels"] = []
+                r["patterns"] = []
+                r["tier"] = 0
+                r["reaccel_n"] = 0
+                r["early20"] = False
+                r["steady"] = False
+                r["prob"] = None
+                r["prob_n"] = None
+                r["now"] = {"price": r["close"], "session": None, "ts": None,
+                            "chg": None}
+                r["turnover_d0"] = None
+            con.close()
+            return {"d0": None, "rows": rows}
         rows = [dict(r) for r in con.execute(
             """SELECT d.symbol, d.score, d.signals, d.metrics, d.close, d.created,
                       l.signals AS live, l.metrics AS live_m, l.ts, l.alerted,
@@ -709,11 +759,40 @@ def ranked(db_path: str, limit: int = 50, only_active: bool = True) -> dict:
         return {"d0": None, "rows": []}
     finally:
         con.close()
+    if symbols is not None:
+        rows = [r for r in rows if r["symbol"] in symbols]
+        missing = symbols - {r["symbol"] for r in rows}
+        if missing:
+            extra = sqlite3.connect(ro_uri(db_path), uri=True)
+            try:
+                for sym in sorted(missing):
+                    px = extra.execute("SELECT last FROM prices WHERE symbol=? ORDER BY ts DESC LIMIT 1", (sym,)).fetchone()
+                    name = extra.execute("SELECT name FROM universe WHERE symbol=? ORDER BY snapshot_date DESC LIMIT 1", (sym,)).fetchone()
+                    if px:
+                        rows.append({"symbol": sym, "score": 0, "signals": "[]", "metrics": "{}",
+                                     "close": px[0], "created": None, "live": None, "live_m": "{}",
+                                     "ts": None, "alerted": None, "name": name[0] if name else None})
+            finally:
+                extra.close()
     for r in rows:
-        r["signals"] = json.loads(r["signals"] or "[]")
-        r["metrics"] = json.loads(r["metrics"] or "{}")
-        r["live"] = json.loads(r["live"] or "[]")
-        r["live_m"] = json.loads(r["live_m"] or "{}")
+        try:
+            r["signals"] = json.loads(r["signals"] or "[]")
+        except Exception:
+            r["signals"] = []
+        try:
+            r["metrics"] = json.loads(r["metrics"] or "{}")
+        except Exception:
+            r["metrics"] = {}
+        try:
+            r["live"] = json.loads(r["live"] or "[]")
+        except Exception:
+            r["live"] = []
+        try:
+            r["live_m"] = json.loads(r["live_m"] or "{}")
+        except Exception:
+            r["live_m"] = {}
+        if not isinstance(r["live_m"], dict):
+            r["live_m"] = {}
         np_ = nowpx.get(r["symbol"])
         if np_ and r.get("close"):
             r["live_m"]["price"] = np_[1]
@@ -776,6 +855,8 @@ def ranked(db_path: str, limit: int = 50, only_active: bool = True) -> dict:
     live_now: set[str] = set()                     # 최근 TOP_RECENT_SEC 초 안에 체결이 있었던 종목
 
     w60: dict[str, tuple[float, float]] = {}       # 종목 → (최근 60초 체결 수량, 대금) — 웹소켓 체결 기준
+    w180: dict[str, tuple[float, float, str]] = {}
+    flow_ts: dict[str, str] = {}
 
     def one_min(r) -> tuple[float, float]:
         """최근 1분 (수량, 대금): 실시간 체결 60초 값, 실시간 구독이 아닌 종목은 최근 3분 1분봉 평균."""
@@ -794,10 +875,19 @@ def ranked(db_path: str, limit: int = 50, only_active: bool = True) -> dict:
                     "SELECT symbol, vol_3s, amt_3s FROM live_tick WHERE ts >= ?", (cut,))}
                 try:
                     cut60 = (datetime.now(timezone.utc) - timedelta(seconds=60)).isoformat()
-                    w60.update({a: (b or 0.0, c or 0.0) for a, b, c in c3.execute(
-                        "SELECT symbol, vol_60s, amt_60s FROM live_tick WHERE ts >= ? AND vol_60s IS NOT NULL", (cut60,))})
+                    for a, b, c, ts_ in c3.execute(
+                        "SELECT symbol, vol_60s, amt_60s, ts FROM live_tick WHERE ts >= ? AND vol_60s IS NOT NULL", (cut60,)):
+                        w60[a] = (b or 0.0, c or 0.0)
+                        flow_ts[a] = ts_
                 except sqlite3.OperationalError:
                     pass                           # 수집기가 아직 60초 열을 안 만든 경우
+                try:
+                    cut180 = (datetime.now(timezone.utc) - timedelta(seconds=180)).isoformat()
+                    for a, b, c, ts_ in c3.execute(
+                        "SELECT symbol, vol_180s, amt_180s, ts FROM live_tick WHERE ts >= ? AND vol_180s IS NOT NULL", (cut180,)):
+                        w180[a] = (b or 0.0, c or 0.0, ts_)
+                except sqlite3.OperationalError:
+                    pass
                 # 맨 위 1~3번 자격: 최근 TOP_RECENT_SEC 초 안에 체결 (live_tick.ts = 마지막 체결 시각). 9초는 너무 짧아
                 # 방금 몇 초 쉰 활발한 종목이 빠졌다 (2026-11-05 사용자 지적)
                 cut2 = (datetime.now(timezone.utc) - timedelta(seconds=TOP_RECENT_SEC)).isoformat()
@@ -808,6 +898,12 @@ def ranked(db_path: str, limit: int = 50, only_active: bool = True) -> dict:
             pass                                   # 수집기가 아직 새 열을 안 만든 경우: 3분 값만 쓴다
 
         live_now.update(a for a, (b, c_) in fresh.items() if b > 0 or c_ > 0)
+        for r in rows:
+            tick3 = w180.get(r["symbol"])
+            if tick3 and tick3[2] >= (r.get("ts") or ""):
+                r["live_m"]["vol_3m"] = tick3[0]
+                r["live_m"]["dollar_3m"] = tick3[1]
+                r["ts"] = tick3[2]
 
         def sh_of(r):
             sh = shares.get(r["symbol"])
@@ -835,6 +931,7 @@ def ranked(db_path: str, limit: int = 50, only_active: bool = True) -> dict:
             sh = sh_of(r)
             r["dollar_1m"] = a60
             r["turnover_1m"] = v60 / sh * 100 if sh else None
+            r["flow_ts"] = flow_ts.get(r["symbol"])
 
     _flow_ranks()
 
@@ -847,7 +944,15 @@ def ranked(db_path: str, limit: int = 50, only_active: bool = True) -> dict:
     rows = rows[:limit]
     con = sqlite3.connect(ro_uri(db_path), uri=True)
     try:
+        news_cut = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
+        filing_cut = (datetime.now(timezone.utc) - timedelta(days=14)).isoformat()
         for r in rows:                             # 실시간 가격(수집기 1분 현재가)·세션, 발행주식·회전율, 공시 태그
+            r["data_issues"] = []
+            for key in ("price", "vol_3m", "dollar_3m", "vol_today", "dollar_today"):
+                value = r["live_m"].get(key)
+                if value is not None and (not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0):
+                    r["live_m"][key] = None
+                    r["data_issues"].append(key)
             px = con.execute("SELECT last, session, ts FROM prices WHERE symbol=? ORDER BY ts DESC LIMIT 1", (r["symbol"],)).fetchone()
             try:
                 live = con.execute("SELECT last, ts FROM live_tick WHERE symbol=?", (r["symbol"],)).fetchone()
@@ -870,34 +975,44 @@ def ranked(db_path: str, limit: int = 50, only_active: bool = True) -> dict:
                 r["shares"] = info[0]
                 r["turnover_d0"] = (r["metrics"].get("volume") or 0) / info[0] * 100
                 if r["turnover_d0"] > MAX_TURNOVER:      # 발행주식 수가 액면병합 전 기준 등 → 믿을 수 없음
-                    r["turnover_d0"] = None
                     r["shares_suspect"] = True
-                if r["live_m"].get("vol_3m") is not None and not r.get("shares_suspect"):
+                if r["live_m"].get("vol_3m") is not None:
                     r["turnover_3m"] = r["live_m"]["vol_3m"] / info[0] * 100
                     r["turnover_today"] = (r["live_m"].get("vol_today") or 0) / info[0] * 100
+                    if r["turnover_3m"] > MAX_TURNOVER or r["turnover_today"] > MAX_TURNOVER:
+                        r["shares_suspect"] = True
+                        r["data_issues"].append("shares")
             try:
                 tg = con.execute("SELECT tags, info FROM stock_tags WHERE symbol=? ORDER BY d0 DESC LIMIT 1", (r["symbol"],)).fetchone()
             except sqlite3.OperationalError:
                 tg = None
             r["filing_tags"] = json.loads(tg[0]) if tg else []
             r["filing_info"] = json.loads(tg[1]) if tg and tg[1] else {}
+            badges = []
+            try:
+                nw = con.execute("SELECT direction FROM news WHERE symbol=? AND published>=? "
+                                 "ORDER BY published DESC LIMIT 1", (r["symbol"], news_cut)).fetchone()
+                if nw:
+                    badges.append("호재 뉴스" if (nw[0] or 0) > 0 else "뉴스")
+            except sqlite3.OperationalError:
+                pass
+            try:
+                good = con.execute("SELECT 1 FROM filings WHERE symbol=? AND direction>0 AND accepted>=? LIMIT 1",
+                                   (r["symbol"], filing_cut)).fetchone()
+                if good:
+                    badges.append("호재 공시")
+            except sqlite3.OperationalError:
+                pass
+            r["catalyst_badges"] = badges
         # 지금 급등 전조 조건을 채운 종목(hot)과 그 등급(A/B/C), 3초 거래 순위 1~3위(flow_top)를 표시 — 대시보드에서 눈에 띄게 한다.
         now_iso = datetime.now(timezone.utc).isoformat()
         pins_dirty = False
         from pathlib import Path
         bars_ = _money_bars(str(Path(db_path).parent))
         _money_bar = lambda ses: bars_.get(ses or "REGULAR", 5000.0)
-        # 맨 위 1~3번 = 지금 체결이 있는 종목(최근 TOP_RECENT_SEC 초) 중 3분 회전율이 가장 큰 3개 (2026-11-05 변경).
-        # 체결 있는 종목이 3개 미만이면 모자란 만큼은 아래 흐름 순위 순서대로 채운다.
+        # 맨 위 네 종목은 최근 60초 거래대금과 회전율 순위를 함께 반영한다.
         halted = _halted_now(con)
-        # 2026-11-05: 최근 1분(60초) 회전율 큰 순, 1분 거래대금 TOP_MIN_DOLLAR_1M 미만은 제외 (몇 천 달러짜리 초소형주가 튀지 않게).
-        # 발행주식을 모르는 종목은 회전율 -1 로 뒤.
-        by_amt = sorted((r for r in rows if r["symbol"] in live_now and r["symbol"] not in halted
-                         and (r.get("dollar_1m") or 0) >= TOP_MIN_DOLLAR_1M),
-                        key=lambda r: (-(r["turnover_1m"] if r.get("turnover_1m") is not None and not r.get("shares_suspect") else -1),
-                                       -(r.get("dollar_1m") or 0)))[:3]
-        top_syms = [r["symbol"] for r in by_amt] + [r["symbol"] for r in rows if r["symbol"] not in live_now
-                                                    and r["symbol"] not in halted][:3 - len(by_amt)]
+        top_syms = flow_top_four(rows, live_now, halted)
         top_set = set(top_syms)
         for i, r in enumerate(rows):
             r["flow_top"] = r["symbol"] in top_set

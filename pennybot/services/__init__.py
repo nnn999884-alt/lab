@@ -1,0 +1,1 @@
+"""Standalone service process support."""

@@ -3,6 +3,7 @@
   kill     : 신규 매수 전면 중단 (보유 종목 청산 규칙은 계속 동작)
   flatten  : 보유 종목 즉시 전량 청산 요청 (처리되면 봇이 false 로 되돌림)
   strategies: 전략별 켜기/끄기
+  limits  : 신규 진입의 보유 수·1회 매수 금액·건당 위험 한도 (기존 보유는 유지)
   blocked_symbols: 이 종목들은 신규 매수를 아예 안 함 (보유 중인 건 그대로 청산 규칙 따름)
 예전 방식의 state/KILL 파일도 킬스위치로 인정한다.
 """
@@ -27,6 +28,7 @@ class Control:
         d.setdefault("kill", False)
         d.setdefault("flatten", False)
         d.setdefault("strategies", {})
+        d.setdefault("limits", {})
         d.setdefault("blocked_symbols", [])
         if self.kill_file.exists():
             d["kill"] = True
@@ -46,6 +48,15 @@ class Control:
             if k == "strategy":
                 name, enabled = v
                 d["strategies"][name] = bool(enabled)
+            elif k == "limits":
+                limits = d.setdefault("limits", {})
+                for key, value in v.items():
+                    if key == "strategy_max_positions":
+                        limits.setdefault(key, {}).update(value)
+                    elif value is None:
+                        limits.pop(key, None)
+                    else:
+                        limits[key] = value
             elif k == "block_symbol":
                 sym = str(v).upper()
                 if sym not in d["blocked_symbols"]:

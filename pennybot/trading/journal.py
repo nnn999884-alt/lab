@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 SCHEMA = """
@@ -217,11 +217,31 @@ class Journal:
 
     # ---------- signals / equity / heartbeat ----------
     def log_signals(self, rows: list[dict]) -> None:
-        if rows:
+        if not rows:
+            return
+        # A rejected candidate can be scanned every few seconds. Keep its first
+        # observation and any reason change, without filling the journal with
+        # identical rows. Successful signals retain their full history.
+        seen = self.__dict__.setdefault("_rejected_signal_seen", {})
+        accepted = []
+        for row in rows:
+            if row["ok"]:
+                accepted.append(row)
+                continue
+            key = (row["trade_date"], row["session"], row["strategy"], row["symbol"], row["reason"])
+            ts = datetime.fromisoformat(row["ts"])
+            last = seen.get(key)
+            if last is None or ts - last >= timedelta(minutes=5) or ts < last:
+                accepted.append(row)
+                seen[key] = ts
+        if len(seen) > 10000:
+            cutoff = datetime.fromisoformat(rows[-1]["ts"]) - timedelta(minutes=5)
+            self._rejected_signal_seen = {k: v for k, v in seen.items() if v >= cutoff}
+        if accepted:
             with self.db:
                 self.db.executemany("""INSERT INTO signals (ts, trade_date, session, strategy, symbol, ok,
                                        reason, score, price) VALUES (:ts,:trade_date,:session,:strategy,
-                                       :symbol,:ok,:reason,:score,:price)""", rows)
+                                       :symbol,:ok,:reason,:score,:price)""", accepted)
 
     def snapshot_equity(self, cash: float, positions_value: float, day_pnl: float, now: datetime) -> None:
         self._x("INSERT OR REPLACE INTO equity VALUES (?,?,?,?,?,?)",

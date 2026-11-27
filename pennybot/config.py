@@ -210,6 +210,18 @@ class TradingConfig:
     day_open_wait_minutes: int = 15      # 데이마켓 개장 직후 호가가 얇을 때는 매수하지 않음
     min_book_ratio: float = 0.3          # 최우선 매도 잔량이 주문 수량의 30% 이상일 때만 (아니면 수량 축소)
     stale_alert_minutes: int = 30        # 강제 청산 시각이 이만큼 지나도 남아 있으면 알림
+    # 11/19 전략 7개 공통 하드 필터 (trading/rules7.py): 가격 · 스프레드 · 직전 5분 거래대금 · 최근 오퍼링 · 거래정지 해제 직후
+    hard_filter_strategies: list = field(default_factory=lambda: ["pump", "catalyst_pullback", "news", "scalp", "runner_overnight",
+                                                                   "squeeze", "reversal",
+                                                                   "premarket_turnover_breakout", "open_vwap_hold",
+                                                                   "overnight_no_dilution_hold", "offering_support_bounce",
+                                                                   "theme_chain"])
+    hard_min_price: float = 0.3
+    hard_max_price: float = 15.0
+    hard_max_spread_pct: float = 3.0
+    hard_min_dollar_5m: float = 3e4
+    hard_offering_days: int = 7
+    hard_halt_resume_minutes: int = 3
     stale_exit_hours: float = 3.0        # 체결가가 이 시간 동안 stale_move_pct 넘게 안 움직이면 '변동없음'으로 청산
     stale_move_pct: float = 1.0          # 이 % 안에서만 움직였으면 '변동없음'으로 친다
     dump_min_dd_pct: float = 3.0         # '하락'으로 볼 최소 낙폭(고점 대비 %). 이보다 덜 밀리면 횡보로 보고 청산 안 함
@@ -235,12 +247,13 @@ class TradingConfig:
     max_position_usd: float = 300.0
     max_position_pct: float = 0.05       # 계좌의 5%
     risk_per_trade_pct: float = 0.01     # 손절 시 손실 계좌의 1%
-    max_open_positions: int = 12        # 11/02: 8→12 (전체 동시 보유 한도에 막힌 신호가 많았음)
+    max_open_positions: int = 12        # 0 = 전체 동시 보유 종목 수 제한 없음
     max_daily_loss_usd: float = 150.0
+    max_daily_loss_pct: float = 0.03     # 일 손실 -3% 킬 스위치 (config.yaml에서 0.03 적용)
     max_weekly_loss_usd: float = 400.0   # 최근 7일 실현 손실이 이만큼이면 신규 매수 중단 (0 = 끔)
     loss_streak_stop: int = 4            # N연속 손실이면 (0 = 끔)
-    reentry_block_minutes: int = 0       # 손실·물량 던지기로 청산한 종목을 되사지 않고 쉬는 분 (0=끔. 모의 데이터상 되사기가 이득이라 기본 끔)
     loss_streak_cooldown_hours: int = 24 # 마지막 손실 후 이 시간 동안 신규 매수 쉼
+    reentry_block_minutes: int = 0       # 손실·물량 던지기로 청산한 종목을 되사지 않고 쉬는 분 (0=끔)
     auto_disable_trades: int = 20        # 최근 N회 평균 손익이 음수면 그 전략 자동 정지
     notify_webhook: str = ""             # 디스코드/슬랙 웹훅 (환경변수 PENNYBOT_WEBHOOK 우선)
     telegram_token: str = ""             # 텔레그램 봇 토큰·내 chat id: 환경변수 PENNYBOT_TELEGRAM_TOKEN / _CHAT
@@ -250,15 +263,13 @@ class TradingConfig:
     strategies: dict = field(default_factory=lambda: {
         # gap_risk_pct: 밤사이 최악의 갭(%) — 수량은 손절폭이 아니라 이 갭을 기준으로 정한다
         # runner_overnight / dilution_catalyst / day_ignition: 사용자 요청으로 기본 꺼짐 (2026-10-31)
-        "runner_overnight": {"enabled": False, "budget_pct": 0.40, "max_positions": 4,
-                             "min_runner_pct": 30.0, "min_close_loc": 0.6, "min_rotation": 0.3,
+        "runner_overnight": {"enabled": True, "budget_pct": 0.25, "max_positions": 3,
+                             "min_runner_pct": 25.0, "max_close_from_high_pct": 5.0, "min_close_loc": 0.6, "min_rotation": 0.3,
                              "min_day_change_pct": -8.0, "max_day_change_pct": 15.0,
-                             "take_profit_pct": 12.0, "stop_loss_pct": 10.0,
-                             "entry_discount_pct": 0.5,
-                             "gap_risk_pct": 35.0, "sell_before_open_minutes": 30,
-                             "exit_after_open_minutes": 30,
-                             "scale_out_pct": 0.5, "trail_pct": 8.0,
-                             "max_short_ratio": 0.5, "max_short_surge": 1.5},
+                             "take_profit_pct": 8.0, "stop_loss_pct": 20.0, "stop_loss_pct_override": 0.0,
+                             "entry_discount_pct": 0.5, "gap_risk_pct": 35.0, "sell_before_open_minutes": 30,
+                             "exit_after_open_minutes": 30, "scale_out_pct": 0.5, "trail_pct": 4.0,
+                             "max_short_ratio": 0.5, "max_short_surge": 1.5, "max_spread_pct": 3.0, "score_need": 1},
         "dilution_catalyst": {"enabled": False, "budget_pct": 0.30, "max_positions": 3,
                               "max_runup_pct": 15.0, "entry_discount_pct": 0.5,
                               "take_profit_pct": 10.0, "stop_loss_pct": 8.0, "gap_risk_pct": 25.0,
@@ -273,7 +284,7 @@ class TradingConfig:
                     "no_news_days": 3, "stall_minutes": 10, "gap_risk_pct": 25.0},
         # 유일한 '장중 전용' 전략 — 정규장 중에 새로 터지는 공시·내부자 매수·실시간 수급으로 산다.
         # 나머지는 전부 데이마켓에만 사서 정규장 중엔 신규 매수를 안 하기 때문에 따로 둠. 숫자 전부 백테스트 전 초안.
-        "regular_momentum": {"enabled": True, "budget_pct": 0.20, "max_positions": 3,
+        "regular_momentum": {"enabled": False, "budget_pct": 0.20, "max_positions": 3,
                              "min_insider_usd": 10000, "min_move_pct": 3.0, "max_move_pct": 20.0,
                              "max_pullback_pct": 4.0, "signal_window_minutes": 5,
                              # 정규장 마감(애프터 시작)이라고 거기서 끊지 않고 다음 데이마켓 시작 전까지 캡 → 8시간까지 둬도 됨
@@ -282,34 +293,34 @@ class TradingConfig:
         # 데이·프리·정규·애프터 상관없이 실시간 수급 신호(거래 터짐 등)가 뜨면 바로 들어가서 목표가에 바로 턴다.
         # 숫자 전부 백테스트 전 초안 — 다른 전략들과 달리 세션 전환을 기다리지 않고 자주 돌 수 있어서 예산을 작게 잡음.
         "scalp": {"enabled": True, "budget_pct": 0.15, "max_positions": 3,
-                 "signal_window_minutes": 3, "entry_discount_pct": 1.0, "max_hold_minutes": 120,
-                 "take_profit_pct": 8.0, "stop_loss_pct": 6.0, "gap_risk_pct": 20.0,
-                 "take_profit_pct_override": 10.0,
-                 "scale_out_pct": 0.5, "trail_pct": 2.0},
+                 "signal_window_minutes": 3, "entry_discount_pct": 1.0, "max_hold_minutes": 45, "max_spread_pct": 2.5,
+                 "take_profit_pct": 10.0, "stop_loss_pct": 12.0, "stop_loss_pct_override": 0.0, "gap_risk_pct": 20.0,
+                 "take_profit_pct_override": 0.0, "scale_out_pct": 0.5, "trail_pct": 3.0},
         # scalp 과 같은 '세션 안 가리는' 전략이지만 반응하는 신호가 다르다 — poll_steady_flow 가 잡는 '매집'
         # (한 번에 안 터지고 꾸준히 붙는 수급) 신호에 반응해서 목표가·손절가 안 걸리면 다음 데이마켓 시작
         # 직전까지 길게 들고 간다. 숫자 전부 백테스트 전 초안.
-        "steady_trend": {"enabled": True, "budget_pct": 0.15, "max_positions": 3,
+        "steady_trend": {"enabled": False, "budget_pct": 0.15, "max_positions": 3,
                         "signal_window_minutes": 30, "entry_discount_pct": 1.0,
                         "take_profit_pct": 15.0, "stop_loss_pct": 8.0, "gap_risk_pct": 20.0},
         # 설계 문서(2026-10-28)의 당일 셋업 5개. 숫자는 백테스트 전 초안이고, 청산은 공통 규칙이 맡는다.
         "squeeze": {"enabled": True, "budget_pct": 0.10, "max_positions": 2, "entry_discount_pct": 1.0,
-                    "min_short_ratio": 0.40, "min_borrow_fee": 30.0, "min_dollar": 2e6, "max_spread_pct": 3.0,
-                    "take_profit_pct": 20.0, "stop_loss_pct": 50.0, "gap_risk_pct": 25.0,
-                    "scale_out_pct": 0.5, "trail_pct": 10.0},
-        "news": {"enabled": True, "budget_pct": 0.10, "max_positions": 2, "entry_discount_pct": 1.0,
-                 "window_minutes": 60, "min_dollar_3m": 2e5, "max_spread_pct": 2.0,
-                 "max_runup_after_signal_pct": 30.0,
-                 "take_profit_pct": 8.0, "stop_loss_pct": 50.0, "gap_risk_pct": 25.0},
-        "session_gap": {"enabled": True, "budget_pct": 0.10, "max_positions": 2, "entry_discount_pct": 1.0,
+                    "min_short_ratio": 0.30, "min_borrow_fee": 20.0, "min_dollar": 1e6, "max_float": 2e7,
+                    "min_day_change": 10.0, "take_profit_pct": 20.0, "stop_loss_pct": 18.0, "stop_loss_pct_override": 0.0,
+                    "gap_risk_pct": 25.0, "scale_out_pct": 0.5, "trail_pct": 8.0, "score_need": 2},
+        "news": {"enabled": True, "budget_pct": 0.15, "max_positions": 3, "entry_discount_pct": 1.0,
+                 "window_minutes": 30, "min_dollar_3m": 1e5, "max_spread_pct": 2.5, "min_rvol": 3.0,
+                 "max_runup_after_signal_pct": 15.0, "take_profit_pct": 8.0, "stop_loss_pct": 8.0,
+                 "stop_loss_pct_override": 0.0, "max_hold_minutes": 20, "gap_risk_pct": 20.0, "score_need": 2},
+        "session_gap": {"enabled": False, "budget_pct": 0.10, "max_positions": 2, "entry_discount_pct": 1.0,
                         "discount_pct": 3.0, "min_dollar": 1e6, "max_spread_pct": 3.0,
                         "take_profit_pct": 3.0, "stop_loss_pct": 50.0, "gap_risk_pct": 20.0},
-        "accumulation": {"enabled": True, "budget_pct": 0.10, "max_positions": 2, "entry_discount_pct": 1.0,
+        "accumulation": {"enabled": False, "budget_pct": 0.10, "max_positions": 2, "entry_discount_pct": 1.0,
                          "box_pct": 5.0, "max_atr_ratio": 0.7, "min_vol_ratio": 1.3,
                          "take_profit_pct": 20.0, "stop_loss_pct": 50.0, "gap_risk_pct": 25.0},
-        "reversal": {"enabled": True, "budget_pct": 0.10, "max_positions": 2, "entry_discount_pct": 1.0,
-                     "min_drop_pct": 35.0, "min_dollar": 5e6, "recover_pct": 15.0,
-                     "take_profit_pct": 12.0, "stop_loss_pct": 50.0, "gap_risk_pct": 25.0},
+        "reversal": {"enabled": True, "budget_pct": 0.15, "max_positions": 2, "entry_discount_pct": 1.0,
+                     "min_drop_pct": 30.0, "recover_pct": 12.0, "min_dollar": 3e6, "min_vol_ratio": 2.0,
+                     "take_profit_pct": 12.0, "stop_loss_pct": 25.0, "stop_loss_pct_override": 0.0,
+                     "hold_until": "session_end", "gap_risk_pct": 25.0, "score_need": 1},
         "pullback": {"enabled": False, "budget_pct": 0.40, "max_positions": 3, "max_candidates": 3,
                      "sessions": ["AFTER", "REGULAR"], "stop_loss_pct_override": 0.0,
                      "take_profit_pct": 10.0, "stop_loss_pct": 8.0, "scale_out_pct": 1.0, "trail_pct": 0.0,
@@ -323,18 +334,22 @@ class TradingConfig:
                   "take_profit_pct": 20.0, "stop_loss_pct": 50.0, "scale_out_pct": 0.5, "trail_pct": 5.0,
                   "gap_risk_pct": 25.0},
         # pump: 애프터 8건 −$23.8(승률 13%), 정규장 6건 +$13.0 → 애프터 매수 차단, 한도 2→3
-        "pump": {"enabled": False, "budget_pct": 0.20, "max_positions": 3, "max_candidates": 2,
-                 "block_sessions": ["AFTER"],
-                 "entry_discount_pct": 0.5, "min_day_change": 50.0, "min_dollar": 1e6, "min_vol_ratio": 5.0,
-                 "pullback_pct": 5.0, "min_session_minutes": 30,
-                 "take_profit_pct": 20.0, "stop_loss_pct": 50.0, "scale_out_pct": 0.5, "trail_pct": 5.0,
-                 "gap_risk_pct": 25.0},
+        "pump": {"enabled": True, "budget_pct": 0.20, "max_positions": 3, "block_sessions": ["AFTER"],
+                 "entry_discount_pct": 0.5, "min_day_change": 40.0, "min_dollar": 1e6, "min_vol_ratio": 5.0,
+                 "pullback_min_pct": 5.0, "pullback_max_pct": 15.0, "min_session_minutes": 20,
+                 "take_profit_pct": 15.0, "stop_loss_pct": 20.0, "stop_loss_pct_override": 0.0,
+                 "scale_out_pct": 0.5, "trail_pct": 6.0, "max_hold_minutes": 120, "gap_risk_pct": 25.0, "score_need": 2},
         # 2026-11-01 편향 없는 재검증(bars_1m 전체 1,758종목, 날짜순 2/3 학습·1/3 홀드아웃, 그리드 2번)으로 확인:
         # 정규장·프리마켓은 "세션 시작가 대비 +15% 터진 뒤 고점 대비 눌림목에서 받기"가 홀드아웃에서도 이김
         # (정규장 승률 63~64%·중앙값 +5~7%, 프리마켓 승률 62~67%·중앙값 +9~12%). 데이·애프터마켓은 표본이
         # 적어 그리드를 넓히면 결과가 뒤집혀(오버핏) 제외. stop/horizon 은 그리드가 두 번 다 상한을 그대로
         # 골라서(그 이상은 안 보여줘서 모름) 정확한 최적치가 아니라 두 그리드 결과의 중간값으로 보수적으로 잡음.
-        "session_pop": {"enabled": True, "budget_pct": 0.15, "max_positions": 3,
+        "catalyst_pullback": {"enabled": True, "budget_pct": 0.25, "max_positions": 3, "min_insider_usd": 5000,
+                              "min_move_pct": 3.0, "max_move_pct": 25.0, "min_pullback_pct": 3.0, "max_pullback_pct": 6.0,
+                              "entry_discount_pct": 0.5, "take_profit_pct": 10.0, "stop_loss_pct": 12.0,
+                              "stop_loss_pct_override": 0.0, "max_hold_minutes": 240, "sell_before_open_minutes": 150,
+                              "gap_risk_pct": 20.0, "score_need": 1},
+        "session_pop": {"enabled": False, "budget_pct": 0.15, "max_positions": 3,
                         "trigger_pct": 15.0, "stop_loss_pct_override": 0.0, "take_profit_pct_override": 0.0,
                         "gap_risk_pct": 25.0,
                         "by_session": {
@@ -352,29 +367,58 @@ class TradingConfig:
         # -2.7% 이하로 밀려 세션 하위 15%에 마감 → 다음 프리마켓 시작에 매도. 구간 갈수록 약해지고 실제 애프터
         # 스프레드(중앙값 10%)가 커서 max_spread_pct 로 좁은 종목만 산다 — 모의매매로 검증. 이 전략만 아침 전량
         # 청산(flatten_kst)·진입 차단(entry_cutoff_kst) 제외(KEEP_OVERNIGHT).
-        "after_dip": {"enabled": True, "budget_pct": 0.10, "max_positions": 2,
+        "after_dip": {"enabled": False, "budget_pct": 0.10, "max_positions": 2,
                       "late_window_minutes": 25, "min_bars": 5, "max_session_ret_pct": -2.7,
                       "max_close_loc": 0.15, "max_spread_pct": 1.5, "entry_discount_pct": 0.0,
                       "stop_loss_pct_override": 0.0, "stop_loss_pct": 25.0, "take_profit_pct": 30.0,
                       "exit_after_pre_minutes": 90, "gap_risk_pct": 25.0},
         # 2026-11-05 '첫 거래량은 패스, 두 번째가 기회' 매매법의 B1(첫날 음봉 → 다음날 거래 소멸 → 첫날 종가 60% 지정가).
         # 일봉 2년 격자: 앞 1년 +4.9%(승률 64%) / 뒤 1년 +0.3%(55%) — 뒤 기간 본전 근처라 작은 예산으로 모의 검증.
-        "wave2_b1": {"enabled": True, "budget_pct": 0.10, "max_positions": 3,
+        "wave2_b1": {"enabled": False, "budget_pct": 0.10, "max_positions": 3,
                      "max_box": 3.0, "quiet_dollar": 7e5, "quiet_share": 0.8, "min_vol_x": 5.0, "min_dollar": 5e5,
                      "max_d1_vol": 0.3, "limit_ratio": 0.6, "window_days": 10,
                      "take_profit_pct": 15.0, "stop_loss_pct": 30.0,
                      "stop_loss_pct_override": 0.0, "take_profit_pct_override": 0.0, "gap_risk_pct": 30.0},
-        # 2026-11-18 알림 지정가(전략A): 알림가 −5% 지정가 3분(entry_ttl_seconds, 재호가 없음) → +30%/−30%/2시간 정리.
+        # 2026-11-27 알림 지정가(전략A): 알림가 −3% 지정가 3분(entry_ttl_seconds, 재호가 없음) → +30%/−30%/5시간 정리.
         # 수집기가 알림마다 남기는 가상 기록(vsignals A1 ORDER)을 읽어 모의 주문. 11/10~11/16 재현 +1.4%/건(불안정) —
         # 수익 검증이 아니라 모의로 쌓아 보려는 것이라 예산 작게. 매매 가격대($0.5~$5) 안의 알림만.
-        "alert_limit": {"enabled": True, "budget_pct": 0.10, "max_positions": 3, "entry_ttl_seconds": 180,
-                        "entry_reprice": False, "min_price": 0.5, "max_price": 5.0, "hold_hours": 2,
+        "alert_limit": {"enabled": False, "budget_pct": 0.10, "max_positions": 0, "sizing_slots": 3,
+                        "entry_ttl_seconds": 180, "sessions": ["DAY", "PRE", "REGULAR", "AFTER"],
+                        "hold_until_session_end": ["DAY"],
+                        "entry_reprice": False, "min_price": 0.5, "max_price": 15.0, "hold_hours": 5,
+                        "market_alert_kinds": ["early20", "reaccel"], "market_max_spread_pct": 2.0,
+                        "market_max_chase_pct": 1.0, "market_max_drop_pct": 1.0,
                         "take_profit_pct": 30.0, "stop_loss_pct": 30.0,
                         "stop_loss_pct_override": 0.0, "take_profit_pct_override": 0.0, "gap_risk_pct": 30.0},
+        "model_pick": {"enabled": False, "budget_pct": 0.10, "max_positions": 3,
+                       "signal_ttl_seconds": 600, "entry_ttl_seconds": 180, "entry_reprice": False, "hold_hours": 5,
+                       "max_chase_pct": 2.0, "take_profit_pct": 20.0, "stop_loss_pct": 15.0,
+                       "stop_loss_pct_override": 0.0, "take_profit_pct_override": 0.0, "gap_risk_pct": 15.0},
         "day_handoff": {"enabled": False, "budget_pct": 0.10, "max_positions": 2,
                         "late_window_minutes": 120, "min_vol_ratio": 5.0, "min_dollar": 5e5,
                         "entry_discount_pct": 0.5, "stop_loss_pct_override": 0.0,
                         "stop_loss_pct": 25.0, "take_profit_pct": 20.0, "gap_risk_pct": 25.0},
+        # 2026-11-19 신규 전략 5개 (실험)
+        "premarket_turnover_breakout": {"enabled": True, "budget_pct": 0.10, "max_positions": 2,
+                                        "min_gap_pct": 20.0, "max_gap_pct": 100.0, "min_turnover_pct": 50.0,
+                                        "min_dollar": 1e6, "box_minutes": 30, "score_need": 2,
+                                        "stop_loss_pct": 8.0, "take_profit_pct": 10.0, "scale_out_pct": 0.5,
+                                        "trail_pct": 5.0, "gap_risk_pct": 20.0},
+        "open_vwap_hold": {"enabled": True, "budget_pct": 0.10, "max_positions": 2,
+                           "min_gap_pct": 20.0, "pullback_minutes": 30, "exit_minutes": 55, "score_need": 2,
+                           "stop_loss_pct": 7.0, "take_profit_pct": 9.0, "gap_risk_pct": 15.0},
+        "overnight_no_dilution_hold": {"enabled": True, "budget_pct": 0.15, "max_positions": 2,
+                                       "min_runner_pct": 50.0, "max_close_from_high_pct": 5.0, "offering_days": 7,
+                                       "min_dollar": 1e6, "max_float": 2e7, "min_short_ratio": 0.3, "score_need": 2,
+                                       "stop_loss_pct": 10.0, "take_profit_pct": 15.0, "gap_risk_pct": 25.0},
+        "offering_support_bounce": {"enabled": True, "budget_pct": 0.05, "max_positions": 1,
+                                    "offer_near_pct": 3.0, "return_pct": 3.0, "min_dollar_3m": 1e5,
+                                    "offering_window_hours": 24, "exit_minutes": 60, "score_need": 2,
+                                    "stop_loss_pct": 5.0, "take_profit_pct": 11.0, "gap_risk_pct": 30.0},
+        "theme_chain": {"enabled": True, "budget_pct": 0.05, "max_positions": 1,
+                        "theme_window_minutes": 30, "min_theme_count": 2, "min_move_pct": 30.0, "min_rvol": 2.0,
+                        "offering_days": 7, "exit_minutes": 40, "score_need": 2,
+                        "stop_loss_pct": 6.0, "take_profit_pct": 8.0, "gap_risk_pct": 25.0},
     })
 
     def spread_cap(self, session: str) -> float:

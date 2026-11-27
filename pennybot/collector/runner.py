@@ -56,17 +56,25 @@ EARLY20_MIN_TURN10 = 0.5   # '정규장 전 +20% 돌파' 알림: 직전 10분 �
 MAX_CANDLE_PAGES = 8  # 200봉 × 8 = 약 26시간 (하루 4 세션 전체)
 
 
-def win60(wins: dict, now_t: float) -> dict:
-    """종목별 최근 60초 체결 창(deque[(초, 가격, 수량)]) → {종목: (60초 수량, 60초 대금)}. 빈 창은 (0, 0)."""
+def _tick_window(wins: dict, now_t: float, seconds: float) -> dict:
+    """종목별 체결 창 → {종목: (최근 seconds 동안의 수량, 대금)}."""
     out = {}
     for k, w in list(wins.items()):
         v = a = 0.0
         for t, p, q in list(w):
-            if now_t - t <= 60:
+            if now_t - t <= seconds:
                 v += q
                 a += p * q
         out[k] = (v, a)
     return out
+
+
+def win60(wins: dict, now_t: float) -> dict:
+    return _tick_window(wins, now_t, 60)
+
+
+def win180(wins: dict, now_t: float) -> dict:
+    return _tick_window(wins, now_t, 180)
 
 
 def iso(ts: datetime) -> str:
@@ -86,6 +94,7 @@ class Collector:
         self.c, self.store, self.cal, self.cfg = client, store, calendar, cfg
         self.root_cfg = root_cfg          # 전체 Config (research.run() 이 collector/trading 양쪽 설정을 다 필요로 함)
         self._research_thread = None
+        self._edgar_thread = None
         self.edgar = edgar_client
         self.dilution = dilution          # DilutionService: 공시 본문으로 희석 이벤트 판정
         self.fund = fundamentals          # Fundamentals: 급등주 희석 프로필·펌프 신호
@@ -115,7 +124,7 @@ class Collector:
         self._dna: tuple = (None, [])              # (일봉 기준일, 🧬 급등 이력 감시 종목) — dna.py
         self._ticks_flush = 0.0
         self._rt_syms: set = set()                # 지금 구독할 종목
-        self._rt_win: dict = {}                   # 종목 → deque[(초, 가격, 수량)] 최근 60초
+        self._rt_win: dict = {}                   # 종목 → deque[(초, 가격, 수량)] 최근 180초
         self._rt_min: dict = {}                   # 종목 → {분: 수량} 최근 40분 (평소 거래량)
         self._rt_seeded: set = set()              # 1분봉으로 평소 거래량을 채운 종목
         self._rt_fired: dict = {}                 # 종목 → 마지막 실시간 신호 시각(초)
@@ -360,6 +369,10 @@ class Collector:
         if self._due("universe", now, timedelta(hours=c.universe_refresh_hours)) or not self.universe:
             self._run("universe", self.refresh_universe, now)
 
+        price_due = session != CLOSED and self._due("prices", now, timedelta(seconds=c.price_poll_seconds))
+        if price_due and self.universe:
+            self._run("prices", self.poll_prices, now, trade_date, session)
+
         if self._due("dna", now, timedelta(minutes=30)):
             self._run("dna", self.refresh_dna)
             self._run("miss", self.refresh_miss)
@@ -392,7 +405,7 @@ class Collector:
         self._last_session = cur
 
         if self.edgar and self._due("edgar", now, timedelta(minutes=c.edgar_poll_minutes)):
-            self._run("edgar", self.poll_edgar, now)
+            self._schedule_edgar(now)
         if self.news and self._due("news", now, timedelta(minutes=c.news_poll_minutes)):
             self._run("news", self.poll_news, now)
         if self.short and c.short_data:      # 휴장 중에도 (일별 파일은 장 마감 뒤에 나온다)
@@ -428,8 +441,7 @@ class Collector:
             if getattr(self, "_rank_wrote", True):
                 self._run("watch", self.select_watch, now, trade_date)
                 self._run("steady_flow", self.poll_steady_flow, now, trade_date, session)
-        if self._due("prices", now, timedelta(seconds=c.price_poll_seconds)):
-            self._run("prices", self.poll_prices, now, trade_date, session)
+        if price_due:
             if c.vsignal:
                 self._run("vsignals", self.check_vsignals, now, session)
                 if session == DAY:
@@ -634,9 +646,10 @@ class Collector:
         px = px or self._last_price(sym, None)
         if not px:
             return
-        limit = px * (1 - st["dip"] / 100)
         session = self.cal.classify(now)[1]
-        reason = f"{LABELS.get(kind, kind)} 알림가 {px:.4g} → −{st['dip']}% 지정가 {st['minutes']}분"
+        dip = st.get("dip_by_session", {}).get(session, st["dip"])      # 데이마켓은 −5% (얇은 시장이라 깊게 눌렸다 오름)
+        limit = px * (1 - dip / 100)
+        reason = f"{LABELS.get(kind, kind)} 알림가 {px:.4g} → −{dip}% 지정가 {st['minutes']}분"
         with store.db:
             c = store.db.execute(
                 "INSERT INTO vsignals (symbol, d0, opened, session, entry, score, reason, status, high, low, last, tp, sl, strat) "
@@ -657,7 +670,11 @@ class Collector:
         tt = getattr(self, "_trade_ts", None)
         if tt is None:
             tt = self._trade_ts = {}
-        for p in self.c.prices(sorted(self.universe)):
+        # LS 웹소켓 체결이 비는 애프터 후반에는 상위 거래 종목의 REST 현재가를 직접 확인한다.
+        rest_syms = set((getattr(self, "_tv_hot", None) or [])[:4]) if (
+            session == AFTER and now.astimezone(ET).hour >= 17 and hasattr(self.c, "quote_now")) else set()
+        prices = self.c.prices(sorted(self.universe), rest_symbols=rest_syms) if rest_syms else self.c.prices(sorted(self.universe))
+        for p in prices:
             rows.append({"symbol": p["symbol"], "ts": iso(now), "trade_date": trade_date.isoformat(),
                          "session": session, "last": float(p["lastPrice"]), "price_ts": p.get("timestamp")})
             if p.get("timestamp"):
@@ -665,6 +682,9 @@ class Collector:
             if p["symbol"] in self.universe:
                 self.universe[p["symbol"]]["last"] = float(p["lastPrice"])
         self.store.put_prices(rows)
+        if rest_syms:
+            self.store.put_price_now([{"symbol": r["symbol"], "ts": r["ts"], "last": r["last"]}
+                                      for r in rows if r["symbol"] in rest_syms])
         from ..trading.strategies import SESSION_KO
         if session in (PRE, REGULAR):
             self._pc_refresh()
@@ -1332,7 +1352,27 @@ class Collector:
             # 토스 1분봉에 데이·프리·애프터 봉이 들어 있는지 여기서 바로 드러난다
             log.info("1분봉 동기화: 세션별 봉 수 %s", counts)
 
-    def poll_edgar(self, now: datetime) -> None:
+    def _schedule_edgar(self, now: datetime) -> None:
+        import threading
+        if self._edgar_thread and self._edgar_thread.is_alive():
+            return
+
+        def worker():
+            store = None
+            try:
+                store = Store(self.cfg.db_path)
+                self.poll_edgar(now, store)
+            except Exception:
+                log.exception("edgar background poll failed")
+            finally:
+                if store is not None:
+                    store.db.close()
+
+        self._edgar_thread = threading.Thread(target=worker, name="edgar-poll", daemon=True)
+        self._edgar_thread.start()
+
+    def poll_edgar(self, now: datetime, store: Store | None = None) -> None:
+        store = store or self.store
         rows = []
         for form in EDGAR_FORMS:
             for f in self.edgar.current(form):
@@ -1377,7 +1417,7 @@ class Collector:
                              "detail": json.dumps(info, ensure_ascii=False) if info else None})
                 self.recent_filers[sym] = now
         if rows:
-            self.store.put_filings(rows)
+            store.put_filings(rows)
             from ..filing_detail import EVENT_KO, summary
             for r in rows:
                 evs = [k for k in (r["events"] or "").split(",") if k]
@@ -1394,7 +1434,7 @@ class Collector:
                 name = (self.universe.get(r["symbol"]) or {}).get("name") or ""
                 self._event(now, r["symbol"], "filing",
                             f"📰 {r['symbol']} {name} {what} {tag}".replace("  ", " ").strip() + (f" · {detail}" if detail else ""),
-                            r["direction"])
+                            r["direction"], store=store)
             log.info("새 공시 %d건 (유니버스 종목)", len(rows))
 
     def poll_news(self, now: datetime) -> None:
@@ -2211,7 +2251,7 @@ class Collector:
         acc[1] += price * vol
         w = self._rt_win.setdefault(sym, deque())
         w.append((t, price, vol))
-        while w and t - w[0][0] > 60:
+        while w and t - w[0][0] > 180:
             w.popleft()
         mins = self._rt_min.setdefault(sym, {})
         m = int(t // 60)
@@ -2346,25 +2386,36 @@ class Collector:
         self._rt_shares = dict(store.query("SELECT symbol, shares FROM stock_info WHERE shares > 0"))
         try:        # 재시작 전 프로세스가 남긴 60초 값은 이어서 줄어들 창이 없어 영원히 맨 위에 박힌다 → 시작할 때 비움
             with store.db:
-                store.db.execute("UPDATE live_tick SET vol_60s=0, amt_60s=0 WHERE vol_60s>0 OR amt_60s>0")
+                store.db.execute("UPDATE live_tick SET vol_60s=0, amt_60s=0, vol_180s=0, amt_180s=0 "
+                                 "WHERE vol_60s>0 OR amt_60s>0 OR vol_180s>0 OR amt_180s>0")
         except Exception:
             pass
         last_refresh = 0.0
         while True:
-            if self._rt_px and time.time() - self._rt_flush >= 1:      # 대시보드 실시간 가격 (11/09: 3초 → 1초)
+            if (self._rt_px or self._rt_win) and time.time() - self._rt_flush >= 1:
                 try:
                     acc, self._rt_acc = self._rt_acc, {}
-                    w60 = win60(self._rt_win, time.time())
+                    window_now = time.time()
+                    w60 = win60(self._rt_win, window_now)
+                    w180 = win180(self._rt_win, window_now)
                     px = list(self._rt_px.items())
                     store.put_live_ticks([{"symbol": k, "ts": v[0], "last": v[1],
                                            "vol_3s": acc.get(k, (0.0, 0.0))[0], "amt_3s": acc.get(k, (0.0, 0.0))[1],
                                            "vol_60s": w60.get(k, (0.0, 0.0))[0], "amt_60s": w60.get(k, (0.0, 0.0))[1]}
+                                          | {"vol_180s": w180.get(k, (0.0, 0.0))[0],
+                                             "amt_180s": w180.get(k, (0.0, 0.0))[1]}
                                           for k, v in px])
                     # 3초 동안 체결이 없던 종목도 60초 값은 줄어들어야 한다 (오래된 체결이 창 밖으로 빠짐)
                     seen = {k for k, _ in px}
                     with store.db:
-                        store.db.executemany("UPDATE live_tick SET vol_60s=?, amt_60s=? WHERE symbol=?",
-                                             [(v_, a_, k) for k, (v_, a_) in w60.items() if k not in seen])
+                        store.db.executemany("UPDATE live_tick SET vol_60s=?, amt_60s=?, vol_180s=?, amt_180s=? WHERE symbol=?",
+                                             [(*w60.get(k, (0.0, 0.0)), *w180[k], k)
+                                              for k in w180 if k not in seen])
+                    for k, samples in list(self._rt_win.items()):
+                        while samples and window_now - samples[0][0] > 180:
+                            samples.popleft()
+                        if not samples:
+                            self._rt_win.pop(k, None)
                 except Exception:
                     pass
                 self._rt_px.clear()
@@ -2412,11 +2463,15 @@ class Collector:
     def _vopen_refresh(self, store) -> None:
         by: dict = {}
         orders: dict = {}
+        source_symbols: set[str] = set()
         for r in store.query("SELECT * FROM vsignals WHERE status IN ('OPEN','ORDER')"):
             v = self._vrow(r)
+            if self._paper_alert_limit_active(v):
+                source_symbols.add(v["symbol"])
+                continue
             (by if v["status"] == "OPEN" else orders).setdefault(v["symbol"], []).append(v)
         self._vopen, self._vorders = by, orders
-        new = (set(by) | set(orders)) - self._rt_syms
+        new = (set(by) | set(orders) | source_symbols) - self._rt_syms
         if new:
             self._rt_set(list(new) + list(self._rt_syms))
 
@@ -2426,6 +2481,8 @@ class Collector:
         if not r:
             return
         v = self._vrow(r[0])
+        if self._paper_alert_limit_active(v):
+            return
         now = self.clock()
         _, session = self.cal.classify(now)
         lim = v["entry"]
@@ -2439,6 +2496,8 @@ class Collector:
     def _rt_vclose(self, store, vid: int, price: float) -> None:
         r = store.query("SELECT * FROM vsignals WHERE id=? AND status='OPEN'", (vid,))
         if not r:
+            return
+        if self._paper_alert_limit_active(self._vrow(r[0])):
             return
         now = self.clock()
         _, session = self.cal.classify(now)
@@ -2851,9 +2910,29 @@ class Collector:
                 trade_date, session = self.cal.classify(now)
                 if session in (DAY, PRE, REGULAR) and self.universe:
                     self.price_sweep(now, trade_date, session, store)
+                elif session == AFTER and self.universe:
+                    self.after_price_sweep(now, store)
             except Exception as e:
                 log.warning("현재가 훑기 실패: %s", str(e)[:160])
             time.sleep(max(0.5, self.cfg.price_sweep_seconds - (time.time() - t0)))
+
+    def after_price_sweep(self, now: datetime, store: Store) -> None:
+        tv = getattr(self, "_tv", None)
+        if not tv or time.time() - tv[0] >= 30 or not tv[1]:
+            return
+        leaders = set((getattr(self, "_tv_hot", None) or [])[:4])
+        rows = []
+        for symbol, data in tv[1].items():
+            if symbol in leaders or symbol not in self.universe:
+                continue
+            try:
+                price = float(data["px"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if price > 0:
+                rows.append({"symbol": symbol, "ts": iso(now), "last": price})
+        if rows:
+            store.put_price_now(rows)
 
     def price_sweep(self, now: datetime, trade_date, session: str, store=None, prices=None) -> list[str]:
         """전 종목 현재가 → 약 1분 전보다 +3% 이거나 전날 대비 +20% 를 막 넘은(천천히 오름) 종목 중 구독 안 한 것 → 실시간 구독.
@@ -2996,7 +3075,8 @@ class Collector:
                     row = self._precursor_row(s, d0, store, src="fast")
                     if row:
                         store.put_precursor_daily([row])
-            log.info("랭킹 새로 든 종목 → 실시간 구독: %s", ", ".join(new[:10]))
+            if new:
+                log.info("랭킹 새로 든 종목 → 실시간 구독: %s", ", ".join(new[:10]))
         return new
 
     def _fast_confirm(self, now, trade_date, session, store, d0, sym, pc, check: bool = True, tags=None) -> bool:
@@ -3341,7 +3421,8 @@ class Collector:
         skip = [(i, r) for i, r in enumerate(picks, 1) if not r.get("vid") and not r.get("fresh")]
         L = [f"🌞 데이마켓 후보 TOP {len(picks)}", f"{t.month}/{t.day}({'월화수목금토일'[t.weekday()]}) 한국 {t:%H:%M} · 정규장 +20% 갈 확률 순", ""]
         if bought:
-            L.append(f"🧪 가상 매수 {len(bought)}종목")
+            label = "모의매매 신호" if self._paper_alert_limit_active({"strat": "M1"}) else "가상 매수"
+            L.append(f"🧪 {label} {len(bought)}종목")
             for i, r in bought:
                 L += row(i, r)
             L.append("")
@@ -3368,13 +3449,21 @@ class Collector:
         from ..trading.strategies import SESSION_KO
         v = self._vrow((store or self.store).query("SELECT * FROM vsignals WHERE id=?", (vid,))[0])
         log.info("가상 %s %s $%.4g (%s)", "지정가 주문" if kind == "order" else "매수 체결", v["symbol"], v["entry"], v["reason"])
-        if not self.notifier or not self._on("vtrade"):
+        if self._paper_alert_limit_active(v) or not self.notifier or not self._on("vtrade"):
             return
         link = self.link() if self.link else None
         name = (self.universe.get(v["symbol"]) or {}).get("name")
         self.notifier.send(vsignal_text(kind, v["symbol"], name, v, self.cfg, SESSION_KO.get(session, session)),
                            buttons=[[*([{"text": "📊 대시보드", "url": f"{link}/?s={v['symbol']}"}] if link else []),
                                      {"text": f"📋 {v['symbol']} 복사", "copy_text": {"text": v["symbol"]}}]])
+
+    def _paper_alert_limit_active(self, v: dict) -> bool:
+        """A1/M1 신호가 paper 전략에 연결되면 중복 가상 체결 알림을 숨긴다."""
+        root = getattr(self, "root_cfg", None)
+        trading = getattr(root, "trading", None)
+        strategy = {"A1": "alert_limit", "M1": "model_pick"}.get(v.get("strat"))
+        return bool(strategy and getattr(root, "mode", None) == "paper"
+                    and (getattr(trading, "strategies", {}) or {}).get(strategy, {}).get("enabled"))
 
     @staticmethod
     def _vrow(r) -> dict:
@@ -3390,10 +3479,20 @@ class Collector:
         r = self.store.query("SELECT last FROM prices WHERE symbol=? ORDER BY ts DESC LIMIT 1", (sym,))
         return r[0][0] if r and r[0][0] else fallback
 
+    @staticmethod
+    def _a1_order_expired(v: dict, now: datetime, session: str, st: dict) -> bool:
+        """A1 지정가 주문 만료. 데이마켓 주문(hold_until_session_end)은 3분이 아니라 그 세션이 끝날 때(프리장 시작)까지 둔다."""
+        if v.get("session") in st.get("hold_until_session_end", ()):
+            return session != v["session"]
+        return now - datetime.fromisoformat(v["opened"]) >= timedelta(minutes=st["minutes"]) or session == AFTER
+
     def _a1_tick(self, now: datetime, session: str, store) -> None:
         """전략A 지정가·보유 관리 — 막히기 쉬운 메인 틱(공시 조회 등) 대신 빠른 훑기 스레드에서 2~3초마다 (스레드 전용 연결 store).
         ORDER: minutes 분이 지나면 취소, 현재가나 그 뒤 1분봉 저가가 지정가에 닿으면 체결(알림). OPEN: 익절·손절·2시간 정리."""
         from ..vstrat import STRATEGIES
+
+        if self._paper_alert_limit_active({"strat": "A1"}):
+            return
         st = STRATEGIES["A1"]
         for r in store.query("SELECT * FROM vsignals WHERE strat='A1' AND status IN ('ORDER','OPEN')"):
             v = self._vrow(r)
@@ -3404,7 +3503,7 @@ class Collector:
                 if last:
                     self._vupdate(store, v, last, now, session)
                 continue
-            if now - opened >= timedelta(minutes=st["minutes"]) or session == AFTER:
+            if self._a1_order_expired(v, now, session, st):
                 with store.db:
                     store.db.execute("UPDATE vsignals SET status='EXPIRED', closed=? WHERE id=? AND status='ORDER'", (iso(now), v["id"]))
                 continue
@@ -3426,9 +3525,13 @@ class Collector:
         from ..trading.strategies import SESSION_KO
         from ..vstrat import STRATEGIES
         with self.store.db:                              # 안 닿은 지정가 주문은 유효 시간이 지나면 취소
-            for vid, opened, strat in self.store.query("SELECT id, opened, strat FROM vsignals WHERE status='ORDER'"):
-                mins = STRATEGIES.get(strat or "", {}).get("minutes", 60)
-                if now - datetime.fromisoformat(opened) >= timedelta(minutes=mins) or session == AFTER or eod:
+            for vid, opened, strat, vsess in self.store.query("SELECT id, opened, strat, session FROM vsignals WHERE status='ORDER'"):
+                stdef = STRATEGIES.get(strat or "", {})
+                if "hold_until_session_end" in stdef:
+                    gone = self._a1_order_expired({"session": vsess, "opened": opened}, now, session, stdef)
+                else:
+                    gone = now - datetime.fromisoformat(opened) >= timedelta(minutes=stdef.get("minutes", 60)) or session == AFTER
+                if gone or eod:
                     self.store.db.execute("UPDATE vsignals SET status='EXPIRED', closed=? WHERE id=?", (iso(now), vid))
         rows = [self._vrow(r) for r in self.store.query("SELECT * FROM vsignals WHERE status='OPEN'")]
         if older_hours is not None:
@@ -3436,6 +3539,14 @@ class Collector:
         if eod:
             log.info("가상 포지션 정리 (%s): %d건", "애프터장 마감" if older_hours is None else f"{older_hours:g}시간 지난 것", len(rows))
         for v in rows:
+            if self._paper_alert_limit_active(v):
+                ttl = (getattr(getattr(self, "root_cfg", None), "trading", None)
+                       .strategies.get("model_pick", {}).get("signal_ttl_seconds", 600)) if v["strat"] == "M1" else 0
+                if v["strat"] == "A1" or eod or now - datetime.fromisoformat(v["opened"]) >= timedelta(seconds=ttl):
+                    with self.store.db:
+                        self.store.db.execute("UPDATE vsignals SET status='EXPIRED', closed=? WHERE id=? AND status='OPEN'",
+                                              (iso(now), v["id"]))
+                continue
             last = self._last_price(v["symbol"], v.get("last") if eod else None)
             if not last:
                 continue
@@ -3481,6 +3592,8 @@ class Collector:
 
     def _vupdate(self, store, v: dict, last: float, now: datetime, session: str, hi: float | None = None, eod: bool = False) -> str | None:
         """현재가(또는 실시간 체결가)로 고점·저점 갱신 → 정리 사유면 닫고 알림. → 사유."""
+        if self._paper_alert_limit_active(v):
+            return None
         from ..precursor import vsignal_text
         from ..trading.strategies import SESSION_KO
         why = self._vexit(v, last, max(v["high"] or last, last, hi or 0), now, eod)
@@ -3499,7 +3612,7 @@ class Collector:
                 store.db.execute("UPDATE vsignals SET high=?, low=?, last=?, high_at=? WHERE id=?", (hi, lo, last, hi_at, v["id"]))
         if why:
             v.update(status="CLOSED", closed=iso(now), exit_price=last, exit_reason=why, high=hi, low=lo, last=last, high_at=hi_at)
-            if self.notifier and self._on("vtrade"):
+            if not self._paper_alert_limit_active(v) and self.notifier and self._on("vtrade"):
                 link = self.link() if self.link else None
                 name = (self.universe.get(v["symbol"]) or {}).get("name")
                 self.notifier.send(vsignal_text("sell", v["symbol"], name, v, self.cfg, SESSION_KO.get(session, session)),

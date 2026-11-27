@@ -30,6 +30,8 @@ class Risk:
         if not self.ctl.strategy_on(name):
             return False, "대시보드에서 꺼짐"
         n = self.t.auto_disable_trades
+        if not n:                                    # 0 = 자동 정지 끔 (11/19: 모의로 전략 전부 쌓아 보려고)
+            return True, ""
         st = self.j.strategy_stats(name, last_n=n)
         if st and st[0]["trades"] >= n and st[0]["expectancy"] < 0:
             return False, f"자동 정지: 최근 {n}회 평균 손익 ${st[0]['expectancy']:.2f}"
@@ -55,7 +57,7 @@ class Risk:
         return None
 
     def can_enter(self, strategy: str, symbol: str, trade_date: str, open_trades: list[dict],
-                  unrealized: float = 0.0, now: datetime | None = None) -> str | None:
+                  unrealized: float = 0.0, now: datetime | None = None, acct: Account | None = None) -> str | None:
         c = self.ctl.load()
         if c["kill"]:
             return "킬스위치"
@@ -70,12 +72,21 @@ class Risk:
         if self.t.max_daily_loss_usd and self.j.realized_pnl(trade_date) + min(unrealized, 0.0) \
                 <= -self.t.max_daily_loss_usd:
             return "영업일 손실 한도 도달 (평가 손실 포함)"
+        # 일 손실 -3% 킬 스위치 (계좌 equity 기준)
+        if self.t.max_daily_loss_pct and acct is not None and acct.equity > 0:
+            day_pnl = self.j.realized_pnl(trade_date) + min(unrealized, 0.0)
+            if day_pnl <= -acct.equity * self.t.max_daily_loss_pct:
+                return f"일 손실 {self.t.max_daily_loss_pct*100:.0f}% 킬 스위치 — 당일 매매 중단"
         cd = self.cooldown(now)
         if cd:
             return cd
-        if len(open_trades) >= self.t.max_open_positions:
+        limits = c.get("limits") or {}
+        max_open = limits.get("max_open_positions", self.t.max_open_positions)
+        if max_open > 0 and len(open_trades) >= max_open:
             return "전체 동시 보유 한도"
-        if sum(1 for t in open_trades if t["strategy"] == strategy) >= self.t.strategies[strategy]["max_positions"]:
+        strategy_cap = (limits.get("strategy_max_positions") or {}).get(
+            strategy, self.t.strategies[strategy]["max_positions"])
+        if strategy_cap > 0 and sum(1 for t in open_trades if t["strategy"] == strategy) >= strategy_cap:
             return "전략 동시 보유 한도"
         if any(t["symbol"] == symbol for t in open_trades):
             return "이미 보유 중인 종목"
@@ -92,13 +103,21 @@ class Risk:
 
     def size(self, strategy: str, price: float, stop: float, acct: Account) -> int:
         p = self.t.strategies[strategy]
-        budget = acct.equity * p["budget_pct"] / p["max_positions"]
-        dollars = min(budget, acct.equity * self.t.max_position_pct, self.t.max_position_usd, acct.cash * 0.98)
+        limits = self.ctl.load().get("limits") or {}
+        # 0 means no holding-count cap; keep sizing separate so one order does
+        # not consume the entire strategy budget when the cap is removed.
+        slots = p.get("sizing_slots") or p["max_positions"] or 1
+        cash_pct = limits.get("cash_per_trade_pct")
+        budget = acct.cash * cash_pct / 100 if cash_pct is not None else acct.equity * p["budget_pct"] / slots
+        position_pct = limits.get("max_position_pct", self.t.max_position_pct * 100) / 100
+        max_usd = limits.get("max_position_usd", self.t.max_position_usd)
+        dollars = min(budget, acct.equity * position_pct, max_usd, acct.cash * 0.98)
         qty = int(dollars // price) if price > 0 else 0
         # 1주당 위험 = 손절폭과 '밤사이 최악의 갭' 중 큰 쪽. 급등주는 손절가를 건너뛰어 열리기 때문
         risk = max(price - stop, price * p.get("gap_risk_pct", 0) / 100)
         if risk > 0:
-            max_loss = acct.equity * self.t.risk_per_trade_pct
+            risk_pct = limits.get("risk_per_trade_pct", self.t.risk_per_trade_pct * 100) / 100
+            max_loss = acct.equity * risk_pct
             if self.t.max_daily_loss_usd:
                 max_loss = min(max_loss, self.t.max_daily_loss_usd)
             qty = min(qty, int(max_loss // risk))
